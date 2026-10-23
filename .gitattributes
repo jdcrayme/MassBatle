@@ -13,3 +13,5 @@
 *.wav filter=lfs diff=lfs merge=lfs -text
 *.mp3 filter=lfs diff=lfs merge=lfs -text
 *.mp4 filter=lfs diff=lfs merge=lfs -text
+# EDU data fixtures: enforce LF on disk (parser contract: ASCII + LF)
+Data/**/*.txt text eol=lf
