@@ -2,9 +2,9 @@
 
 using UnrealBuildTool;
 
-public class MassBattle : ModuleRules
+public class MassBattleGame : ModuleRules
 {
-	public MassBattle(ReadOnlyTargetRules Target) : base(Target)
+	public MassBattleGame(ReadOnlyTargetRules Target) : base(Target)
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 	
