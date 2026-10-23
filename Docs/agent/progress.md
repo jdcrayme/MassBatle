@@ -34,4 +34,7 @@ Session date: 2026-10-23. Engine: UE 5.8.4 at `E:\Unreal\UE_5.8`. Project: `Mass
 - [task4.accept] Verified: pure ASCII (all bytes <128), no CR, trailing LF, 2 unit types with 13/13 fields, config keys at lines 4-5. Commit: `prephase0: EDU fixture, default maps, CI stub` → `cebfc16` (amended to include the .gitattributes LF rule).
 - [task5.1] Path used: **MCP Testing toolset** (preferred). `DiscoverTests` → status "ready"; `ListTests(nameFilter:"Battle.Smoke")` → `{"tests":["Battle.Smoke.PluginLoaded"],"total":1,"returned":1}` — exactly 1 test visible (A1 flags correct, module loaded).
 - [task5.2] `RunTests(["Battle.Smoke.PluginLoaded"])` → `{"tests":[{"name":"Battle.Smoke.PluginLoaded","state":"Success","duration":0.00977,"errors":[],"warnings":[]}],"passed":1,"failed":0,"skipped":0,"total":1}`. **1 test, 1 pass, 0 fail.** `GetTestResults` returns the identical record.
-- [task5.3] Result captured verbatim above (also copied into `Docs/agent/prephase0-report.md`). Commit: `prephase0: smoke test green`.
+- [task5.3] Result captured verbatim above (also copied into `Docs/agent/prephase0-report.md`). Commit: `prephase0: smoke test green` → `9cca9bc`.
+- [task6.1] Editor left on `/Game/MassBattle/Demo/Maps/L_MassBattle_Demo01` (`get_current_level` verified); `is_dirty` = false for both Demo01 and T0_Sandbox; MCP server alive (all final checks executed through it).
+- [task6.2] Handoff report written → `Docs/agent/prephase0-report.md` (creation paths, 8 facts-digest corrections, 7 documented deviations, 9 tool quirks, verbatim evidence, DoD checklist all [x], Phase 0 starting points). Final status: **tasks 0–6 complete, no open blockers**.
+- [task6.3] Final commit: `prephase0: complete`. **STOP — Phase 0 is the next brief's scope.**
