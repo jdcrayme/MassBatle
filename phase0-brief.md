@@ -114,7 +114,7 @@ Every entry below carries a **verification status**. In Task 2 you audit each en
 | Version | Change that affects this project |
 |---------|----------------------------------|
 | 5.5 | MassEntity became an engine runtime module; StructUtils deprecated (FInstancedStruct → CoreUObject). |
-| 5.6+ | `ConfigureQueries(const TSharedRef<FMassEntityManager>&)` (parameterless = legacy); queries register by construction — `FMassEntityQuery Query(*this)` — **`RegisterWithProcessor()` no longer exists in 5.8**; `ForEachEntityChunk(Context, ...)` no longer takes the entity manager; optional new `UE::Mass::FQueryExecutor` API. |
+| 5.6+ | `ConfigureQueries(const TSharedRef<FMassEntityManager>&)` (parameterless = legacy); queries register by construction — `FMassEntityQuery Query(*this)` — `RegisterWithProcessor(UMassProcessor&)` still exists (audit C1: MassEntityQuery.h:86) but ctor registration is the pattern; `ForEachEntityChunk(Context, ...)` no longer takes the entity manager; optional new `UE::Mass::FQueryExecutor` API. |
 | 5.7 | Processor time-slicing (`UE::Mass::FExecutionLimiter`) — T0.9 must verify it is off under test; observer calls are batched while command buffers flush (relevant to T0.5/E5). |
 | 5.8 | Mass Signals in engine core (`Runtime/Mass/MassSignals`); **sparse/virtual fragments & tags** (add/remove without archetype change — designed for rarely-present, frequently-toggled data; `FDeadTag` decision, roadmap Open Decision 7); reworked processor scheduling + thread-safe observers; off-game-thread entity creation; Mass events in Insights. Observer API now: `ObservedTypes` (multiple) + `EMassObservedOperationFlags` (incl. `CreateEntity`/`DestroyEntity`); old single `ObservedType`/`Operation` (Add/Remove) **deprecated**. 5.8 batch element APIs renamed (`AddElementToEntities` → `BatchAddElementToEntities` family). |
 
@@ -151,7 +151,8 @@ struct FUnitStatsSharedFragment : public FMassSharedFragment
     UPROPERTY() float MoraleBonus = 0.f;
 };
 
-// Tag (empty UScriptStruct — never hold members):
+// Tag (empty UScriptStruct — never hold members). Bases come from MassCore:
+// #include "Mass/EntityElementTypes.h" (audit C7).
 USTRUCT()
 struct FInfantryTag : public FMassTag { GENERATED_BODY() };
 ```
@@ -247,7 +248,7 @@ Chunk-lambda accessors: `GetFragmentView<T>()` / `GetMutableFragmentView<T>()` (
 
 - Inside processors: `Context.Defer().AddFragment<T>(E)` / `.RemoveFragment<T>(E)` / `.AddTag<T>(E)` / `.RemoveTag<T>(E)` / `.DestroyEntity(E)`; long form `PushCommand<FMassCommand...>`. ⚠️*pre-verified examples for Add/RemoveFragment*.
 - Outside processors (game thread, not mid-processing): guard with `EntityManager.IsProcessing()`; if true, use `EntityManager.Defer()...`, else direct calls. Deferred create from outside: `EntityManager.Defer().PushCommand<FMassDeferredCreateCommand>(lambda)` ⚠️.
-- **Flush contract (review E5)**: buffers flush when a processing context is destroyed and at processing-phase end; 5.7+ batches observer calls during flushes. T0.5 asserts buffer state **directly post-Death-processor** or **end-of-phase** semantics — Task 2 audits which one 5.8.4 actually provides, and the T0.5 test code records it in a comment.
+- **Flush contract (review E5) -- RESOLVED by Task 2 audit**: 5.8.4 flushes (a) at the end of each processor's processing scope (MassExecutor.cpp:153 / MassProcessingQueue.cpp:317, observers unlocked pre-flush) and (b) at processing-phase end for the manager buffer (MassProcessingPhaseManager.cpp:664). T0.5 asserts **directly post-Death-processor** semantics: deferred commands are applied before the next processor in the same phase observes state.
 - 5.8 renamed batch element commands (`AddElementToEntities` → `BatchAddElementToEntities` family) — audit if you touch them directly (you mostly shouldn't; use `Defer()`).
 
 ### §4.6 Observers & Signals (exact 5.8 signatures)
@@ -263,7 +264,7 @@ void DelaySignalEntity(FName, const FMassEntityHandle, const float DelayInSecond
 UE::Mass::FSignalDelegate& GetSignalDelegateByName(FName);
 ```
 
-Receiver processor: subclass `UMassSignalProcessorBase`, bind `SignalReceiveDelegate` in `ConfigureSignals()` ⚠️ (audit exact delegate parameter types — expected `(FName, FMassEntityHandle)`). **Signals carry only a name + one entity handle**: the handler reads `FOwnerUnitFragment` from the entity to recover the owning unit. The death chain (Task 9) is therefore:
+Receiver processor: subclass `UMassSignalProcessorBase`, call `SubscribeToSignal(Subsystem, SignalName)` and override `SignalEntities(FMassEntityManager&, FMassExecutionContext&, FMassSignalNameLookup&)` (5.8 shape — audit C2: no ConfigureSignals/SignalReceiveDelegate exists; optional `OnSignalReceived(FName, TConstArrayView<FMassEntityHandle>)`). **Signals carry only a name + one entity handle**: the handler reads `FOwnerUnitFragment` from the entity to recover the owning unit. The death chain (Task 9) is therefore:
 
 ```
 kill (deferred tag add) → observer on FDeadTag add fires during flush
@@ -298,18 +299,18 @@ private:
 template<>
 struct TMassExternalSubsystemTraits<UUnitRegistrySubsystem> final
 {
-    enum { ThreadSafeRead = true, ThreadSafeWrite = false };
+    enum { GameThreadOnly = false, ThreadSafeWrite = false };
 };
 ```
 
-(If traits cannot live in the same header, use the `MassGameplayExternalTraits.h` separate-header pattern ⚠️.)
+(Members are `GameThreadOnly`/`ThreadSafeWrite` -- audit C3; header is MassCore `Mass/ExternalSubsystemTraits.h`, the old `MassExternalSubsystemTraits.h` is a 5.8 deprecated shim. If traits cannot live in the same header, use the `MassGameplayExternalTraits.h` separate-header pattern.)
 
 ### §4.8 Spawning & entity creation
 
 - **Subsystem access**: `World->GetSubsystem<UMassEntitySubsystem>()` → `GetMutableEntityManager()` ⚠️*pre-verified*.
 - **Structural-change guard**: never mutate archetypes while Mass is processing — check `EntityManager.IsProcessing()`; defer if true (§4.5).
 - **Route A (C++ archetype-first — primary for Phase 0 spawn library)**: `CreateArchetype(FMassArchetypeCompositionDescriptor, FMassArchetypeCreationParams)` + `FMassArchetypeSharedFragmentValues` → `BatchReserveEntities` → `BatchCreateEntities` → fixup pass writes `FOwnerUnitFragment`/`FBaseStatsFragment` values ⚠️*pre-verified call names*.
-- **Route B (config-driven)**: `UMassEntityConfigAsset` (MassSpawner) + traits (`UMassEntityTraitBase::BuildTemplate(FMassEntityTemplateBuildContext&, const UWorld&)`; `BuildContext.AddFragment<T>() / AddFragment_GetRef<T>() / RequireFragment<T>() / AddTag<T>()`) → `UMassSpawnerSubsystem::SpawnEntities` (5.8 template-based overloads — audit exact set; E4). T0.3 requires the config asset path to exist and resolve; Task 6 authors the assets via ExecBridge (§4.11) rather than by hand in the editor (decided — §3.1 A5).
+- **Route B (config-driven)**: `UMassEntityConfigAsset` (MassSpawner) + traits (`UMassEntityTraitBase::BuildTemplate(FMassEntityTemplateBuildContext&, const UWorld&)`; `BuildContext.AddFragment<T>() / AddFragment_GetRef<T>() / AddTag<T>() / AddSharedFragment(FSharedStruct)` -- audit C6: `RequireFragment<T>` absent in 5.8) → `UMassSpawnerSubsystem::SpawnEntities` (5.8 template-based overloads — audit exact set; E4). T0.3 requires the config asset path to exist and resolve; Task 6 authors the assets via ExecBridge (§4.11) rather than by hand in the editor (decided — §3.1 A5).
 - **Kill (test path)**: defer tag add, see §4.5/Task 9.
 
 ### §4.9 GAS essentials (stable API, low audit risk)
@@ -356,7 +357,7 @@ bool FRegistryLifecycle::RunTest(const FString& Parameters)
 - Editor-context tests run in the editor session → verify through `AutomationTestToolset` (§2). The existing `Battle.Smoke.PluginLoaded` in `MassBattleSmokeTest.cpp` is the template for flags/naming.
 - Functional tests (T0.4/T0.5) tick the world → `AFunctionalTest` subclass on a minimal map `L_MassBattle_T0_Functional`, driven through `UFunctionalTestingManager` (the `AutomationTestToolset` path handles this). Fallback if PIE automation is flaky through MCP: run the functional tier headless via the Task 1 CI script and read the log/report — the roadmap's `-ExecCmds="Automation RunTests Battle.Func" -TestExit="Automation Test Queue Empty"` line exists for exactly this.
 - Expected-error whitelist: `AddExpectedError(...)`.
-- Fixed-step: `FApp::SetUseFixedTimeStep(true); FApp::SetFixedTimeStepValue(1.0/60.0);` in test setup ⚠️ (audit names); T0.9 helper in Task 11 reads **active** values (`FApp::IsUseFixedTimeStep()`, time-slicing settings) not just the CVars it set.
+- Fixed-step: `FApp::SetUseFixedTimeStep(true); FApp::SetFixedDeltaTime(1.0/60.0);` in test setup (audit C4: `SetFixedTimeStepValue` does not exist in 5.8; read-back is `FApp::UseFixedTimeStep()` / `GetFixedDeltaTime()`); T0.9 helper in Task 11 reads **active** values not just the CVars it set.
 
 ### §4.11 ExecBridge pattern (C++ console commands as the MCP bridge)
 
@@ -388,7 +389,7 @@ Phase 0 command set (implemented across Tasks 4–9): `Battle.SpawnRoster`, `Bat
 
 | Block | Verified facts |
 |---|---|
-| Headless automation run | `UnrealEditor-Cmd.exe "<uproject>" -game -unattended -nopause -nosplash -nullrhi -log=CI.log -ExecCmds="Automation RunTests Battle.Unit+Battle.Data+Battle.Smoke; Quit" -TestExit="Automation Test Queue Empty"` — long-standing documented pattern (Epic forums/StackOverflow; roadmap B.0 already mandates the same flags). Script parses the log for the pass/fail summary rather than trusting exit codes. ⚠️ audit whether 5.8 also supports `-ReportOutputPath=<dir>` for machine-readable reports. |
+| Headless automation run | `UnrealEditor-Cmd.exe "<uproject>" -game -unattended -nopause -nosplash -nullrhi -log=CI.log -ExecCmds="Automation RunTests Battle.Unit+Battle.Data+Battle.Smoke; Quit" -TestExit="Automation Test Queue Empty"` — long-standing documented pattern (Epic forums/StackOverflow; roadmap B.0 already mandates the same flags). Script parses the log for the pass/fail summary rather than trusting exit codes. Audit C5: 5.8 renames it to `-ReportExportPath=<dir>` (writes index.json, UTF-8 BOM); the old name still parses with a deprecation warning. |
 | Gauntlet | Engine framework "to run sessions of projects and validate results"; C# driver under `Engine/Source/Programs/AutomationTool/Gauntlet`, invoked via RunUAT (`RunGauntlet`); game-side controllers are `UGauntletTestController` subclasses in the **Gauntlet plugin** (`-gauntlet=<ControllerName>` enables one). Official 5.8 doc pages: "Gauntlet Automation Framework in Unreal Engine" → Overview / Run Gauntlet Tests / Gauntlet Controller. Phase 0 ships one stub controller (`UBattleSmokeController`: wait N s, assert no errors, `EndTest`) purely to prove the packaged-nightly loop end-to-end. ⚠️ audit: plugin location/state in 5.8 (`Engine/Plugins/...Gauntlet`) and the exact RunUAT verb/args. |
 | Orchestration host | Roadmap R8 names "Horde / Jenkins / hosted CI". Horde in 5.8 is aimed at build farms (release notes: Horde analytics/perf reporting) — heavier than a single-machine project needs. Jenkins LTS controller+agent on the reference machine (or initially Windows Task Scheduler as a stopgap) runs: per-commit gate (build + unit/data/smoke) and the nightly job (package Win64 via `RunUAT BuildCookRun`, then Gauntlet stub, then baseline compare). The Jenkinsfile skeleton in Task 1 is a starting point, not doctrine — Task 1's ADR-16 records the host decision and why. |
 | Baseline JSON storage | `Baselines/perf/<machine-tag>/<gate>.json`, schema `{ machine, engineCL, date, metrics{...} }`; `Tools/CI/compare_baseline.py` fails on regression beyond tolerance. Phase 0 seeds the loop with two trivial-but-real metrics (80-entity spawn time; smoke test duration) so storage+compare is exercised before real perf gates arrive in Phase 2 (T2.9). Every file embeds the reference-machine spec (R10). |
