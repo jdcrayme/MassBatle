@@ -1,7 +1,7 @@
 #include "MassBattleModule.h"
 #include "Misc/Paths.h"
 
-DEFINE_LOG_CATEGORY_STATIC(LogMassBattle, Log, All);
+DEFINE_LOG_CATEGORY(LogMassBattle);
 
 void FMassBattleModule::StartupModule()
 {
