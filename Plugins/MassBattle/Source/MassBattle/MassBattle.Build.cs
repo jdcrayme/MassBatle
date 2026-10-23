@@ -21,7 +21,9 @@ public class MassBattle : ModuleRules
 			"MassSignals",   // core engine module in 5.8
 			"MassCommon",
 			// GAS arrives with Phase 0 unit actors; linking now avoids a config churn later
-			"GameplayAbilities"
+			"GameplayAbilities",
+			// Task 1 (R8): Gauntlet smoke controller (engine plugin; Experimental in 5.8)
+			"Gauntlet"
 			// Future (add at the phase that needs them — see arch §3/§4):
 			// "MassSimulation", "MassActors", "MassLOD", "MassRepresentation",
 			// "MassNavigation", "MassAvoidance", "MassMovement", "MassAIBehavior", "MassStateTree"

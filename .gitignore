@@ -22,3 +22,8 @@ Platforms/
 Thumbs.db
 Desktop.ini
 *.slnx
+
+# Phase 0 CI transient artifacts
+Tools/CI/last_run/
+Tools/CI/last_nightly/
+Tools/CI/last_run.json

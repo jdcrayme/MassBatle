@@ -13,6 +13,7 @@
 		}
 	],
 	"Plugins": [
-		{ "Name": "MassGameplay", "Enabled": true }
+		{ "Name": "MassGameplay", "Enabled": true },
+		{ "Name": "Gauntlet", "Enabled": true }
 	]
 }

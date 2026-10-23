@@ -1,0 +1,25 @@
+{
+  "machine_tag": "ref-i7-9700F-1660Ti",
+  "machine": {
+    "cpu": "Intel Core i7-9700F 8C/8T",
+    "ram_gb": 16,
+    "gpu": "NVIDIA GeForce GTX 1660 Ti",
+    "os": "Windows 10 Home 19045"
+  },
+  "engineCL": 58902052,
+  "date": "2026-10-23T15:40:51",
+  "metrics": {
+    "unit_tier_wall_s": {
+      "value": 64.558,
+      "unit": "s",
+      "tolerance": 0.5,
+      "note": "headless UnrealEditor-Cmd Battle.Unit+Data+Smoke tier, 1 test"
+    },
+    "smoke_test_duration_s": {
+      "value": 21.824,
+      "unit": "s",
+      "tolerance": 0.5,
+      "note": "from nightly-smoke.json first run"
+    }
+  }
+}
