@@ -2,6 +2,7 @@
 #include "BattleFragments.h"
 #include "BattleMovementFragments.h"
 #include "BattleServo.h"
+#include "BattleUnitContact.h"
 #include "BattleDebugSubsystem.h"
 #include "MassBattleModule.h"
 
@@ -105,7 +106,88 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 
 	const float MaxAccel = GBattleMovementMaxAccel.GetValueOnAnyThread();
 
-	ServoQuery.ForEachEntityChunk(Context, [DT, MaxAccel, Debug, &Snapshot](FMassExecutionContext& Context)
+	// ---- Unit-vs-unit OBB contact (arch §8.6, Phase 1 scale: 8 units) ----
+	// One body per unit from the formation fragment; pairs resolved to
+	// per-entity shove velocities for the PassThrough policy.
+	TArray<FUnitOBB> UnitBodies;
+	UnitBodies.Reserve(16);
+	TArray<FUnitHandle> BodyUnits;
+	BodyUnits.Reserve(16);
+	SnapshotQuery.ForEachEntityChunk(Context, [&UnitBodies, &BodyUnits](FMassExecutionContext& Context)
+	{
+		const FUnitFormationSharedFragment& Formation = *Context.GetSharedFragmentPtr<FUnitFormationSharedFragment>();
+		const auto Owners = Context.GetFragmentView<FOwnerUnitFragment>();
+		if (Formation.NumSlots <= 0 || Formation.NumFiles <= 0 || Owners.Num() == 0)
+		{
+			return;
+		}
+		const int32 NumRanks = FMath::Max(1, FMath::CeilToInt(static_cast<float>(Formation.NumSlots) / Formation.NumFiles));
+		FUnitOBB Body;
+		Body.Center = Formation.AnchorPos * 0.01f; // cm -> m
+		Body.YawDeg = Formation.FacingYaw;
+		Body.HalfFrontage = (Formation.NumFiles * Formation.FileSpacing * 0.5f) * 0.01f;
+		Body.HalfDepth = (NumRanks * Formation.RankSpacing * 0.5f) * 0.01f;
+		UnitBodies.Add(Body);
+		BodyUnits.Add(Owners[0].Owner);
+	});
+
+	// Per-snapshot-entity shove displacement (m/s) + blend weight.
+	TArray<FVector2D> ShoveVel;
+	ShoveVel.Init(FVector2D::ZeroVector, Snapshot.Num());
+	TArray<float> ShoveW;
+	ShoveW.Init(0.f, Snapshot.Num());
+	for (int32 A = 0; A < UnitBodies.Num(); ++A)
+	{
+		for (int32 B = A + 1; B < UnitBodies.Num(); ++B)
+		{
+			const float Depth = FUnitContact::OverlapDepth(UnitBodies[A], UnitBodies[B]);
+			if (Depth <= 0.f)
+			{
+				continue;
+			}
+			// Same-team fixtures in Phase 1: the mover (PassThrough side,
+			// documented policy at Phase 1 fixtures) shoves the static unit's
+			// entities aside; cavalry-vs-infantry mass ratio 2:1.
+			const FUnitOBB& Mover = UnitBodies[A];
+			const FUnitOBB& Static = UnitBodies[B];
+			const FVector2D PushDir = (Static.Center - Mover.Center).GetSafeNormal();
+			(void)PushDir;
+			const float Blend = FUnitContact::ShoveBlend(2.0f /* cavalry:infantry mass ratio */, Depth);
+
+			// Infantry of the weaker unit inside the mover's OBB get shoved.
+			for (int32 S = 0; S < Snapshot.Num(); ++S)
+			{
+				if (Snapshot[S].Owner != BodyUnits[B])
+				{
+					continue;
+				}
+				if (!FUnitContact::ContainsPoint(Mover, Snapshot[S].Pos))
+				{
+					continue;
+				}
+				// Push perpendicular to the mover's facing (aside the path),
+				// away from the mover center line.
+				const float Rad = FMath::DegreesToRadians(Mover.YawDeg);
+				FVector2D Side(-FMath::Sin(Rad), FMath::Cos(Rad));
+				if (FVector2D::DotProduct(Side, Snapshot[S].Pos - Mover.Center) < 0.f)
+				{
+					Side = -Side;
+				}
+				ShoveVel[S] = Side * FUnitContact::ShoveSpeed;
+				ShoveW[S] = FMath::Max(ShoveW[S], Blend);
+			}
+		}
+	}
+
+	// Handle -> snapshot row (the servo chunks iterate a different order).
+	TMap<uint32, int32> HandleToSnapshot;
+	HandleToSnapshot.Reserve(Snapshot.Num());
+	for (int32 S = 0; S < Snapshot.Num(); ++S)
+	{
+		HandleToSnapshot.Add(Snapshot[S].HandleIndex, S);
+	}
+
+	ServoQuery.ForEachEntityChunk(Context, [DT, MaxAccel, Debug, &Snapshot, &ShoveVel, &ShoveW, &HandleToSnapshot](FMassExecutionContext& Context)
 	{
 		const FUnitFormationSharedFragment& Formation = *Context.GetSharedFragmentPtr<FUnitFormationSharedFragment>();
 		const auto Targets = Context.GetFragmentView<FSlotTargetFragment>();
@@ -179,8 +261,23 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 				}
 			}
 
-			// Acceleration clamp, then write back in cm/s.
-			const FVector2D NewVelM = FUnitServo::ClampAcceleration(OldVelM, DesiredVel, MaxAccel, DT);
+			// §8.6 pass-through shove: displacement velocity blended over the
+			// servo output (w = clamp(MassRatio * OverlapDepth)); the servo
+			// recovers the wake for free once contact ends.
+			FVector2D NewVelM = FUnitServo::ClampAcceleration(OldVelM, DesiredVel, MaxAccel, DT);
+			if (const int32* SnapIdx = HandleToSnapshot.Find(Context.GetEntity(i).Index))
+			{
+				const float W = ShoveW[*SnapIdx];
+				if (W > KINDA_SMALL_NUMBER)
+				{
+					NewVelM = FMath::Lerp(NewVelM, ShoveVel[*SnapIdx], W);
+					ServoStates[i].DisplacementWeight = W;
+				}
+				else
+				{
+					ServoStates[i].DisplacementWeight = 0.f;
+				}
+			}
 			Velocities[i].Value = FVector(NewVelM.X, NewVelM.Y, 0.f) * 100.f;
 
 			// Ladder bookkeeping (§8.5): slow + away from slot escalates.
