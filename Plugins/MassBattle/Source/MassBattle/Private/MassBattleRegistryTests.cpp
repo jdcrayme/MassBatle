@@ -10,7 +10,7 @@
 
 namespace
 {
-	UWorld* MakeWorld()
+	UWorld* MakeRegistryTestWorld()
 	{
 		return UWorld::CreateWorld(EWorldType::Game, false);
 	}
@@ -31,7 +31,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRegistry_StaleHandles,
 
 bool FRegistry_StaleHandles::RunTest(const FString& Parameters)
 {
-	UWorld* World = MakeWorld();
+	UWorld* World = MakeRegistryTestWorld();
 	UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>();
 	TestNotNull(TEXT("registry"), Registry);
 	if (!Registry)
@@ -76,7 +76,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRegistry_RoundTrip10k,
 
 bool FRegistry_RoundTrip10k::RunTest(const FString& Parameters)
 {
-	UWorld* World = MakeWorld();
+	UWorld* World = MakeRegistryTestWorld();
 	UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>();
 	if (!Registry)
 	{
@@ -131,7 +131,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRegistry_FreeListReuseSafety,
 
 bool FRegistry_FreeListReuseSafety::RunTest(const FString& Parameters)
 {
-	UWorld* World = MakeWorld();
+	UWorld* World = MakeRegistryTestWorld();
 	UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>();
 	if (!Registry)
 	{
@@ -181,7 +181,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRegistry_DirtyFlags,
 
 bool FRegistry_DirtyFlags::RunTest(const FString& Parameters)
 {
-	UWorld* World = MakeWorld();
+	UWorld* World = MakeRegistryTestWorld();
 	UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>();
 	if (!Registry)
 	{
@@ -236,7 +236,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRegistry_ExecProbes,
 
 bool FRegistry_ExecProbes::RunTest(const FString& Parameters)
 {
-	UWorld* World = MakeWorld();
+	UWorld* World = MakeRegistryTestWorld();
 	UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>();
 	if (!Registry)
 	{

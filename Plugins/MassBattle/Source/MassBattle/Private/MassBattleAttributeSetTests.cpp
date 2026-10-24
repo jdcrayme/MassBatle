@@ -9,7 +9,7 @@
 
 namespace
 {
-	UWorld* MakeWorld()
+	UWorld* MakeAttrTestWorld()
 	{
 		return UWorld::CreateWorld(EWorldType::Game, false);
 	}
@@ -54,7 +54,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAttributeSet_DelegateAndDirtyFlag,
 
 bool FAttributeSet_DelegateAndDirtyFlag::RunTest(const FString& Parameters)
 {
-	UWorld* World = MakeWorld();
+	UWorld* World = MakeAttrTestWorld();
 	UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>();
 	TestNotNull(TEXT("registry"), Registry);
 	if (!Registry)

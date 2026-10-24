@@ -20,7 +20,7 @@
 
 namespace
 {
-	UWorld* MakeWorld()
+	UWorld* MakeConfigTestWorld()
 	{
 		return UWorld::CreateWorld(EWorldType::Game, false);
 	}
@@ -62,7 +62,7 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEntityConfig_Integrity,
 
 bool FEntityConfig_Integrity::RunTest(const FString& Parameters)
 {
-	UWorld* World = MakeWorld();
+	UWorld* World = MakeConfigTestWorld();
 	UMassEntitySubsystem* EntitySubsystem = World->GetSubsystem<UMassEntitySubsystem>();
 	TestNotNull(TEXT("MassEntitySubsystem"), EntitySubsystem);
 	if (!EntitySubsystem)
