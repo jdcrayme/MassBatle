@@ -1,7 +1,8 @@
-// BattleDebugSubsystem.h -- debug overlay skeleton (roadmap B.2, slimmed per
-// BRIEF §3.1 A1: HOOKS ONLY in Phase 0 -- CVars, dump endpoints, the B.4
-// metrics format, MassInsights wiring note; all on-screen drawing arrives in
-// Phase 2 where the first drawable state exists).
+// BattleDebugSubsystem.h -- debug overlay + B.4 metrics (roadmap B.2). Phase 1
+// (decision A3) adds the first DRAWABLE states: path polyline, slot-error
+// magnitude, unstuck ladder level -- minimal DrawDebug-class lines via the
+// thread-safe line queue below (workers enqueue, the game-thread Tick drains
+// and draws). Everything else stays hook-only per the Phase 0 A1 decision.
 #pragma once
 
 #include "CoreMinimal.h"
@@ -22,16 +23,35 @@ struct FBattleFrameMetrics
 	UPROPERTY() double RegistryHash32 = 0.0; // placeholder carrier; Task 10 widens
 };
 
+/** One queued overlay line (world space, centimeters). LadderLevel > 0 draws
+ *  a small box marker at the midpoint (A3 unstuck hook). */
+struct FBattleOverlayLine
+{
+	FVector From = FVector::ZeroVector;
+	FVector To = FVector::ZeroVector;
+	FColor Color = FColor::White;
+	int32 LadderLevel = 0;
+};
+
 UCLASS()
-class MASSBATTLE_API UBattleDebugSubsystem : public UWorldSubsystem
+class MASSBATTLE_API UBattleDebugSubsystem : public UTickableWorldSubsystem
 {
 	GENERATED_BODY()
 
 public:
+	// -- USubsystem --
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
+
+	// -- FTickableGameObject (UTickableWorldSubsystem) --
+	virtual void Tick(float DeltaTime) override;
+	virtual TStatId GetStatId() const override;
 
 	/** Called by UnitSync (thin shim) to record its per-frame cost. */
 	void RecordUnitSyncMs(double Ms);
+
+	/** Thread-safe overlay enqueue (worker processors call this; A3 states
+	 *  only: slot-error magnitude, path polyline, unstuck ladder). */
+	void EnqueueOverlayLine(const FBattleOverlayLine& Line);
 
 	/** B.4 metrics line, EXEC_RESULT-formatted, for log-based evidence. */
 	void DumpMetrics();
@@ -40,4 +60,7 @@ public:
 
 private:
 	FBattleFrameMetrics LastMetrics;
+
+	FCriticalSection OverlayMutex;
+	TArray<FBattleOverlayLine> PendingOverlayLines;
 };

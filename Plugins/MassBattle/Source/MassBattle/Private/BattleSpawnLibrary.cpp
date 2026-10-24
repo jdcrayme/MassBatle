@@ -103,6 +103,7 @@ FBattleSpawnResult UBattleSpawnLibrary::SpawnUnit(UWorld* World, const FUnitSpaw
 	FormationPayload.SpacingScale = 1.f;
 	FormationPayload.Generation = 1;
 	FormationPayload.NumFiles = FMath::Max(1, FMath::CeilToInt(static_cast<float>(Spec.SoldierCount) / FMath::Max(1, Spec.NumRanks)));
+	FormationPayload.NumSlots = Spec.SoldierCount;
 	FormationPayload.RankSpacing = Spec.FormationSpacing * 100.f;
 	FormationPayload.FileSpacing = Spec.FormationSpacing * 100.f;
 	const FSharedStruct SharedFormation = FSharedStruct::Make(FormationPayload);

@@ -3,20 +3,22 @@
 #include "BattleExecCommands.h"
 #include "MassBattleModule.h"
 
+#include "DrawDebugHelpers.h"
 #include "Engine/World.h"
 #include "MassEntitySubsystem.h"
 #include "HAL/IConsoleManager.h"
 
 namespace
 {
-	// A1: the on-screen toggle is a HOOK only -- nothing draws in Phase 0.
+	// A1/A3: the on-screen toggle gates the first drawable states (phase 1:
+	// path polyline, slot-error magnitude, unstuck ladder level).
 	int32 BattleDebugShowOverlay = 0;
 	int32 BattleDebugEnabled = 0;
 
 	FAutoConsoleVariableRef GBattleDebugShowOverlay(
 		TEXT("Battle.Debug.ShowOverlay"),
 		BattleDebugShowOverlay,
-		TEXT("1 = overlay hook armed (drawing arrives Phase 2 per A1)"),
+		TEXT("1 = draw the A3 overlay states (path polyline, slot error, unstuck ladder)"),
 		ECVF_Default);
 
 	FAutoConsoleVariableRef GBattleDebugEnabled(
@@ -30,6 +32,42 @@ void UBattleDebugSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
 	LastMetrics = FBattleFrameMetrics();
+}
+
+void UBattleDebugSubsystem::Tick(float DeltaTime)
+{
+	Super::Tick(DeltaTime);
+
+	TArray<FBattleOverlayLine> Lines;
+	{
+		FScopeLock Lock(&OverlayMutex);
+		Lines = MoveTemp(PendingOverlayLines);
+		PendingOverlayLines.Reset();
+	}
+	if (!BattleDebugShowOverlay || Lines.Num() == 0 || !GetWorld())
+	{
+		return;
+	}
+	for (const FBattleOverlayLine& Line : Lines)
+	{
+		DrawDebugLine(GetWorld(), Line.From, Line.To, Line.Color, false, 0.f, 0, 2.f);
+		if (Line.LadderLevel > 0)
+		{
+			const FVector Mid = (Line.From + Line.To) * 0.5f;
+			DrawDebugString(GetWorld(), Mid, FString::Printf(TEXT("L%d"), Line.LadderLevel), nullptr, Line.Color, 0.f, true);
+		}
+	}
+}
+
+TStatId UBattleDebugSubsystem::GetStatId() const
+{
+	RETURN_QUICK_DECLARE_CYCLE_STAT(UBattleDebugSubsystem, STATGROUP_Tickables);
+}
+
+void UBattleDebugSubsystem::EnqueueOverlayLine(const FBattleOverlayLine& Line)
+{
+	FScopeLock Lock(&OverlayMutex);
+	PendingOverlayLines.Add(Line);
 }
 
 void UBattleDebugSubsystem::RecordUnitSyncMs(double Ms)

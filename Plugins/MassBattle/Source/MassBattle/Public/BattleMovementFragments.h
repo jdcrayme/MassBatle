@@ -95,10 +95,17 @@ struct FUnitFormationSharedFragment : public FMassSharedFragment
 
 	/** Entities per rank (files across). 0 = layout not yet initialized. */
 	UPROPERTY() int32 NumFiles = 0;
+	/** Original grid size (spawn count): slots stay 0..NumSlots-1 across
+	 *  casualties so reflow fills gaps without shrinking the frontage. */
+	UPROPERTY() int32 NumSlots = 0;
 	/** Rank depth spacing (cm). */
 	UPROPERTY() float RankSpacing = 0.f;
 	/** File lateral spacing (cm). */
 	UPROPERTY() float FileSpacing = 0.f;
+
+	/** Batched-reflow cadence state (arch §8.4; FReflowScheduler mirror,
+	 *  worker-written). */
+	UPROPERTY() float ReflowCooldown = 0.f;
 
 	/** Planner path; empty (NumPoints<2) until UnitLocomotion plans one. */
 	UPROPERTY() FBattlePathPolyline Path;
