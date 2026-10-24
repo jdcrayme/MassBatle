@@ -272,6 +272,8 @@ Seeded RNG registry (one stream per system, seeded per battle). A compile-time f
 
 Scenario tests S1–S(upto phase) green · debug overlay sanity pass · archetype count unchanged · no new per-frame allocations in hot processors · perf gate at current target count · formula constants unchanged (or diff-reviewed).
 
+Phase 0 entry: `Battle.Unit.*` + `Battle.Data.*` + `Battle.Smoke` (15 tests) and `Battle.Func.*` (S0_SyncLatency / S0_DeathPath / S0_ExitCriteria) green via `Tools/CI/run_tests.bat` · archetype count 2 after the T0 scenario (watched via `Battle.DumpMetrics`) · spawn/sync/death paths each carry their `Battle.*` cvar hooks · no allocations added in UnitSync/DeathObserver hot paths.
+
 ### B.8 Definition of done for any new capability
 
 A capability is not "done" until it has:

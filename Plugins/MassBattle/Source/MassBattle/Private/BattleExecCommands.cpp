@@ -10,6 +10,7 @@
 #include "BattleUnitTrait.h"
 #include "MassBattleModule.h"
 #include "UnitActor.h"
+#include "BattleDebugSubsystem.h"
 
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Engine/World.h"
@@ -181,6 +182,19 @@ namespace BattleExec
 #endif
 	}
 
+	// -- Task 12: B.4 metrics dump --
+	void DumpMetrics(const TArray<FString>& Args, UWorld* World)
+	{
+		if (UBattleDebugSubsystem* Debug = World ? World->GetSubsystem<UBattleDebugSubsystem>() : nullptr)
+		{
+			Debug->DumpMetrics();
+		}
+		else
+		{
+			UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT DumpMetrics FAIL no debug subsystem"));
+		}
+	}
+
 	// -- Task 8: GAS attribute probe --
 	void SetAttr(const TArray<FString>& Args, UWorld* World)
 	{
@@ -324,3 +338,8 @@ static FAutoConsoleCommandWithWorldAndArgs GBattleDumpSharedFrag(
 	TEXT("Battle.DumpSharedFrag"),
 	TEXT("Dumps per-unit FUnitStatsSharedFragment instances (address + key values)"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BattleExec::DumpSharedFrag));
+
+static FAutoConsoleCommandWithWorldAndArgs GBattleDumpMetrics(
+	TEXT("Battle.DumpMetrics"),
+	TEXT("Dumps the B.4 metrics line (archetype count, per-frame UnitSync ms, unit count)"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BattleExec::DumpMetrics));

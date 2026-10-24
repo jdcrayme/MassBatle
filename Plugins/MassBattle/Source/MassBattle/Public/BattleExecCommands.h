@@ -19,6 +19,9 @@ namespace BattleExec
 	void SpawnRoster(const TArray<FString>& Args, UWorld* World);
 	void BuildT0Configs(const TArray<FString>& Args, UWorld* World);
 
+	// -- Task 12 (debug metrics) --
+	void DumpMetrics(const TArray<FString>& Args, UWorld* World);
+
 	// -- Task 8/9 (sync + death probes) --
 	void SetAttr(const TArray<FString>& Args, UWorld* World);
 	void KillEntity(const TArray<FString>& Args, UWorld* World);

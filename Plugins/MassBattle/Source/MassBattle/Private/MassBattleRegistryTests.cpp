@@ -261,6 +261,7 @@ bool FRegistry_ExecProbes::RunTest(const FString& Parameters)
 	GEngine->Exec(World, TEXT("Battle.DumpRegistry")); // engine route, if wired
 	BattleExec::DumpRegistry(TArray<FString>(), World);
 	BattleExec::StateHash(TArray<FString>(), World);
+	BattleExec::DumpMetrics(TArray<FString>(), World); // Task 12 B.4 metrics line
 
 	// Probes must not mutate state (structure-only contract).
 	TestEqual(TEXT("hash unchanged by probes"), Registry->ComputeBookkeepingHash(), HashBefore);
