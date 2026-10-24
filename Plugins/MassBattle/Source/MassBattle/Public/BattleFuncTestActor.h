@@ -7,7 +7,7 @@
 
 #include "CoreMinimal.h"
 #include "FunctionalTest.h"
-#include "MassEntityHandle.h"
+#include "Mass/EntityHandle.h"
 #include "BattleFuncTestActor.generated.h"
 
 class AUnitActor;

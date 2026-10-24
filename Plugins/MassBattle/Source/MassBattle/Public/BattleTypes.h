@@ -6,7 +6,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "MassEntityHandle.h"
+#include "Mass/EntityHandle.h"
 #include "BattleTypes.generated.h"
 
 /** Unit identity: index into the registry + generation serial. Stale handles

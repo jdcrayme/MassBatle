@@ -176,6 +176,52 @@ It doubles as the reusable upgrade checklist for ADR-13's scripted-diff goal.
 
 UnitSync runs `PrePhysics`, group `Battle` (custom), `ExecutionFlags = AllWorldModes`, `bRequiresGameThreadExecution = true`. Final ordering vs engine defaults recorded here in Task 8. **(pending Task 8)**
 
+## 14. Movement-stack audit (Phase 1 Task 1, 2026-10-24)
+
+Scope: the Phase 1 brief §4 digest verified row-by-row against pinned source. Module homes verified: MassMovement = `Engine/Plugins/Runtime/MassGameplay/Source/MassMovement/` (24 files); MassNavigation = `Engine/Plugins/AI/MassAI/Source/MassNavigation/` (see C13). Under decision A1 the engine movement/avoidance stack is **reference-only**; MassMovement is linked (for `FMassVelocityFragment`), MassNavigation is not linked.
+
+### Corrections C13–C20 (brief §4/§1 lines corrected in place per §4 flow)
+
+| # | Brief said | 5.8.4 reality | Brief line fixed |
+|---|------------|---------------|------------------|
+| C13 | §1.8/§4.1: MassNavigation at `/Engine/Plugins/Runtime/MassAI/Source/MassNavigation/` | **`Engine/Plugins/AI/MassAI/Source/MassNavigation/`** — the MassAI plugin lives under `Plugins/AI/`, not `Plugins/Runtime/` (MassGameplay is under `Runtime/`). | ✅ edited |
+| C14 | §4.2: goal force `Force.Value = SteerK * (Steering.DesiredVelocity - Velocity.Value)` | Reference velocity is the **previous desired velocity**, not actual: `Force.Value = SteerK * (Steering.DesiredVelocity - DesiredMovement.DesiredVelocity)` (MassSteeringProcessors.cpp:237); engine comment: "stable against noisy velocity ... dont want to read the actual agent velocity directly". `SteerK = 1/MovingSteeringParams.ReactionTime` confirmed (:110). | ✅ edited |
+| C15 | digest omission | `UMassApplyMovementProcessor` **hard-requires `FMassCodeDrivenMovementTag`** (All) and excludes `FSpringMovementSettings` + `FMassCustomMovementTag` (MassMovementProcessors.cpp:85-88): the engine's default mover only moves code-driven-tagged entities. | ✅ edited |
+| C16 | §4.2: "clamps by `FMassMovementParameters` (MaxSpeed / MaxAcceleration) apply in this area" | ApplyForce clamps desired velocity to **MaxSpeed only** (`GetClampedToMaxSize(MovementParams.MaxSpeed)`, MassMovementProcessors.cpp:57). MaxAcceleration is used only in the standing-steering force clamp (MassSteeringProcessors.cpp:344), never by ApplyForce. | ✅ edited |
+| C17 | §4.3 `FMassMoveTargetFragment` "[verify] hard or optional" | **Hard requirement** of both `UMassMovingAvoidanceProcessor` (MassAvoidanceProcessors.cpp:296) and `UMassStandingAvoidanceProcessor` (:1121). Additionally both **hard-require `FMassNavigationEdgesFragment`** (:295, :1120) — engine avoidance presumes the nav-edges pipeline. Strengthens A1 (adoption would drag in move targets + nav edges). | ✅ edited |
+| C18 | §4.4 item 4: "Is grid iteration order deterministic?" | Yes, given deterministic insertion: `FindCloseObstacles` sorts candidate cells by squared distance before iteration (MassAvoidanceProcessors.cpp:53-101) and per-agent obstacle lists are distance-sorted (:815-822, :1277). Caveat: standing steering uses `FMath::RandRange` (MassSteeringProcessors.cpp:272,304 — nondeterministic); `UE::RandomSequence::FRand(Entity.Index)` at :259 is deterministic. Option B contingency stays viable but carries C17's fragment prerequisites. | ✅ edited |
+| C19 | deferred item: "`MassEntityHandle.h` include → `Mass/EntityHandle.h` before next engine release" | Confirmed: `MassEntity/Public/MassEntityHandle.h` is a `UE_DEPRECATED_HEADER(5.8)` shim forwarding to `Mass/EntityHandle.h` (MassCore; already linked). Both project includes migrated at Task 1 (BattleTypes.h, BattleFuncTestActor.h). | ✅ done |
+| C20 | digest omissions (new facts) | (a) The movement input fragment is **`FMassDesiredMovementFragment`** `{DesiredVelocity, DesiredFacing, DesiredMaxSpeedOverride}` (MassMovementFragments.h:35) — the digest's "DesiredVelocity" is its field. (b) ApplyForce/ApplyMovement clamp delta time `FMath::Min(0.1f, DT)` (MassMovementProcessors.cpp:41,100). (c) ApplyForce **zeroes `Force.Value`** after integration (:60) — the accumulator is per-frame. | ✅ edited |
+
+### Verified rows (movement-stack symbol table)
+
+| Symbol | Verdict | Actual 5.8.4 | Source |
+|---|---|---|---|
+| `FMassVelocityFragment` | ✅ | `FVector Value` ("actual physical velocity of the mass entity") | `MassMovement/Public/MassMovementFragments.h:19` |
+| `FMassDesiredMovementFragment` | ✅ (C20a) | `DesiredVelocity` + `DesiredFacing` + `DesiredMaxSpeedOverride=FLT_MAX` | MassMovementFragments.h:35 |
+| `FMassForceFragment` | ✅ | `FVector Value`, per-frame accumulator, zeroed by ApplyForce | MassMovementFragments.h:47; MassMovementProcessors.cpp:60 |
+| `FMassMovementParameters` | ✅ | `MaxSpeed=200` (cm/s) · `MaxAcceleration=250` (cm/s²) · `DefaultDesiredSpeed=140` · `DefaultDesiredSpeedVariance=0.1` · `HeightSmoothingTime=0.2s` · `MovementStyles[]` · `bIsCodeDrivenMovement=true`; all units cm-explicit via `ForceUnits` metadata — **no cm-vs-m mixing** | MassMovementFragments.h:82-151 |
+| `FMassCodeDrivenMovementTag` / `FMassCustomMovementTag` | ✅ (C15) | tags gating ApplyMovement / opting out of it | MassMovementFragments.h:64,75 |
+| `FAgentRadiusFragment` | ✅ | `float Radius = 40.f` — centimeters | `MassCommon/Public/MassCommonFragments.h:11-16` |
+| `UMassApplyForceProcessor` | ✅ | `DesiredVelocity = (Old + Force*Min(0.1,DT)).GetClampedToMaxSize(MaxSpeed)`; group ApplyForces, ExecuteAfter Avoidance; query: DesiredMovement RW + Force RW + OffLOD None + MovementParameters const-shared All | `MassMovement/Public/Movement/MassMovementProcessors.h`; body `Private/MassMovementProcessors.cpp:38-63` |
+| `UMassApplyMovementProcessor` | ✅ | `Velocity = DesiredVelocity` (code-driven: direct assign, no smoothing); `Translation += Velocity*Min(0.1,DT)`; **no ground snap, no Z handling** (height smoothing is `UMassNavigationSmoothHeightProcessor`, MassNavigation) | MassMovementProcessors.cpp:96-146 |
+| `UMassSimpleMovementProcessor` / `UMassSimpleMovementTrait` | ✅ | minimal reference: `Transform += Velocity*DT`, honors variable-tick fragment when present; runs in group **Avoidance** (not Movement); Example-folder code | `MassMovement/Public/Example/MassSimpleMovementTrait.h:22,32`; body `Private/MassSimpleMovementTrait.cpp` |
+| Spring movement family | ✅ (note-only) | `MassSpringMovement*.h` + own group name `UE::Mass::ProcessorGroupNames::SpringMovement` (MassMovementTypes.h:11) | `MassMovement/Public/MassSpringMovement*.h` |
+| `UMassSteerToMoveTargetProcessor` | ✅ | order confirmed: ExecuteAfter Tasks, ExecuteBefore Avoidance (cpp:62-63); goal-force formula per C14; Move/Stand/Animate action branches; hard-requires MoveTarget + Steering + StandingSteering + Ghost + Force + DesiredMovement fragments | `MassNavigation/Public/Steering/MassSteeringProcessors.h`; body `Private/MassSteeringProcessors.cpp` |
+| `FMassMoveTargetFragment` | ✅ (C17) | engine move target (Center/Forward/DesiredSpeed/action state) | `MassNavigation/Public/MassNavigationFragments.h:18` |
+| `FMassSteeringFragment` | ✅ | `DesiredVelocity` cache — "Note: not used for moving the entity" | `MassNavigation/Public/Steering/MassSteeringFragments.h:16-25` |
+| `UMassMovingAvoidanceProcessor` / `UMassStandingAvoidanceProcessor` | ✅ | Experimental (header comment "Experimental: move using cumulative forces"); requirements per C17/C18 | `MassNavigation/Public/Avoidance/MassAvoidanceProcessors.h:20,37`; body `Private/MassAvoidanceProcessors.cpp` |
+| `FMassMovingAvoidanceParameters` / `FMassStandingAvoidanceParameters` | ✅ | const shared fragments (tunable docs in header) | `MassNavigation/Public/Avoidance/MassAvoidanceFragments.h:14,118` |
+| `UMassNavigationObstacleGridProcessor` | ✅ | exists as named (feeds obstacle grid; paired `UMassNavigationObstacleRemoverProcessor`) | `MassNavigation/Public/MassNavigationProcessors.h:72` |
+| `UE::Mass::ProcessorGroupNames::Avoidance / ApplyForces / Movement` | ✅ | used verbatim as ctor group assignments in the audited processors | MassMovementProcessors.cpp:25-26,76-77; MassSteeringProcessors.cpp:62-63 |
+| Debug surface | ✅ | `LogAvoidance`, `LogAvoidanceVelocities`, `LogAvoidanceAgents`, `LogAvoidanceObstacles` categories declared (MassAvoidanceProcessors.h:11-14); UE_VLOG segments throughout steering/avoidance | MassAvoidanceProcessors.h |
+
+**§4.4 item 6 — velocity-fragment adoption decision:** the project **adopts engine `FMassVelocityFragment`** for per-entity velocity (recorded as an arch §3.1 note, A7 pattern): it is the exact concept the arch row names ("position, velocity, servo output"), it is a trivial blittable struct with no behavioral coupling, and MassMovement is linked anyway — a duplicate project `FVelocityFragment` would be a second name for the same bytes and a future query/processor mismatch hazard. Servo writes it; Integrate consumes it; no engine processor touches battle entities (A1).
+
+### Discrepancies vs Phase 1 brief §4 — all resolved
+
+C13–C20 above. None change the A1 decision: the engine pipeline remains reference-only; C17 (nav-edges hard requirement) and C18 (sorted, mostly-deterministic grid iteration) are recorded for the Option B contingency.
+
 ---
 
 ### Discrepancies vs BRIEF §4 — all resolved
@@ -504,4 +550,7 @@ Primary: MassSample README (Megafunk, updated to 5.8) · vrealmatic Mass Framewo
 | Gauntlet doc pages (dev.epicgames.com, 5.8): Framework / Overview / Run Gauntlet Tests / Gauntlet Controller | nightly orchestration design, `UGauntletTestController`, RunUAT invocation |
 | Epic forums: "Correct way to create mass entities" (Jan 2026), "Mass Signal vs. Observer processor" (Jan 2026), automation command-line threads; StackOverflow automation answer | spawner usage discipline (IsProcessing/Defer), two SpawnEntities overloads, `-ExecCmds`/`-TestExit` headless pattern |
 | Epic "Write C++ Tests in Unreal Engine"; unreal-garden testing tutorial | `IMPLEMENT_SIMPLE_AUTOMATION_TEST`, flags, `FAutomationEditorCommonUtils` |
+| Epic 5.8 docs — "Mass Avoidance — Overview" (Experimental warning, force-based description) + MassMovement API page | Phase 1 brief §4 digest: avoidance processor/fragment inventory, Experimental status, debug categories (pre-verification; audited on-machine 2026-10-24 → Part A §14) |
+| vrealmatic Mass wiki — Steering page (5.8-updated) | goal-force formula + `SteerK = 1/ReactionTime`, trait/fragment shapes (pre-verification; C14 corrected the reference-velocity term on-machine) |
+| Community MassGameplay source-analysis repo | ApplyForce `DesiredVelocity += Force*DT` integration claim (pre-verification; confirmed on-machine with C16/C20 refinements) |
 | `Docs/phases/pre-phase-0/report.md` §2/§4 (on-machine) | all [machine] facts in §1/§2 |

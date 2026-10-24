@@ -23,6 +23,7 @@ public class MassBattle : ModuleRules
 			"MassCommon",
 			"MassSimulation",  // Task 8: UMassSimulationSubsystem probe + Mass phases in game worlds
 			"MassLOD",         // audit M2: FMassVariableTickChunkFragment probe in the T0.9 contract assert
+			"MassMovement",    // phase1 T1: FMassVelocityFragment adoption (arch §3.1 note); engine movement stack stays reference-only under A1
 			// GAS arrives with Phase 0 unit actors; linking now avoids a config churn later
 			"GameplayAbilities",
 			// Task 9: FGameplayTag / FGameplayTagContainer (death up-path events)
