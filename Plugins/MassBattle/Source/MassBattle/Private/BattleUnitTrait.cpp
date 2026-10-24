@@ -26,9 +26,13 @@ void UBattleUnitTrait::BuildTemplate(FMassEntityTemplateBuildContext& BuildConte
 	if (bMelee)    { BuildContext.AddTag<FMeleeTag>(); }
 	if (bBow)      { BuildContext.AddTag<FBowTag>(); }
 
-	// Template-level shared fragment of the per-unit type: ADR-14 anchor is a
-	// null handle here (template default); the spawn path (registry/spawn
-	// library) replaces it with the real per-unit instance.
+	// Template-level shared fragment of the per-unit type: the ADR-14 anchor is
+	// necessarily a NULL handle here -- a template cannot know a future unit
+	// handle, so all config-spawned entities of one config share this one
+	// null-anchored instance. Per ADR-17: Route B is config-integrity
+	// validation only (T0.3); these entities must NEVER be used as battle
+	// units (real units spawn via UBattleSpawnLibrary / Route A, which creates
+	// a properly anchored per-unit instance).
 	FUnitStatsSharedFragment DefaultStats;
 	DefaultStats.OwnerUnit = FUnitHandle();
 	BuildContext.AddSharedFragment(FSharedStruct::Make(DefaultStats));

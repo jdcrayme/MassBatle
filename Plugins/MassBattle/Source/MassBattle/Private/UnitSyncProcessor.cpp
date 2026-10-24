@@ -29,12 +29,14 @@ void UUnitSyncProcessor::ConfigureQueries(const TSharedRef<FMassEntityManager>& 
 
 void UUnitSyncProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionContext& Context)
 {
-	// Pipeline probe (Task 8 diagnostics): first-call + every-1000th-call trace.
+	// Pipeline probe (Task 8 diagnostics): first-call + every-1000th-call trace
+	// (audit M6: demoted from Display -- Verbose keeps it grep-able when
+	// explicitly enabled without per-frame log traffic).
 	static int64 ExecuteCount = 0;
 	++ExecuteCount;
 	if (ExecuteCount == 1 || ExecuteCount % 1000 == 0)
 	{
-		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT UnitSync ExecuteCalls=%lld"), ExecuteCount);
+		UE_LOG(LogMassBattle, Verbose, TEXT("EXEC_RESULT UnitSync ExecuteCalls=%lld"), ExecuteCount);
 	}
 
 	// B.4 metric: per-frame processor ms into the debug subsystem (Task 12).
@@ -62,7 +64,11 @@ void UUnitSyncProcessor::Execute(FMassEntityManager& EntityManager, FMassExecuti
 		FUnitStatsSharedFragment& Stats = Context.GetMutableSharedFragment<FUnitStatsSharedFragment>();
 		++ChunksMatched;
 
-		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT UnitSync Chunk anchor=%u:%u dirty=%d melee=%.3f"),
+		// Audit M6: per-chunk/per-frame logging was a Task 8 diagnostic that
+		// formats a string for every chunk every frame -- hot-path spam (and a
+		// B.7 "no hot-path allocations" violation) at scale. VeryVerbose keeps
+		// the diagnostic available without steady-state cost.
+		UE_LOG(LogMassBattle, VeryVerbose, TEXT("UnitSync Chunk anchor=%u:%u dirty=%d melee=%.3f"),
 		       Stats.OwnerUnit.Index, Stats.OwnerUnit.Serial,
 		       Registry->IsStatsDirty(Stats.OwnerUnit) ? 1 : 0, Stats.MeleeAttackMult);
 
@@ -93,6 +99,6 @@ void UUnitSyncProcessor::Execute(FMassEntityManager& EntityManager, FMassExecuti
 
 	if (ChunksMatched > 0)
 	{
-		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT UnitSync ChunksMatched=%d"), ChunksMatched);
+		UE_LOG(LogMassBattle, VeryVerbose, TEXT("UnitSync ChunksMatched=%d"), ChunksMatched);
 	}
 }

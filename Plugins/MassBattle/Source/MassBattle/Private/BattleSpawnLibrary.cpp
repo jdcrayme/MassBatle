@@ -113,7 +113,10 @@ FBattleSpawnResult UBattleSpawnLibrary::SpawnUnit(UWorld* World, const FUnitSpaw
 	const FMassArchetypeHandle Archetype = EntityManager.CreateArchetype(Descriptor, CreationParams);
 	if (UNLIKELY(!Archetype.IsValid()))
 	{
+		// Audit low: release the slot registered above or the failure path
+		// leaks it (stale handle in the registry with no entities).
 		UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT SpawnRoster FAIL archetype creation failed"));
+		Registry->UnregisterUnit(Unit);
 		return FBattleSpawnResult();
 	}
 

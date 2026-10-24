@@ -1,8 +1,12 @@
 #include "UnitActor.h"
+#include "BattleGameplayTags.h"
 #include "BattleSpawnLibrary.h"
 #include "BattleRegistry.h"
 #include "MassBattleModule.h"
 
+#include "MassEntitySubsystem.h"
+#include "MassEntityManager.h"
+#include "MassCommandBuffer.h"
 #include "Components/ShapeComponent.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
@@ -30,6 +34,43 @@ void AUnitActor::PostInitializeComponents()
 		// harness lambda bound after spawn did), so the registry linkage binds
 		// when the registry handle exists anyway.
 	}
+}
+
+void AUnitActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	// Audit low: destroying a unit actor used to leak its registry slot and
+	// its Mass entities. Teardown is valid only while the world's Mass entity
+	// manager is alive and not mid-processing (GetSubsystem returns null after
+	// subsystem deinit, which is the guard for world-teardown ordering).
+	Super::EndPlay(EndPlayReason);
+
+	UWorld* World = GetWorld();
+	UUnitRegistrySubsystem* Registry = World ? World->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	UMassEntitySubsystem* EntitySubsystem = World ? World->GetSubsystem<UMassEntitySubsystem>() : nullptr;
+	if (!Registry || !EntitySubsystem || !UnitHandle.IsValid())
+	{
+		return;
+	}
+	FMassEntityManager& EntityManager = EntitySubsystem->GetMutableEntityManager();
+	if (EntityManager.IsProcessing())
+	{
+		// Structural changes are forbidden mid-processing; the roster entities
+		// die with the world in that (not expected on the game thread) case.
+		UE_LOG(LogMassBattle, Warning, TEXT("UnitActor %s destroyed while Mass is processing; roster teardown deferred"), *GetName());
+		return;
+	}
+	if (const TArray<FMassEntityHandle>* Roster = Registry->FindRoster(UnitHandle))
+	{
+		for (const FMassEntityHandle Entity : *Roster)
+		{
+			EntityManager.Defer().DestroyEntity(Entity);
+		}
+		EntityManager.FlushCommands();
+	}
+	Registry->UnregisterUnit(UnitHandle);
+	UE_LOG(LogMassBattle, Verbose, TEXT("EXEC_RESULT UnitActorTeardown Actor=%s Unit=%u:%u"),
+	       *GetName(), UnitHandle.Index, UnitHandle.Serial);
+	UnitHandle = FUnitHandle();
 }
 
 void AUnitActor::OnDeathEvent(FGameplayTag EventTag, const FGameplayEventData* Payload)
@@ -120,15 +161,18 @@ bool AUnitActor::SpawnEntities(FBattleSpawnResult& OutResult, FString& OutError)
 			bDelegatesBound = true;
 		}
 
-		if (!bDeathEventBound && AbilitySystem)
-		{
-			// Up-path observation (arch §5.2): "Battle.Unit.Died" events land here.
-			FGameplayTagContainer Filter;
-			Filter.AddTag(FGameplayTag::RequestGameplayTag(TEXT("Battle.Unit.Died"), /*ErrorIfNotFound*/ false));
-			DeathEventHandle = AbilitySystem->AddGameplayEventTagContainerDelegate(
-				Filter, FGameplayEventTagMulticastDelegate::FDelegate::CreateUObject(this, &AUnitActor::OnDeathEvent));
-			bDeathEventBound = true;
-		}
+			if (!bDeathEventBound && AbilitySystem)
+			{
+				// Up-path observation (arch §5.2): "Battle.Unit.Died" events land here.
+				// Native tag (audit H1): an unregistered tag would silently build an
+				// EMPTY filter container, and empty containers match ALL events.
+				FGameplayTagContainer Filter;
+				Filter.AddTag(TAG_Battle_Unit_Died.GetTag());
+				ensureMsgf(Filter.IsEmpty() == false, TEXT("Battle.Unit.Died native tag must be registered (BattleGameplayTags.cpp)"));
+				DeathEventHandle = AbilitySystem->AddGameplayEventTagContainerDelegate(
+					Filter, FGameplayEventTagMulticastDelegate::FDelegate::CreateUObject(this, &AUnitActor::OnDeathEvent));
+				bDeathEventBound = true;
+			}
 
 		Spec = FUnitSpawnSpec();
 		Spec.EduRowIndex = EduRowIndex;

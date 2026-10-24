@@ -65,14 +65,16 @@ bool FEdu_RoundTripGolden::RunTest(const FString& Parameters)
 	TestNotNull(TEXT("unit0 cost"), Cost0);
 	if (Type0 && Soldier0 && Cost0)
 	{
-		TestEqual(TEXT("unit0 is Peasant Levy"), Type0->GetValue(), FString(TEXT("Peasant Levy")));
+		// 'type' is EduName (verbatim): case is semantic, compare sensitively.
+		TestEqualSensitive(TEXT("unit0 is Peasant Levy"), Type0->GetValue(), FString(TEXT("Peasant Levy")));
 		TestEqual(TEXT("unit0 soldier count"), Soldier0->Values[1], FString(TEXT("40")));
 		TestEqual(TEXT("unit0 cost upkeep"), Cost0->Values[1], FString(TEXT("100")));
 	}
 	const FEduField* Class1 = Units[1].FindField(TEXT("class"));
 	if (Class1)
 	{
-		TestEqual(TEXT("unit1 class (token lowercased)"), Class1->GetValue(), FString(TEXT("spear")));
+		// Token lowercasing is semantically load-bearing: compare case-sensitively.
+		TestEqualSensitive(TEXT("unit1 class (token lowercased)"), Class1->GetValue(), FString(TEXT("spear")));
 	}
 	const FEduField* Pri1 = Units[1].FindField(TEXT("stat_pri"));
 	if (Pri1)
@@ -82,6 +84,8 @@ bool FEdu_RoundTripGolden::RunTest(const FString& Parameters)
 	}
 
 	// tables -> canonical text
+	// Audit M3: canonical-form equality is byte-sensitive by definition --
+	// plain TestEqual compares with Stricmp and is blind to case regressions.
 	const FString Canonical1 = FBattleEduParser::SerializeCanonical(Units);
 
 	// canonical text -> tables -> canonical text (fixed point)
@@ -94,7 +98,7 @@ bool FEdu_RoundTripGolden::RunTest(const FString& Parameters)
 		return false;
 	}
 	const FString Canonical2 = FBattleEduParser::SerializeCanonical(Units2);
-	TestEqual(TEXT("canonical form is a fixed point"), Canonical2, Canonical1);
+	TestEqualSensitive(TEXT("canonical form is a fixed point"), Canonical2, Canonical1);
 
 	// canonical text vs the HAND-WRITTEN canonical golden of the fixture
 	const FString GoldenCanonical = FString(
@@ -127,7 +131,7 @@ bool FEdu_RoundTripGolden::RunTest(const FString& Parameters)
 		"stat_charge_dist 30\n"
 		"stat_cost 1, 250, 220, 90, 120, 220\n"
 		"ownership england, france\n");
-	TestEqual(TEXT("canonical text matches hand-written golden"), Canonical1, GoldenCanonical);
+	TestEqualSensitive(TEXT("canonical text matches hand-written golden"), Canonical1, GoldenCanonical);
 
 	return true;
 }
@@ -213,10 +217,10 @@ bool FEdu_EdgeCases::RunTest(const FString& Parameters)
 
 		const FString Expected = FString(
 			"type X\n") +
-			TEXT("dictionary x\n" // NOTE: 'dictionary' is a token field -> lowercased
+			TEXT("dictionary X\n" // EduName kind: VERBATIM, not lowercased (canonicalization rule 4).
 			"category infantry\n"
 			"class light\n"
-			"soldier x, 40, 0, 1\n"       // leading zeros stripped
+			"soldier X, 40, 0, 1\n"       // leading zeros stripped; name kept verbatim
 			"attributes\n"
 			"formation 1.2, 1.2, 2.4, 2.4, 3, square\n" // float forms normalized
 			"stat_health 1, 1\n"
@@ -226,7 +230,11 @@ bool FEdu_EdgeCases::RunTest(const FString& Parameters)
 			"stat_charge_dist 30\n"
 			"stat_cost 1, 100, 90, 40, 60, 90\n"
 			"ownership england\n");
-		TestEqual(TEXT("messy canonical matches expected normalization"), Canonical, Expected);
+		// Audit M3: byte-sensitive compare. The old expectation lowercased the
+		// EduName values ('soldier x') contradicting the parser contract; the
+		// old case-INsensitive TestEqual hid the contradiction. This now fails
+		// loudly if EduName handling or the canonical form changes case.
+		TestEqualSensitive(TEXT("messy canonical matches expected normalization"), Canonical, Expected);
 	}
 
 	return true;

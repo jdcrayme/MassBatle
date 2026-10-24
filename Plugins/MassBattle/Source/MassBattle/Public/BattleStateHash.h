@@ -1,8 +1,9 @@
 // BattleStateHash.h -- deterministic sim-state hash (roadmap B.5 hooks,
-// T0.6). Pure function: no wall clock, no frame counters, no non-sim state.
-// Folds: registry bookkeeping (sorted handles, serials, roster sizes, dirty
-// bits) + per-entity quantized state (HP at 1e-2, FDeadTag presence) +
-// archetype count + per-unit shared-fragment values (quantized at 1e-2).
+// T0.6). Pure function: no wall clock, no frame counters, no non-sim state
+// (dirty flags are pipeline scheduling state and are excluded -- audit M4).
+// Folds: registry bookkeeping (sorted handles, serials, roster sizes) +
+// per-entity quantized state (HP at 1e-2, FDeadTag presence) + archetype
+// count + per-unit shared-fragment values (quantized at 1e-2).
 #pragma once
 
 #include "CoreMinimal.h"

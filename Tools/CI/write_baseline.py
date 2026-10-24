@@ -55,16 +55,33 @@ def main():
     ap.add_argument("--spawn-us", type=float, default=None)
     ap.add_argument("--baselines-dir", default=None,
                     help="defaults to <repo>/Baselines/perf relative to this script")
+    ap.add_argument("--out", default=None,
+                    help="explicit output path; REQUIRED for nightly candidate "
+                         "writes (audit H2: the candidate must never overwrite "
+                         "the committed reference before the compare passes)")
+    ap.add_argument("--seed-from", default=None,
+                    help="seed the candidate's metric set from this reference "
+                         "JSON so metrics the nightly does not measure (e.g. "
+                         "entity_spawn_80_us) survive promotion")
     args = ap.parse_args()
 
     repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     base_dir = args.baselines_dir or os.path.join(repo, "Baselines", "perf")
     tag_dir = os.path.join(base_dir, MACHINE_TAG)
     os.makedirs(tag_dir, exist_ok=True)
-    out = os.path.join(tag_dir, "%s.json" % args.gate)
+    out = args.out or os.path.join(tag_dir, "%s.json" % args.gate)
+    if args.out:
+        os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
 
     doc = None
-    if os.path.exists(out):
+    seed_path = args.seed_from
+    if seed_path and os.path.exists(seed_path):
+        try:
+            with open(seed_path, "r", encoding="ascii") as f:
+                doc = json.load(f)
+        except ValueError:
+            doc = None
+    if doc is None and os.path.exists(out):
         try:
             with open(out, "r", encoding="ascii") as f:
                 doc = json.load(f)
@@ -87,8 +104,12 @@ def main():
     if args.smoke_log:
         dur = smoke_duration_seconds(args.smoke_log)
         if dur is not None:
+            doc["metrics"].setdefault(
+                "smoke_test_duration_s", {"value": None, "unit": "s", "tolerance": 0.5})
             doc["metrics"]["smoke_test_duration_s"]["value"] = dur
     if args.spawn_us is not None:
+        doc["metrics"].setdefault(
+            "entity_spawn_80_us", {"value": None, "unit": "us", "tolerance": 0.5})
         doc["metrics"]["entity_spawn_80_us"]["value"] = args.spawn_us
 
     with open(out, "w", encoding="ascii", newline="\n") as f:

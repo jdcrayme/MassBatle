@@ -6,7 +6,9 @@
 #include "BattleRegistry.h"
 #include "BattleFragments.h"
 #include "BattleDeathPath.h"
+#include "BattleRngRegistry.h"
 #include "BattleSpawnLibrary.h"
+#include "BattleStateHash.h"
 #include "BattleUnitTrait.h"
 #include "MassBattleModule.h"
 #include "UnitActor.h"
@@ -66,16 +68,57 @@ namespace BattleExec
 
 	void StateHash(const TArray<FString>& Args, UWorld* World)
 	{
-		UUnitRegistrySubsystem* Registry = GetRegistry(World);
-		if (!Registry)
+		if (!World)
 		{
-			UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT StateHash FAIL no world/registry"));
+			UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT StateHash FAIL no world"));
 			return;
 		}
-		const uint32 Hash = Registry->ComputeBookkeepingHash();
-		// Task 10 replaces the placeholder with the full CityHash64 sim-state hash.
-		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT StateHash Hash=%08x Units=%d"),
-		       Hash, Registry->GetUnitCount());
+		// Full sim-state CityHash64 (Task 10; audit M7 -- this command used to
+		// emit the registry bookkeeping placeholder).
+		const uint64 Hash = FBattleStateHash::Compute(World);
+		UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>();
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT StateHash Hash=%016llx Units=%d"),
+		       Hash, Registry ? Registry->GetUnitCount() : 0);
+	}
+
+	// -- Task 10: seeded-RNG discipline probe (brief 5 Task 10.2; restored by
+	// the audit fix pass, which found it was never implemented) --
+	void RngSelfTest(const TArray<FString>& Args, UWorld* World)
+	{
+		const int32 RootSeed = Args.Num() > 0 ? FCString::Atoi(*Args[0]) : 20261024;
+		FBattleRngRegistry A;
+		FBattleRngRegistry B;
+		A.Seed(RootSeed);
+		B.Seed(RootSeed);
+
+		uint64 FoldA = 1469598103934665603ull;
+		uint64 FoldB = FoldA;
+		for (int32 i = 0; i < 1000; ++i)
+		{
+			const uint32 Va = static_cast<uint32>(A.GetStream(TEXT("Pairing")).RandRange(0, 1000000));
+			const uint32 Vb = static_cast<uint32>(B.GetStream(TEXT("Pairing")).RandRange(0, 1000000));
+			FoldA = (FoldA ^ Va) * 1099511628211ull;
+			FoldB = (FoldB ^ Vb) * 1099511628211ull;
+		}
+		FBattleRngRegistry C;
+		C.Seed(RootSeed + 1);
+		const uint32 FirstOther = static_cast<uint32>(C.GetStream(TEXT("Pairing")).RandRange(0, 1000000));
+		const uint32 FirstA = static_cast<uint32>(A.GetStream(TEXT("Pairing")).RandRange(0, 1000000));
+
+		const bool bEqualRootsMatch = (FoldA == FoldB);
+		const bool bDifferentRootsDiverge = (FirstA != FirstOther);
+		const bool bPass = bEqualRootsMatch && bDifferentRootsDiverge;
+		UE_LOG(LogMassBattle, Display,
+		       TEXT("EXEC_RESULT RngSelfTest Seed=%d EqualRootsMatch=%d DifferentRootsDiverge=%d Streams=%d"),
+		       RootSeed, bEqualRootsMatch ? 1 : 0, bDifferentRootsDiverge ? 1 : 0, A.GetStreamCount());
+		if (bPass)
+		{
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT RngSelfTest PASS"));
+		}
+		else
+		{
+			UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT RngSelfTest FAIL"));
+		}
 	}
 
 	// -- Task 6: spawn path --
@@ -216,6 +259,13 @@ namespace BattleExec
 			{
 				continue;
 			}
+			// If a stale actor with the same slot index still exists, prefer the
+			// actor whose handle the registry currently validates (audit low).
+			if (UUnitRegistrySubsystem* Reg = GetRegistry(World);
+				Reg && !Reg->IsHandleValid(Actor->GetUnitHandle()))
+			{
+				continue;
+			}
 			bFound = true;
 			UAbilitySystemComponent* ASC = Actor->GetAbilitySystemComponent();
 			const FGameplayAttribute Attribute = UUnitAttributeSet::FindAttributeByName(AttrName);
@@ -234,8 +284,9 @@ namespace BattleExec
 		}
 	}
 
-	// -- Task 9: kill path (deferred sparse tag + explicit flush; E5 audited
-	// flush point: the observer fires during this flush) --
+	// -- Task 9: kill path (deferred REGULAR tag per ADR-15 final state +
+	// explicit flush; E5 audited flush point: the observer fires during this
+	// flush) --
 	void KillEntity(const TArray<FString>& Args, UWorld* World)
 	{
 		// Args: <UnitIndex> <RosterIndex>
@@ -316,8 +367,13 @@ static FAutoConsoleCommandWithWorldAndArgs GBattleDumpRegistry(
 
 static FAutoConsoleCommandWithWorldAndArgs GBattleStateHash(
 	TEXT("Battle.StateHash"),
-	TEXT("Emits EXEC_RESULT StateHash with the registry bookkeeping hash"),
+	TEXT("Emits EXEC_RESULT StateHash with the full sim-state CityHash64 (registry + entities + shared fragments)"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BattleExec::StateHash));
+
+static FAutoConsoleCommandWithWorldAndArgs GBattleRngSelfTest(
+	TEXT("Battle.RngSelfTest"),
+	TEXT("[RootSeed] -- derives streams from two equal-root registries and asserts identical 1000-draw folds; EXEC_RESULT RngSelfTest PASS/FAIL"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BattleExec::RngSelfTest));
 
 static FAutoConsoleCommandWithWorldAndArgs GBattleSpawnRoster(
 	TEXT("Battle.SpawnRoster"),

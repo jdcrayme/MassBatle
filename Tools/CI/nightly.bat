@@ -57,14 +57,34 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo [nightly 4/5] Writing + comparing baseline JSON...
-python "%THIS_DIR%write_baseline.py" --gate nightly-smoke --smoke-log "%GAUNTLET_LOG%"
+echo [nightly 4/5] Writing candidate baseline + comparing against the committed reference...
+REM Audit H2 fix: the nightly writes a CANDIDATE under last_nightly/ (untracked)
+REM and compares it against the COMMITTED reference. The reference is promoted
+REM (overwritten + committed) only when the compare passes, so a regression
+REM fails the nightly and leaves the reference untouched.
+set REF_BASELINE=%PROJ_DIR%\Baselines\perf\ref-i7-9700F-1660Ti\nightly-smoke.json
+set CAND_BASELINE=%NIGHT_DIR%\candidate-nightly-smoke.json
+python "%THIS_DIR%write_baseline.py" --gate nightly-smoke --smoke-log "%GAUNTLET_LOG%" --out "%CAND_BASELINE%" --seed-from "%REF_BASELINE%"
 if errorlevel 1 (
     echo [nightly] baseline write FAILED
     exit /b 1
 )
-python "%THIS_DIR%compare_baseline.py" --baseline "%THIS_DIR%..\..\Baselines\perf\ref-i7-9700F-1660Ti\nightly-smoke.json" --candidate "%THIS_DIR%..\..\Baselines\perf\ref-i7-9700F-1660Ti\nightly-smoke.json" --tolerance 0.5
 
+if not exist "%REF_BASELINE%" (
+    echo [nightly] no committed reference yet -- promoting first candidate as the baseline
+    copy /y "%CAND_BASELINE%" "%REF_BASELINE%" >nul
+    goto baseline_commit
+)
+
+python "%THIS_DIR%compare_baseline.py" --baseline "%REF_BASELINE%" --candidate "%CAND_BASELINE%" --tolerance 0.5
+if errorlevel 1 (
+    echo [nightly] BASELINE REGRESSION -- reference NOT updated; candidate kept at %CAND_BASELINE%
+    exit /b 1
+)
+
+copy /y "%CAND_BASELINE%" "%REF_BASELINE%" >nul
+
+:baseline_commit
 echo [nightly 5/5] Committing baseline...
 cd /d "%PROJ_DIR%"
 git add Baselines/perf

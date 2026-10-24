@@ -62,9 +62,11 @@ public:
 
 /**
  * Unit actor: authority + interface (arch §5.1 down-path registration).
- * PostInitializeComponents wires InitAbilityActorInfo + the attribute-change
- * delegates that set the registry dirty flag (one frame of latency accepted;
- * UnitSync consumes the flags).
+ * PostInitializeComponents wires InitAbilityActorInfo. The attribute-change
+ * delegates (snapshot write + registry dirty flag, one frame of latency
+ * accepted; UnitSync consumes the flags) are bound in SpawnEntities, where the
+ * registry handle the handlers report on becomes meaningful -- on-machine,
+ * bindings made in PostInitializeComponents did not survive to change time.
  */
 UCLASS()
 class MASSBATTLE_API AUnitActor : public AActor, public IAbilitySystemInterface
@@ -75,6 +77,7 @@ public:
 	AUnitActor();
 
 	virtual void PostInitializeComponents() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual UAbilitySystemComponent* GetAbilitySystemComponent() const override { return AbilitySystem; }
 
 	/** Spawn the entity roster (Task 6 spawn path) from SpawnSpec + row stats. */

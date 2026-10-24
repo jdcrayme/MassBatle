@@ -56,11 +56,9 @@ struct FUnitRuntimeState
 	/** Cached attribute values (updated by AUnitActor GAS delegates, arch §5.1). */
 	FBattleAttributeSnapshot CachedAttributes;
 
-	/** Per-slot generation counter; ++ on every free so stale FUnitHandles die. */
+	/** Per-slot generation counter; ++ on every (re)allocation so stale
+	 *  FUnitHandles die. */
 	int32 Generation = 0;
-
-	/** Slot in use? (registry TMap only holds live units; this mirrors the free-list state) */
-	bool bInUse = false;
 
 	// Phase 0: engagement-record stub intentionally empty (arch §2.3) --
 	// engagement records arrive with the Phase 2 engagement solver.

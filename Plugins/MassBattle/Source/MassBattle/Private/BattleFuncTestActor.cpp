@@ -5,6 +5,8 @@
 #include "BattleSpawnLibrary.h"
 #include "MassEntitySubsystem.h"
 #include "MassEntityManager.h"
+#include "MassEntityQuery.h"
+#include "MassExecutionContext.h"
 #include "MassEntityView.h"
 #include "MassBattleModule.h"
 #include "BattleDeathPath.h"
@@ -285,8 +287,39 @@ void AUnitDeathPathTest::StartTest()
 		CompleteTest(EFunctionalTestResult::Error, FString::Printf(TEXT("spawn failed: %s"), *Error));
 		return;
 	}
+	RosterCountAtSpawn = SpawnResult.NumEntities;
 	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S0_DeathPath Spawned Unit=%u:%u Entities=%d"),
 	       SpawnResult.Unit.Index, SpawnResult.Unit.Serial, SpawnResult.NumEntities);
+}
+
+namespace
+{
+	/** Standalone dead/live query counts (audit M1: the contracted
+	 *  "removed from live queries" assert, run as an actual query). */
+	void CountBattleQueries(FMassEntityManager& EM, int32& OutDeadCount, int32& OutLiveBattleCount)
+	{
+		OutDeadCount = 0;
+		OutLiveBattleCount = 0;
+
+		FMassExecutionContext Ctx(EM);
+		const TSharedPtr<FMassEntityManager> SharedEM = Ctx.GetSharedEntityManager();
+
+		FMassEntityQuery DeadQuery(SharedEM);
+		DeadQuery.AddTagRequirement<FDeadTag>(EMassFragmentPresence::All);
+		DeadQuery.ForEachEntityChunk(Ctx, [&OutDeadCount](FMassExecutionContext& ChunkCtx)
+		{
+			OutDeadCount += ChunkCtx.GetNumEntities();
+		});
+
+		FMassExecutionContext LiveCtx(EM);
+		FMassEntityQuery LiveQuery(SharedEM);
+		LiveQuery.AddRequirement<FOwnerUnitFragment>(EMassFragmentAccess::ReadOnly);
+		LiveQuery.AddTagRequirement<FDeadTag>(EMassFragmentPresence::None);
+		LiveQuery.ForEachEntityChunk(LiveCtx, [&OutLiveBattleCount](FMassExecutionContext& ChunkCtx)
+		{
+			OutLiveBattleCount += ChunkCtx.GetNumEntities();
+		});
+	}
 }
 
 void AUnitDeathPathTest::Tick(float DeltaSeconds)
@@ -310,74 +343,126 @@ void AUnitDeathPathTest::Tick(float DeltaSeconds)
 
 	if (!bKillRequested)
 	{
-		// Let the world settle one tick after spawn, then kill roster[5] via
-		// the KillEntity bridge (deferred tag + explicit flush at the E5-audited
-		// flush point: the death observer fires during this flush).
-		if (GetWorld()->GetTimeSeconds() < 0.25)
+		// Let the world settle 2 full ticks after spawn (tick-counted; the old
+		// GetTimeSeconds() < 0.25 wall-clock gate violated the B.0 contract).
+		++SettleTicks;
+		if (SettleTicks < 2)
 		{
 			return;
 		}
+		if (Roster->Num() != RosterCountAtSpawn)
+		{
+			CompleteTest(EFunctionalTestResult::Error, TEXT("roster mutated before the kill"));
+			return;
+		}
 		bKillRequested = true;
-		DeadEntityHandle = (*Roster)[5]; // capture BEFORE the roster mutates
-		TArray<FString> Args;
-		Args.Add(FString::Printf(TEXT("%u"), Handle.Index));
-		Args.Add(TEXT("5"));
-		BattleExec::KillEntity(Args, World);
+		DeadEntityHandle = (*Roster)[5];       // capture BEFORE the roster mutates
+		SecondDeadEntityHandle = (*Roster)[6];
+
+		// TWO kills in the SAME frame (audit H3 regression): each KillEntity
+		// flushes its own tag add. Without the FDeadSignaledTag idempotence
+		// marker, the second flush re-signaled the first corpse -- double GAS
+		// event + double deferred destroy.
+		TArray<FString> Args5;
+		Args5.Add(FString::Printf(TEXT("%u"), Handle.Index));
+		Args5.Add(TEXT("5"));
+		BattleExec::KillEntity(Args5, World);
+		TArray<FString> Args6;
+		Args6.Add(FString::Printf(TEXT("%u"), Handle.Index));
+		Args6.Add(TEXT("6"));
+		BattleExec::KillEntity(Args6, World);
 		KillTick = 0;
-		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S0_DeathPath Kill requested at tick 0 Entity=%u:%u"),
-		       DeadEntityHandle.Index, DeadEntityHandle.SerialNumber);
+
+		// Immediate post-flush asserts (audit M1: never vacuously on an
+		// already-destroyed entity -- both corpses are alive right here).
+		bool bOk = true;
+		for (const FMassEntityHandle Dead : {DeadEntityHandle, SecondDeadEntityHandle})
+		{
+			const FMassEntityView DeadView(EM, Dead);
+			if (!DeadView.HasTag<FDeadTag>())
+			{
+				AddError(TEXT("T0.5 FAIL: dead entity lacks FDeadTag after the audited flush"));
+				bOk = false;
+			}
+			if (!DeadView.HasTag<FDeadSignaledTag>())
+			{
+				AddError(TEXT("H3 FAIL: signaled corpse lacks the FDeadSignaledTag idempotence marker"));
+				bOk = false;
+			}
+		}
+
+		// Live-query counts (audit M1): exactly the two corpses are out.
+		int32 DeadCount = 0;
+		int32 LiveCount = 0;
+		CountBattleQueries(EM, DeadCount, LiveCount);
+		if (DeadCount != 2 || LiveCount != RosterCountAtSpawn - 2)
+		{
+			AddError(FString::Printf(TEXT("T0.5 FAIL: live-query counts dead=%d live=%d (want 2/%d)"),
+				DeadCount, LiveCount, RosterCountAtSpawn - 2));
+			bOk = false;
+		}
+		if (!bOk)
+		{
+			CompleteTest(EFunctionalTestResult::Error, TEXT("post-flush death asserts failed"));
+			return;
+		}
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S0_DeathPath Kill flushed dead=2 live=%d marker=2"), LiveCount);
 		return;
 	}
 
 	++KillTick;
-	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S0_DeathPath TickTrace tick=%d valid=%d roster=%d gas=%d"),
-	       KillTick, (DeadEntityHandle.IsValid() && EM.IsEntityValid(DeadEntityHandle)) ? 1 : 0,
-	       Registry->GetRosterSize(Handle), Unit->GetDeathEventCount());
 
-	// T0.5 timing (observer path, E5 contract): the kill flush fires the
-	// observer DURING the flush and the whole chain can complete within the
-	// same frame -- guard every dead-entity access with validity first.
-	const bool bDeadStillValid = DeadEntityHandle.IsValid() && EM.IsEntityValid(DeadEntityHandle);
-
-	if (KillTick == 1 && bDeadStillValid)
+	if (KillTick >= 1)
 	{
-		// (a) tag present on the captured handle -> removed from live queries
-		// (regular tag per ADR-15 final state: archetype flip).
-		const FMassEntityView DeadView(EM, DeadEntityHandle);
-		if (!DeadView.HasTag<FDeadTag>())
+		// (b)+(c) roster updated (two removals) + TWO GAS events by now.
+		const int32 RosterSize = Registry->GetRosterSize(Handle);
+		const int32 GasCount = Unit->GetDeathEventCount();
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S0_DeathPath Tick=%d Roster=%d GAS=%d"),
+		       KillTick, RosterSize, GasCount);
+		if (RosterSize != RosterCountAtSpawn - 2 || GasCount != 2)
 		{
-			AddError(TEXT("T0.5 FAIL: dead entity lacks FDeadTag after the audited flush"));
-			CompleteTest(EFunctionalTestResult::Error, TEXT("tag missing"));
+			AddError(FString::Printf(TEXT("T0.5 FAIL: roster=%d gas=%d (want %d/2 -- exactly one signal per corpse, audit H3)"),
+				RosterSize, GasCount, RosterCountAtSpawn - 2));
+			CompleteTest(EFunctionalTestResult::Error, TEXT("roster/GAS failed"));
 			return;
 		}
 	}
 
 	if (KillTick >= 2)
 	{
-		// (b)+(c) roster updated + GAS event observed by now.
-		const int32 RosterSize = Registry->GetRosterSize(Handle);
-		const int32 GasCount = Unit->GetDeathEventCount();
-		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S0_DeathPath Tick=%d DeadValid=%d Roster=%d GAS=%d"),
-		       KillTick, bDeadStillValid ? 1 : 0, RosterSize, GasCount);
-		if (RosterSize != 7 || GasCount != 1)
-		{
-			AddError(FString::Printf(TEXT("T0.5 FAIL: roster=%d gas=%d (want 7/1)"), RosterSize, GasCount));
-			CompleteTest(EFunctionalTestResult::Error, TEXT("roster/GAS failed"));
-			return;
-		}
-	}
-
-	if (KillTick >= 3)
-	{
-		// (d) queued destroy completed (corpse policy is Phase 5).
-		const bool bStillValid = DeadEntityHandle.IsValid() && EM.IsEntityValid(DeadEntityHandle);
-		if (bStillValid)
+		// (d) queued destroys completed (corpse policy is Phase 5).
+		const bool bFirstValid = DeadEntityHandle.IsValid() && EM.IsEntityValid(DeadEntityHandle);
+		const bool bSecondValid = SecondDeadEntityHandle.IsValid() && EM.IsEntityValid(SecondDeadEntityHandle);
+		if (bFirstValid || bSecondValid)
 		{
 			AddError(TEXT("T0.5 FAIL: deferred destroy did not complete"));
 			CompleteTest(EFunctionalTestResult::Error, TEXT("destroy pending"));
 			return;
 		}
-		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S0_DeathPath Destroyed=1 at tick %d"), KillTick);
+
+		// (e) audit M5: survivor fragments carry their live roster position.
+		int32 IndexErrors = 0;
+		const TArray<FMassEntityHandle>* LiveRoster = Registry->FindRoster(Handle);
+		if (LiveRoster)
+		{
+			for (int32 i = 0; i < LiveRoster->Num(); ++i)
+			{
+				const FMassEntityView View(EM, (*LiveRoster)[i]);
+				const FOwnerUnitFragment* OwnerFrag = View.GetFragmentDataPtr<FOwnerUnitFragment>();
+				if (!OwnerFrag || OwnerFrag->RosterIndex != i)
+				{
+					++IndexErrors;
+				}
+			}
+		}
+		if (IndexErrors != 0)
+		{
+			AddError(FString::Printf(TEXT("M5 FAIL: %d survivor fragments carry stale RosterIndex"), IndexErrors));
+			CompleteTest(EFunctionalTestResult::Error, TEXT("roster restamp failed"));
+			return;
+		}
+
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S0_DeathPath Destroyed=2 Restamp=ok at tick %d"), KillTick);
 		Unit->Destroy();
 		CompleteTest(EFunctionalTestResult::Succeeded, TEXT("death path complete"));
 	}
@@ -506,6 +591,15 @@ void AUnitExitCriteriaTest::Tick(float DeltaSeconds)
 			Args.Add(FString::Printf(TEXT("%u"), HA0.Index));
 			Args.Add(TEXT("5"));
 			BattleExec::KillEntity(Args, World);
+			// Audit M1: assert the tag IMMEDIATELY after the audited flush --
+			// the old deferred check passed vacuously once the corpse was
+			// destroyed (`!bDeadValid || HasTag`).
+			if (!FMassEntityView(EM, DeadEntityHandle).HasTag<FDeadTag>())
+			{
+				AddError(TEXT("exit-criteria death FAIL: corpse lacks FDeadTag right after the kill flush"));
+				CompleteTest(EFunctionalTestResult::Error, TEXT("death phase failed"));
+				return;
+			}
 			return;
 		}
 		if (TicksInPhase >= 3)
@@ -513,7 +607,8 @@ void AUnitExitCriteriaTest::Tick(float DeltaSeconds)
 			const FUnitHandle HA = UnitA->GetUnitHandle();
 			const bool bRosterOk = (Registry->GetRosterSize(HA) == 39);
 			// Destroyed entities have no archetype: a destroyed handle proves the
-			// full chain ran (tag -> signal -> roster -> destroy).
+			// full chain ran (tag -> signal -> roster -> destroy). The tag itself
+			// was already asserted immediately post-flush above.
 			const bool bDeadValid = DeadEntityHandle.IsValid() && EM.IsEntityValid(DeadEntityHandle);
 			const bool bTagged = !bDeadValid || FMassEntityView(EM, DeadEntityHandle).HasTag<FDeadTag>();
 			const bool bGas = (UnitA->GetDeathEventCount() == 1);

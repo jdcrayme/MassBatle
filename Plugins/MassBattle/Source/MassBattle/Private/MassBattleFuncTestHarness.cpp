@@ -147,8 +147,9 @@ namespace
 				// T0.9: apply + assert the test-mode contract at scenario start
 				// (roadmap B.0: assert ACTIVE engine settings, not CVars being
 				// set; the -game process does not seed the contract on its own).
+				// World is passed (audit M2) so the Mass-side probes run.
 				UBattleTestSettings::ApplyTestMode();
-				UBattleTestSettings::AssertTestMode(Owner);
+				UBattleTestSettings::AssertTestMode(Owner, nullptr, World);
 				return false;
 			}
 

@@ -26,4 +26,7 @@ namespace BattleExec
 	void SetAttr(const TArray<FString>& Args, UWorld* World);
 	void KillEntity(const TArray<FString>& Args, UWorld* World);
 	void DumpSharedFrag(const TArray<FString>& Args, UWorld* World);
+
+	// -- Task 10 (RNG discipline probe; restored by the audit fix pass) --
+	void RngSelfTest(const TArray<FString>& Args, UWorld* World);
 }

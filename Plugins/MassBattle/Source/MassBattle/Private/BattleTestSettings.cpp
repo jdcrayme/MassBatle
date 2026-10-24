@@ -6,6 +6,11 @@
 #include "HAL/PlatformTime.h"
 #include "Misc/AutomationTest.h"
 #include "Misc/App.h"
+#include "Engine/World.h"
+#include "MassEntitySubsystem.h"
+#include "MassEntityQuery.h"
+#include "MassExecutionContext.h"
+#include "MassLODFragments.h" // FMassVariableTickChunkFragment (MassLOD, audit M2 probe)
 
 namespace
 {
@@ -56,7 +61,7 @@ bool UBattleTestSettings::ApplyTestMode()
 	return true;
 }
 
-bool UBattleTestSettings::AssertTestMode(FAutomationTestBase* Test, TArray<FString>* OutViolations)
+bool UBattleTestSettings::AssertTestMode(FAutomationTestBase* Test, TArray<FString>* OutViolations, UWorld* World)
 {
 	bool bClean = true;
 	const auto Fail = [Test, OutViolations, &bClean](const FString& What)
@@ -100,6 +105,51 @@ bool UBattleTestSettings::AssertTestMode(FAutomationTestBase* Test, TArray<FStri
 	if (!GetContractCvar(TEXT("Battle.Test.ForceFullDetail")))
 	{
 		Fail(TEXT("Battle.Test.ForceFullDetail is not set"));
+	}
+
+	// 4. Engine-side Mass state (audit M2: read ACTIVE settings, not contract
+	// cvars). Requires a world; callers that have one pass it (S-scenario
+	// harness, T0.9 unit test).
+	if (World)
+	{
+		// Simulation ticking must be on under test -- the off value silently
+		// freezes the processor pipeline and makes tick-counted asserts lie.
+		if (const IConsoleVariable* SimTicking = IConsoleManager::Get().FindConsoleVariable(TEXT("mass.SimulationTickingEnabled")))
+		{
+			if (SimTicking->GetInt() == 0)
+			{
+				Fail(TEXT("mass.SimulationTickingEnabled is 0 in an active test world"));
+			}
+		}
+		// Query parallelism is part of the audited scheduling state (audit §11):
+		// chunk execution stays deterministic for pure reads while it is on --
+		// pin it so a flipped default cannot silently change scheduling.
+		if (const IConsoleVariable* Parallel = IConsoleManager::Get().FindConsoleVariable(TEXT("mass.AllowQueryParallelFor")))
+		{
+			if (Parallel->GetInt() == 0)
+			{
+				Fail(TEXT("mass.AllowQueryParallelFor is 0 -- audited test-mode scheduling state changed"));
+			}
+		}
+		// Variable tick off = no battle archetype may carry the variable-tick
+		// chunk fragment (it is only added by UMassLODTrait, which Phase 0-1
+		// battle entities never carry -- this probe fails if that changes).
+		if (UMassEntitySubsystem* EntitySubsystem = World->GetSubsystem<UMassEntitySubsystem>())
+		{
+			FMassEntityManager& EM = EntitySubsystem->GetMutableEntityManager();
+			FMassExecutionContext Ctx(EM);
+			FMassEntityQuery VarTickQuery(Ctx.GetSharedEntityManager());
+			VarTickQuery.AddChunkRequirement<FMassVariableTickChunkFragment>(EMassFragmentAccess::ReadOnly);
+			int32 VarTickEntities = 0;
+			VarTickQuery.ForEachEntityChunk(Ctx, [&VarTickEntities](FMassExecutionContext& ChunkCtx)
+			{
+				VarTickEntities += ChunkCtx.GetNumEntities();
+			});
+			if (VarTickEntities > 0)
+			{
+				Fail(FString::Printf(TEXT("%d entities carry FMassVariableTickChunkFragment -- variable-tick scheduling active under test"), VarTickEntities));
+			}
+		}
 	}
 
 	return bClean;

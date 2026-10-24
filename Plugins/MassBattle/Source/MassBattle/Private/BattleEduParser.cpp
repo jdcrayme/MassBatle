@@ -98,13 +98,18 @@ namespace
 		{
 			Digits.RightChopInline(1);
 		}
-		int32 FirstSignificant = 0;
-		while (FirstSignificant < Digits.Len() - 1 && Digits[FirstSignificant] == TEXT('0'))
-		{
-			++FirstSignificant;
-		}
-		Digits = Digits.Mid(FirstSignificant);
-		return (bNegative ? TEXT("-") : TEXT("")) + Digits;
+	int32 FirstSignificant = 0;
+	while (FirstSignificant < Digits.Len() - 1 && Digits[FirstSignificant] == TEXT('0'))
+	{
+		++FirstSignificant;
+	}
+	Digits = Digits.Mid(FirstSignificant);
+	// "-0" normalizes to "0" (audit low: the sign carried through zero-strip).
+	if (!bNegative || Digits == TEXT("0"))
+	{
+		return Digits;
+	}
+	return TEXT("-") + Digits;
 	}
 
 	FString NormalizeFloat(const FString& Raw, bool& bOutOk)
@@ -139,8 +144,13 @@ namespace
 			bOutOk = Raw.Len() > 0;
 			return Raw.TrimStartAndEnd();
 		case EduToken:
-			bOutOk = Raw.TrimStartAndEnd().Len() > 0;
-			return Raw.TrimStartAndEnd().ToLower();
+		{
+			// Tokens are single tokens: internal whitespace is a loud error, not
+			// a silent two-word token (audit low).
+			const FString Trimmed = Raw.TrimStartAndEnd();
+			bOutOk = Trimmed.Len() > 0 && !Trimmed.Contains(TEXT(" "));
+			return Trimmed.ToLower();
+		}
 		case EduInt:
 			return NormalizeInt(Raw, bOutOk);
 		case EduFloat:
@@ -226,6 +236,7 @@ bool FBattleEduParser::Parse(const FString& EduText, TArray<FEduUnit>& OutUnits,
 
 	bool bSawAnyField = false;
 	FEduUnit Current;
+	int32 CurrentUnitStartLine = 0; // audit low: order/completeness errors report the unit's first line
 
 	const auto CommitUnit = [&]()
 	{
@@ -237,14 +248,14 @@ bool FBattleEduParser::Parse(const FString& EduText, TArray<FEduUnit>& OutUnits,
 			{
 				if (Cursor >= Current.Fields.Num() || Current.Fields[Cursor].Key != Spec.Key)
 				{
-					Fail(OutError, 0, FString::Printf(TEXT("unit missing or misordered field '%s' (canonical order required)"), *Spec.Key));
+					Fail(OutError, CurrentUnitStartLine, FString::Printf(TEXT("unit missing or misordered field '%s' (canonical order required)"), *Spec.Key));
 					return false;
 				}
 				++Cursor;
 			}
 			if (Current.Fields.Num() != GetSchema().Num())
 			{
-				Fail(OutError, 0, TEXT("unit has fields beyond the schema"));
+				Fail(OutError, CurrentUnitStartLine, TEXT("unit has fields beyond the schema"));
 				return false;
 			}
 			OutUnits.Add(MoveTemp(Current));
@@ -341,6 +352,10 @@ bool FBattleEduParser::Parse(const FString& EduText, TArray<FEduUnit>& OutUnits,
 			Field.Values.Add(MoveTemp(Normalized));
 		}
 		Current.Fields.Add(MoveTemp(Field));
+		if (!bSawAnyField)
+		{
+			CurrentUnitStartLine = LineNumber;
+		}
 		bSawAnyField = true;
 	}
 

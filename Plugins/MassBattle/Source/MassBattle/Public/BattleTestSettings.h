@@ -17,6 +17,7 @@
 #include "BattleTestSettings.generated.h"
 
 class FAutomationTestBase;
+class UWorld;
 
 UCLASS()
 class MASSBATTLE_API UBattleTestSettings : public UObject
@@ -26,8 +27,14 @@ class MASSBATTLE_API UBattleTestSettings : public UObject
 public:
 	/** Check the ACTIVE engine state against the test-mode contract. Violations
 	 *  are AddError'd on Test (when non-null) and always returned via
-	 *  OutViolations. Returns true when clean. */
-	static bool AssertTestMode(FAutomationTestBase* Test = nullptr, TArray<FString>* OutViolations = nullptr);
+	 *  OutViolations. Returns true when clean.
+	 *
+	 *  World (optional, audit M2): when provided, Mass-side probes also run
+	 *  against actual engine state -- battle archetypes must carry no
+	 *  variable-tick chunk fragment (variable-tick off), and the engine
+	 *  simulation-ticking / query-parallelism cvars must be in their audited
+	 *  state (T0.9 reads ACTIVE settings, not the contract cvars being set). */
+	static bool AssertTestMode(FAutomationTestBase* Test = nullptr, TArray<FString>* OutViolations = nullptr, UWorld* World = nullptr);
 
 	/** Apply the contract (called by CI launch scripts / test setup): fixed
 	 *  step on at 1/60, contract CVars on. Returns true when applied. */

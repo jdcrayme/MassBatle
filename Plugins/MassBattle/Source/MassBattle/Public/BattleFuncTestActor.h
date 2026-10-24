@@ -47,9 +47,14 @@ protected:
 };
 
 // ---------------------------------------------------------------------------
-// S0_DeathPath (T0.5): kill one entity via the KillEntity bridge (deferred
-// sparse tag + explicit flush at the E5-audited point); assert tag visible,
-// roster updated, GAS event observed, deferred destroy completes.
+// S0_DeathPath (T0.5): kill TWO entities in the same frame via the KillEntity
+// bridge (deferred REGULAR tag per ADR-15 final state + explicit flush at the
+// E5-audited point). Asserts immediately after the flush -- never vacuously on
+// an already-destroyed entity (audit M1): FDeadTag + FDeadSignaledTag present
+// and dead/live query counts correct. Then: roster 8->6, TWO GAS events (two
+// kills in one frame used to re-signal the first corpse -- audit H3), deferred
+// destroys complete, and survivor RosterIndex fragments are restamped to their
+// live roster positions (audit M5).
 // ---------------------------------------------------------------------------
 UCLASS()
 class MASSBATTLE_API AUnitDeathPathTest : public AFunctionalTest
@@ -68,8 +73,10 @@ public:
 private:
 	UPROPERTY() TObjectPtr<AUnitActor> Unit;
 	FMassEntityHandle DeadEntityHandle;
+	FMassEntityHandle SecondDeadEntityHandle;
+	int32 RosterCountAtSpawn = 0;
+	int32 SettleTicks = 0;
 	int32 KillTick = -1;
-	bool bKilled = false;
 	bool bKillRequested = false;
 };
 

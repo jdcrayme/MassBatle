@@ -60,7 +60,6 @@ FUnitHandle UUnitRegistrySubsystem::RegisterUnit(const FUnitSpawnSpec& Spec)
 
 	FUnitRuntimeState& State = Units.Add(Handle);
 	State.Generation = Generation;
-	State.bInUse = true;
 
 	FUnitSpawnSpec& StoredSpec = SpecsByIndex.Add(Index);
 	StoredSpec = Spec;
@@ -211,9 +210,10 @@ TArray<FUnitHandle> UUnitRegistrySubsystem::GetSortedHandles() const
 uint32 UUnitRegistrySubsystem::ComputeBookkeepingHash() const
 {
 	UE_MT_SCOPED_READ_ACCESS(AccessDetector);
-	// Deterministic fold over sorted handles: serial + roster size + dirty bit.
-	// Task 10's FBattleStateHash replaces this with the full sim-state CityHash64
-	// and keeps this fold as its registry term.
+	// Deterministic fold over sorted handles: serial + roster size. Dirty flags
+	// are deliberately EXCLUDED (audit M4): they are transient pipeline
+	// scheduling state, not sim state -- a MarkStatsDirty with no data change
+	// must not perturb the sim-state hash (T2.8-style two-run comparisons).
 	uint32 Hash = 0x9E3779B9; // golden-ratio seed
 	for (const FUnitHandle& Handle : GetSortedHandles())
 	{
@@ -221,7 +221,6 @@ uint32 UUnitRegistrySubsystem::ComputeBookkeepingHash() const
 		const int32 RosterSize = State ? State->Roster.Num() : -1;
 		Hash = HashCombine(Hash, ::GetTypeHash(Handle));
 		Hash = HashCombine(Hash, ::GetTypeHash(RosterSize));
-		Hash = HashCombine(Hash, ::GetTypeHash(static_cast<int32>(DirtyStats.Contains(Handle) ? 1 : 0)));
 	}
 	Hash = HashCombine(Hash, ::GetTypeHash(FreeIndices.Num()));
 	return Hash;

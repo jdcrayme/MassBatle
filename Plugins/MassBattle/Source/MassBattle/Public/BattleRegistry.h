@@ -16,8 +16,9 @@
  * Handle registry + roster bookkeeping + dirty-flag fan-out.
  *
  * Handle discipline (T0.1): Index is slot-based (free-list reuse); Serial is a
- * per-slot generation counter that increments on every free, so a stale handle
- * (old Serial) is rejected. Handles are value types; Serial 0 is invalid.
+ * per-slot generation counter that increments on every (re)allocation, so a
+ * stale handle (old Serial) is rejected. Handles are value types; Serial 0 is
+ * invalid.
  *
  * Dirty flags: MarkStatsDirty is idempotent per frame (set semantics); the
  * UnitSync processor reads-and-clears them (Task 8).
@@ -79,8 +80,9 @@ public:
 	/** Gather live handles in a deterministic order (sorted by Index). */
 	TArray<FUnitHandle> GetSortedHandles() const;
 
-	/** Stable hash of registry bookkeeping state. Task 10 replaces this with
-	 *  the full CityHash64 sim-state hash; the bookkeeping fold is kept. */
+	/** Stable fold of registry bookkeeping (serials + roster sizes + free-list
+	 *  depth; dirty flags excluded as non-sim state, audit M4). The full
+	 *  sim-state hash is FBattleStateHash (Task 10), which folds this in. */
 	uint32 ComputeBookkeepingHash() const;
 
 	/** Number of free slots held for reuse (leak diagnostics). */

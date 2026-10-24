@@ -9,6 +9,7 @@
 #include "MassEntityView.h"
 #include "BattleFragments.h"
 #include "Misc/App.h"
+#include "Misc/ScopeExit.h"
 #include "HAL/IConsoleManager.h"
 
 #include "BattleStateHash.h"
@@ -176,14 +177,21 @@ bool FRng_Discipline::RunTest(const FString& Parameters)
 			SeqA, Draw10k(C, TEXT("Pairing")));
 	}
 
-	// Stream laziness: getting the same named stream twice returns the SAME
-	// stream (continuing sequence), a fresh registry has none.
+	// Stream laziness + persistence (audit low: comparing GetCurrentSeed alone
+	// passes even if GetStream re-seeded on every call). S1 consumed position 1;
+	// a fresh reference stream with the same derived seed replays the sequence,
+	// so after burning position 1 the reference's next draw must equal S2's
+	// next draw. If GetStream restarted the stream instead, S2 would return
+	// position 1 again and the compare would fail.
 	FBattleRngRegistry R;
 	R.Seed(7);
 	FRandomStream& S1 = R.GetStream(TEXT("Combat"));
 	S1.RandRange(0, 100);
 	FRandomStream& S2 = R.GetStream(TEXT("Combat"));
-	TestEqual(TEXT("named stream is persistent"), S1.GetCurrentSeed(), S2.GetCurrentSeed());
+	FRandomStream Reference(FBattleRngRegistry::DeriveSeed(7, TEXT("Combat")));
+	Reference.RandRange(0, 100); // burn position 1 (same draw S1 made)
+	TestEqual(TEXT("named stream persists (second handle CONTINUES the sequence)"),
+		S2.RandRange(0, 100), Reference.RandRange(0, 100));
 	TestEqual(TEXT("one stream materialized"), R.GetStreamCount(), 1);
 
 	return true;
@@ -195,6 +203,17 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FTestMode_AssertAndViolation,
 
 bool FTestMode_AssertAndViolation::RunTest(const FString& Parameters)
 {
+	// Audit low: ApplyTestMode flips process-global FApp state -- save the
+	// original so the editor session / other tests are not left ticking
+	// fixed-step after this test.
+	const bool bSavedUseFixed = FApp::UseFixedTimeStep();
+	const double SavedDelta = FApp::GetFixedDeltaTime();
+	ON_SCOPE_EXIT
+	{
+		FApp::SetUseFixedTimeStep(bSavedUseFixed);
+		FApp::SetFixedDeltaTime(SavedDelta);
+	};
+
 	// T0.9: the helper reads ACTIVE engine settings and catches deliberate
 	// violations (roadmap: assert active settings, not CVars being set).
 	// Violations are probed through a null sink + out-array so this test's own
@@ -204,9 +223,43 @@ bool FTestMode_AssertAndViolation::RunTest(const FString& Parameters)
 	TestTrue(TEXT("FApp fixed step active"), FApp::UseFixedTimeStep());
 	TestEqual(TEXT("fixed delta is 1/60"), FApp::GetFixedDeltaTime(), 1.0 / 60.0);
 
+	// Audit M2: the Mass-side probes run with a world that actually contains
+	// battle archetypes (otherwise the variable-tick probe is vacuous).
+	UWorld* World = MakeStateTestWorld();
+	if (TestNotNull(TEXT("world for Mass probes"), World))
+	{
+		UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>();
+		UMassEntitySubsystem* ES = World->GetSubsystem<UMassEntitySubsystem>();
+		if (TestNotNull(TEXT("registry"), Registry) && TestNotNull(TEXT("entities"), ES))
+		{
+			TArray<FEduUnit> Rows;
+			if (!TestTrue(TEXT("fixture"), LoadFixtureForState(Rows)))
+			{
+				World->DestroyWorld(false);
+				return false;
+			}
+			FUnitSpawnSpec Spec;
+			Spec.EduRowIndex = 0;
+			Spec.SoldierCount = 4;
+			Spec.UnitName = TEXT("T09Probe");
+			FBattleSpawnResult Result;
+			FString Error;
+			if (!TestTrue(TEXT("probe units spawned"),
+				UBattleSpawnLibrary::SpawnUnitFromEduRow(World, Spec, Rows[0], Result, Error)))
+			{
+				AddError(Error);
+				World->DestroyWorld(false);
+				return false;
+			}
+			TestTrue(TEXT("clean Mass-side contract (ticking on, no variable-tick fragments, parallelism pinned)"),
+				UBattleTestSettings::AssertTestMode(nullptr, nullptr, World));
+		}
+	}
+	World->DestroyWorld(false);
+
 	// Deliberate violation #1: fixed step off -> AssertTestMode must fail.
-	const bool bSavedUseFixed = FApp::UseFixedTimeStep();
-	const double SavedDelta = FApp::GetFixedDeltaTime();
+	const bool bProbeSavedUseFixed = FApp::UseFixedTimeStep();
+	const double ProbeSavedDelta = FApp::GetFixedDeltaTime();
 	FApp::SetUseFixedTimeStep(false);
 	{
 		TArray<FString> Violations;
@@ -215,8 +268,8 @@ bool FTestMode_AssertAndViolation::RunTest(const FString& Parameters)
 		TestTrue(TEXT("violation names the fixed step"), Violations.ContainsByPredicate(
 			[](const FString& V) { return V.Contains(TEXT("UseFixedTimeStep")); }));
 	}
-	FApp::SetUseFixedTimeStep(bSavedUseFixed);
-	FApp::SetFixedDeltaTime(SavedDelta);
+	FApp::SetUseFixedTimeStep(bProbeSavedUseFixed);
+	FApp::SetFixedDeltaTime(ProbeSavedDelta);
 
 	// Deliberate violation #2: contract cvar off -> detected.
 	IConsoleVariable* Cvar = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Test.DisableTimeSlicing"));

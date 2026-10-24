@@ -27,3 +27,7 @@ Desktop.ini
 Tools/CI/last_run/
 Tools/CI/last_nightly/
 Tools/CI/last_run.json
+
+# Docs reorganization backup zips (owner safety nets, not repo content)
+Docs.zip
+Docs/old/

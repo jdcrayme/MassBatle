@@ -22,6 +22,7 @@ public class MassBattle : ModuleRules
 			"MassSignals",   // core engine module in 5.8
 			"MassCommon",
 			"MassSimulation",  // Task 8: UMassSimulationSubsystem probe + Mass phases in game worlds
+			"MassLOD",         // audit M2: FMassVariableTickChunkFragment probe in the T0.9 contract assert
 			// GAS arrives with Phase 0 unit actors; linking now avoids a config churn later
 			"GameplayAbilities",
 			// Task 9: FGameplayTag / FGameplayTagContainer (death up-path events)

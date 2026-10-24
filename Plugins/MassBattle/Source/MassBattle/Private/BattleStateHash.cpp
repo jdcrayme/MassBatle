@@ -34,7 +34,8 @@ uint64 FBattleStateHash::Compute(UWorld* World)
 		Append(&V, sizeof(V));
 	};
 
-	// 1. Registry bookkeeping (sorted handles -> serials -> roster sizes -> dirty bits).
+	// 1. Registry bookkeeping (sorted handles -> serials -> roster sizes;
+	// dirty flags excluded -- transient pipeline state, audit M4).
 	uint64 Bookkeeping = Registry->ComputeBookkeepingHash();
 	AppendU64(Bookkeeping);
 

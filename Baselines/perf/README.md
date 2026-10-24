@@ -39,8 +39,15 @@ Rules:
   script reports it as PENDING and skips it.
 - `tolerance` is a fraction (0.5 = +50% allowed). Per-metric tolerance wins
   over the compare script's `--tolerance` default (0.25).
-- Compare with `Tools/CI/compare_baseline.py --baseline <this file>
-  --candidate <new file>`. Nonzero exit = regression beyond tolerance.
+- **Reference/candidate flow (audit H2 fix).** The file under
+  `Baselines/perf/` is the committed REFERENCE and is only modified on purpose.
+  The nightly writes a candidate JSON to `Tools/CI/last_nightly/`
+  (untracked), compares it against the reference, and on PASS promotes the
+  candidate over the reference and commits it; on REGRESSION the nightly fails
+  and the reference is left untouched. Compare directly with
+  `Tools/CI/compare_baseline.py --baseline <reference> --candidate <new>` —
+  nonzero exit = regression beyond tolerance. Never pass the same file as
+  both baseline and candidate; that compare is vacuous.
 - Wall-clock metrics on the reference machine are noisy; nightly values are
   recorded in the nightly git commit for history, but only the newest file per
   `<machine-tag>/<gate>` is authoritative for the compare.

@@ -1,7 +1,8 @@
 // BattleFragments.h -- Phase 0 fragment/tag set (arch §3.1).
 // Rules honored here: hot fragments are blittable-friendly (no FString, no
 // UObject*, no TArray); shared fragments carry the ADR-14 uniqueness anchor as
-// their FIRST field; FDeadTag is a 5.8 sparse tag per ADR-15.
+// their FIRST field; FDeadTag is a REGULAR tag (ADR-15 final state -- the
+// sparse adoption was probed and reverted on-machine, see below).
 #pragma once
 
 #include "CoreMinimal.h"
@@ -109,6 +110,21 @@ USTRUCT() struct FOfficerTag : public FMassTag { GENERATED_BODY() };
  */
 USTRUCT()
 struct FDeadTag : public FMassTag
+{
+	GENERATED_BODY()
+};
+
+/**
+ * Death-consumed marker (audit H3 idempotence fix). Added by the death
+ * observer right after the death signal is emitted; its presence excludes an
+ * entity from the observer's signal query, so a later kill flush in the same
+ * frame cannot re-signal dead-but-not-yet-destroyed entities (which used to
+ * double-fire GAS events and double-queue destroys on multi-kill frames).
+ * Regular tag on purpose: it must participate in the archetype flip to the
+ * dead composition (same reasoning as FDeadTag, ADR-15 final state).
+ */
+USTRUCT()
+struct FDeadSignaledTag : public FMassTag
 {
 	GENERATED_BODY()
 };
