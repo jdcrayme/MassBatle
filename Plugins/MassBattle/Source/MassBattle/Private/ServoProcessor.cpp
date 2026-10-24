@@ -30,6 +30,7 @@ UServoProcessor::UServoProcessor(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 	, ServoQuery(*this)
 	, SnapshotQuery(*this)
+	, UnitBodyQuery(*this)
 {
 	bAutoRegisterWithProcessingPhases = true;
 	SetProcessingPhase(EMassProcessingPhase::PrePhysics);
@@ -57,6 +58,10 @@ void UServoProcessor::ConfigureQueries(const TSharedRef<FMassEntityManager>& Ent
 	SnapshotQuery.AddRequirement<FMassVelocityFragment>(EMassFragmentAccess::ReadOnly);
 	SnapshotQuery.AddRequirement<FMovementStateFragment>(EMassFragmentAccess::ReadOnly);
 	SnapshotQuery.AddRequirement<FOwnerUnitFragment>(EMassFragmentAccess::ReadOnly);
+
+	// Unit bodies: one chunk per unit (shared-formation grouped).
+	UnitBodyQuery.AddSharedRequirement<FUnitFormationSharedFragment>(EMassFragmentAccess::ReadOnly);
+	UnitBodyQuery.AddRequirement<FOwnerUnitFragment>(EMassFragmentAccess::ReadOnly);
 }
 
 void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionContext& Context)
@@ -113,14 +118,15 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 	UnitBodies.Reserve(16);
 	TArray<FUnitHandle> BodyUnits;
 	BodyUnits.Reserve(16);
-	SnapshotQuery.ForEachEntityChunk(Context, [&UnitBodies, &BodyUnits](FMassExecutionContext& Context)
+	UnitBodyQuery.ForEachEntityChunk(Context, [&UnitBodies, &BodyUnits](FMassExecutionContext& Context)
 	{
-		const FUnitFormationSharedFragment& Formation = *Context.GetSharedFragmentPtr<FUnitFormationSharedFragment>();
+		const FUnitFormationSharedFragment* FormationPtr = Context.GetSharedFragmentPtr<FUnitFormationSharedFragment>();
 		const auto Owners = Context.GetFragmentView<FOwnerUnitFragment>();
-		if (Formation.NumSlots <= 0 || Formation.NumFiles <= 0 || Owners.Num() == 0)
+		if (!FormationPtr || FormationPtr->NumSlots <= 0 || FormationPtr->NumFiles <= 0 || Owners.Num() == 0)
 		{
 			return;
 		}
+		const FUnitFormationSharedFragment& Formation = *FormationPtr;
 		const int32 NumRanks = FMath::Max(1, FMath::CeilToInt(static_cast<float>(Formation.NumSlots) / Formation.NumFiles));
 		FUnitOBB Body;
 		Body.Center = Formation.AnchorPos * 0.01f; // cm -> m

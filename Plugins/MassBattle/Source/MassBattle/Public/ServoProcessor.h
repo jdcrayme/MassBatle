@@ -27,4 +27,6 @@ private:
 	FMassEntityQuery ServoQuery;
 	/** All-battle-entity read-only snapshot feeding the avoidance term. */
 	FMassEntityQuery SnapshotQuery;
+	/** One chunk per unit (shared-formation grouped, RO): unit-body OBBs. */
+	FMassEntityQuery UnitBodyQuery;
 };
