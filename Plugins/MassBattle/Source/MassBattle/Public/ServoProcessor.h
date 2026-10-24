@@ -23,5 +23,8 @@ protected:
 	virtual void Execute(FMassEntityManager& EntityManager, FMassExecutionContext& Context) override;
 
 private:
+	/** Servo chunks (one per unit, shared-formation grouped). */
 	FMassEntityQuery ServoQuery;
+	/** All-battle-entity read-only snapshot feeding the avoidance term. */
+	FMassEntityQuery SnapshotQuery;
 };

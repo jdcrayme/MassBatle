@@ -226,14 +226,16 @@ The exhausted flanker slows the whole unit until re-dressed (authentic fatigue g
 
 **8.3 Entity servo.** `V = clamp((SlotPos − Pos) / Tau, MaxSpeed × CatchupBoost)` with acceleration clamping — velocity control, never force accumulation. Avoidance is a per-state weight, never global:
 
-| State | Servo target | Avoidance |
-|-------|-------------|-----------|
-| HoldSlot | slot | **none** (servo + compression own crowding) |
-| ManeuverToSlot | slot | medium, teammates only |
-| CrossField | slot, boost | full RVO + asymmetric tie-break |
-| PressRing | contact-ring point | RVO within mob radius |
-| Charge | impact point | none |
-| Flee | flow away | light scatter |
+| State | Servo target | Avoidance | Conversion (R2) |
+|-------|-------------|-----------|-----------------|
+| HoldSlot | slot | **none** (servo + compression own crowding) | n/a -- velocity-space native |
+| ManeuverToSlot | slot | medium, teammates only | n/a -- velocity-space native |
+| CrossField | slot, boost | full RVO + asymmetric tie-break | n/a -- velocity-space native |
+| PressRing | contact-ring point | RVO within mob radius | n/a -- velocity-space native |
+| Charge | impact point | none | n/a -- velocity-space native |
+| Flee | flow away | light scatter | n/a -- velocity-space native |
+
+> **[A1 patch · 2026-10-24, phase-1 brief §3.1 authorization]** The R2 conversion column is "n/a -- velocity-space native" for every state: decision A1 implements the avoidance column as per-state weights on a project velocity-space term inside Servo/Integrate (no engine force pipeline, no `FMassForceFragment` consumption). The engine's steering pipeline is the same math in different units (engine-api §14: `SteerK*(Steering.DesiredVelocity - DesiredVelocity)` is structurally the §8.3 servo); R2's conversion question dissolves rather than being answered. Engine avoidance remains a contingency (A1 Option B) only if CrossField RVO underperforms T1.5/T1.6.
 
 > **[REVIEW R2 · 2026-10-23]** The engine's Mass Avoidance is a **force-based** system (outputs a steering force into `FMassForceFragment`) and remains **Experimental** — blending it into this velocity servo requires an explicit force→velocity conversion policy per state (convert with a mass/accel clamp, or consume as a weighted steering direction before the servo clamp) plus a decision on which states bypass it. Add a conversion column to the table above before Phase 1; T1.5/T1.6 assertions pin the resulting behavior (no pairwise stalls, bounded wake recovery).
 

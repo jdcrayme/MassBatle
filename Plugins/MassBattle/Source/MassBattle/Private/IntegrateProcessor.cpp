@@ -48,8 +48,27 @@ void UIntegrateProcessor::Execute(FMassEntityManager& EntityManager, FMassExecut
 		return;
 	}
 
-	// Task 8 lands transform integration here (simple velocity * DT model).
-	IntegrateQuery.ForEachEntityChunk(Context, [](FMassExecutionContext& Context)
+	// Transform integration modeled on UMassSimpleMovementProcessor
+	// (engine-api §14): position += velocity * DT. Planar sim: Z pinned to 0;
+	// entity yaw follows the velocity heading while moving (per-rank facing
+	// emerges from the slot targets as the formation re-dresses).
+	const float DT = Context.GetDeltaTimeSeconds();
+	IntegrateQuery.ForEachEntityChunk(Context, [DT](FMassExecutionContext& Context)
 	{
+		auto Transforms = Context.GetMutableFragmentView<FTransformFragment>();
+		const auto Velocities = Context.GetFragmentView<FMassVelocityFragment>();
+
+		for (int32 i = 0; i < Context.GetNumEntities(); ++i)
+		{
+			FTransform& Transform = Transforms[i].GetMutableTransform();
+			const FVector Vel = Velocities[i].Value;
+			Transform.SetTranslation(Transform.GetTranslation() + Vel * DT);
+			Transform.SetTranslation(FVector(Transform.GetTranslation().X, Transform.GetTranslation().Y, 0.f));
+			if (FMath::Abs(Vel.X) + FMath::Abs(Vel.Y) > KINDA_SMALL_NUMBER)
+			{
+				const float YawDeg = FMath::RadiansToDegrees(FMath::Atan2(Vel.Y, Vel.X));
+				Transform.SetRotation(FQuat(FRotator(0.f, YawDeg, 0.f)));
+			}
+		}
 	});
 }
