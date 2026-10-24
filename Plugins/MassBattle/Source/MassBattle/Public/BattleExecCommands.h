@@ -29,4 +29,7 @@ namespace BattleExec
 
 	// -- Task 10 (RNG discipline probe; restored by the audit fix pass) --
 	void RngSelfTest(const TArray<FString>& Args, UWorld* World);
+
+	// -- Phase 1 Task 3 (A5 cost-grid stamp override; meters) --
+	void StampImpassable(const TArray<FString>& Args, UWorld* World);
 }

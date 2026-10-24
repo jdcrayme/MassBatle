@@ -7,6 +7,7 @@
 #include "BattleFragments.h"
 #include "BattleDeathPath.h"
 #include "BattleRngRegistry.h"
+#include "BattleCostGridSubsystem.h"
 #include "BattleSpawnLibrary.h"
 #include "BattleStateHash.h"
 #include "BattleUnitTrait.h"
@@ -356,6 +357,28 @@ namespace BattleExec
 		}
 		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT DumpSharedFrag End"));
 	}
+	// -- Phase 1 Task 3: A5 cost-grid stamp override (meters, world space) --
+	void StampImpassable(const TArray<FString>& Args, UWorld* World)
+	{
+		if (!World || Args.Num() < 4)
+		{
+			UE_LOG(LogMassBattle, Display,
+			       TEXT("EXEC_RESULT StampImpassable FAIL BadArgs (need: minX minY maxX maxY, meters)"));
+			return;
+		}
+		UBattleCostGridSubsystem* CostGrid = World->GetSubsystem<UBattleCostGridSubsystem>();
+		if (!CostGrid)
+		{
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT StampImpassable FAIL NoSubsystem"));
+			return;
+		}
+		const FVector2D BoxMin(FCString::Atof(*Args[0]), FCString::Atof(*Args[1]));
+		const FVector2D BoxMax(FCString::Atof(*Args[2]), FCString::Atof(*Args[3]));
+		const int32 Stamped = CostGrid->StampImpassable(BoxMin, BoxMax);
+		UE_LOG(LogMassBattle, Display,
+		       TEXT("EXEC_RESULT StampImpassable OK Box=(%.2f,%.2f)-(%.2f,%.2f)m Cells=%d"),
+		       BoxMin.X, BoxMin.Y, BoxMax.X, BoxMax.Y, Stamped);
+	}
 }
 
 // ---- Command registration (Task 4 portion) ----
@@ -399,3 +422,8 @@ static FAutoConsoleCommandWithWorldAndArgs GBattleDumpMetrics(
 	TEXT("Battle.DumpMetrics"),
 	TEXT("Dumps the B.4 metrics line (archetype count, per-frame UnitSync ms, unit count)"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BattleExec::DumpMetrics));
+
+static FAutoConsoleCommandWithWorldAndArgs GBattleStampImpassable(
+	TEXT("Battle.Test.StampImpassable"),
+	TEXT("<minX> <minY> <maxX> <maxY> -- A5: stamps impassable cost-grid cells overlapping the box (meters, world space); EXEC_RESULT StampImpassable"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BattleExec::StampImpassable));
