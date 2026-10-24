@@ -1,7 +1,7 @@
 # Total War Battle System — Plan Review Findings & Verification Record
 
 **Review date:** 2026-10-23 · **Reviewer:** independent technical review (web-verified)
-**Subjects reviewed:** `tw-battle-system-architecture.md` (Draft 1.0 → 1.1) · `tw-battle-system-roadmap-and-testing.md` (Draft 1.0 → 1.1)
+**Subjects reviewed:** `Docs/spec/architecture.md` (Draft 1.0 → 1.1) · `Docs/spec/roadmap-and-testing.md` (Draft 1.0 → 1.1)
 **Primary consumer:** AI agents and future implementers. This file is the audit trail: full reasoning, evidence, and citations for every finding. The plan files carry only the corrected text and short `> **[REVIEW …]**` annotations pointing here.
 **Verdict:** the plan is **approvable for Phase 0 after the corrections applied on 2026-10-23** — the architecture's shape is unchanged. 25 findings total: 6 errors (corrected in the plan text), 13 risks (decisions scheduled), 7 improvements (adopted or recorded). 7 load-bearing decisions verified correct against current official documentation.
 

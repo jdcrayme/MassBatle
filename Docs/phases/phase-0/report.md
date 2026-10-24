@@ -1,6 +1,8 @@
 # MassBattle Phase 0 Handoff Report
 
-**Date:** 2026-10-24 · **Agent run:** autonomous Phase 0 per `phase0-brief.md` v2.0 (owner-approved A1–A7)
+> **Archive note (2026-10-25 reorg).** Phase 0 handoff report (was `Docs/agent/phase0-report.md`). §7 "Where Phase 1 should start" remains the live entry point for the next phase. Current status: `Docs/README.md`.
+
+**Date:** 2026-10-24 · **Agent run:** autonomous Phase 0 per `Docs/phases/phase-0/brief.md` v2.0 (owner-approved A1–A7)
 **Engine:** UE 5.8.4 (CL 58902052, `++UE5+Release-5.8`) at `E:\Unreal\UE_5.8` · Project: `E:\Unreal Projects\MassBattle\MassBattle.uproject`
 **Status:** **All tasks 0–13 complete, DoD checked. No open blockers.** Evidence verbatim below; every claim has a log line, test JSON, or git hash.
 
@@ -42,11 +44,11 @@
 - `Public/BattleDebugSubsystem.h/.cpp` — `Battle.Debug.{ShowOverlay,Enabled}` CVars, B.4 metrics format (`EXEC_RESULT BattleMetrics Frame Archetypes Units UnitSyncMs BookkeepingHash OverlayHook`), UnitSync ms shim, `Battle.DumpMetrics`; MassInsights I2 verification in audit §12 (engine-side wiring; `-trace=` path documented)
 
 ### Docs
-- `Docs/agent/api-audit-5.8.md` — I6 audit: corrections **C1–C12**, all BRIEF §4 ⚠️ resolved; T0.9 settings section; E5 flush contract; MassInsights check
-- `Docs/agent/phase0-progress.md` — step-by-step log with verification per step
-- `Docs/tw-battle-system-architecture.md` — ADR-15/16 rows; §4 5.8-signature note (A7)
-- `Docs/tw-battle-system-roadmap-and-testing.md` — exit-criteria + T0.5 probe annotations, B.0 test-mode reference, B.7 Phase 0 entry (A7)
-- `phase0-brief.md` — §1/§4 facts corrected in place (C1–C8)
+- `Docs/reference/engine-api-5.8.md` — I6 audit: corrections **C1–C12**, all BRIEF §4 ⚠️ resolved; T0.9 settings section; E5 flush contract; MassInsights check
+- `Docs/phases/phase-0/progress.md` — step-by-step log with verification per step
+- `Docs/spec/architecture.md` — ADR-15/16 rows; §4 5.8-signature note (A7)
+- `Docs/spec/roadmap-and-testing.md` — exit-criteria + T0.5 probe annotations, B.0 test-mode reference, B.7 Phase 0 entry (A7)
+- `Docs/phases/phase-0/brief.md` — §1/§4 facts corrected in place (C1–C8)
 
 ## 2. Test evidence (verbatim, condensed)
 
@@ -99,15 +101,15 @@ None.
 - [x] Exit criteria: 2×40 from table data; attribute change visible ≤ 1 frame (tick-counted); kill → tag → signal → roster update (S0_ExitCriteria green)
 - [x] R8 CI: gate script + Jenkins LTS (ADR-16) + nightly packaged job incl. Gauntlet stub + baseline storage (2 files, 3 real metrics) + compare script + Zen config
 - [x] ADR-15 recorded (probe outcome: regular tag) ; ADR-16 recorded (Jenkins portable + native-Gauntlet nightly)
-- [x] `Docs/agent/api-audit-5.8.md` complete (C1–C12; every §4 ⚠️ resolved)
+- [x] `Docs/reference/engine-api-5.8.md` complete (C1–C12; every §4 ⚠️ resolved)
 - [x] A7 patches: arch §4 signature note; roadmap T0.5/exit-criteria annotations (redirected — original wording correct again); roadmap B.0 test-mode reference
-- [x] `Docs/agent/phase0-progress.md` complete; `phase0: complete` commit exists
+- [x] `Docs/phases/phase-0/progress.md` complete; `phase0: complete` commit exists
 - [x] B.8 per capability: unit tests ✓ · scenario tests (S0_*) ✓ · debug hooks ✓ · metrics (BattleMetrics) ✓ · B.7 regression entry ✓ · `Battle.*` cvar flags ✓ (registry/EDU/spawn/sync/death each checked)
 - [x] Editor left open on `L_MassBattle_Demo01`, both maps `is_dirty=false`, MCP responsive (final checks this session)
 
 ## 7. Where Phase 1 should start
 
-1. Read `Docs/agent/api-audit-5.8.md` first (12 corrections; the §11 T0.9 section and §3 flush contract are load-bearing), then `phase0-progress.md` for the functional-harness shape (S0 tests + static factory registry + `PrepareTest`/manual-completion lifecycle).
+1. Read `Docs/reference/engine-api-5.8.md` first (12 corrections; the §11 T0.9 section and §3 flush contract are load-bearing), then `Docs/phases/phase-0/progress.md` for the functional-harness shape (S0 tests + static factory registry + `PrepareTest`/manual-completion lifecycle).
 2. **Movement core** (roadmap Phase 1) plugs into ready hooks: `FUnitStatsSharedFragment` is written by UnitSync every frame; per-unit archetypes localize death flips; `UBattleRngSubsystem` provides named streams; `FBattleStateHash` extends with transform terms (1 cm quantization) for T1 gates.
 3. The death path currently destroys corpses immediately (receiver-deferred) — Phase 5 corpse policy replaces it; the R1 churn concern (mass-death archetype flips) should re-evaluate chunk layout when roster sizes grow (per-unit archetypes already bound the blast radius to one unit).
 4. Jenkins nightly is wired (`massbattle-nightly`, cron 02:00) but Jenkins must be RUNNING for the cron to fire — start line in `Tools/CI/JENKINS.md`; optionally add a logon Task Scheduler entry (process supervision only, still ADR-16).

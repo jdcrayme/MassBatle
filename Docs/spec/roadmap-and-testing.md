@@ -1,7 +1,7 @@
 # Total War Battle System — Implementation Roadmap & Testing Strategy
 
-**Companion to:** `tw-battle-system-architecture.md` (section references below use that doc's numbering)
-**Engine pin:** UE 5.8.x (ADR-13 in the architecture doc) · **Review:** 2026-10-23 corrections applied — full evidence in `tw-battle-system-plan-review-findings.md`, gate changes summarized in §B.9
+**Companion to:** `Docs/spec/architecture.md` (section references below use that doc's numbering)
+**Engine pin:** UE 5.8.x (ADR-13 in the architecture doc) · **Review:** 2026-10-23 corrections applied — full evidence in `Docs/reviews/plan-review-findings.md`, gate changes summarized in §B.9
 
 ---
 
@@ -21,7 +21,7 @@ Guiding principle: **riskiest systems first, gray-box always.** The engagement s
 - Pre-Phase 0 [Review 2026-10-23]: pin engine to **UE 5.8.x** (ADR-13) and adopt ADR-14 — apply the E1 correction (unit handle embedded in every per-unit shared fragment payload + handle-seeded creation hash) and the E4 correction (5.8 template-based spawn API) before any Mass code is written; run the scripted pinned-version API audit over every Mass/GAS symbol named in the architecture doc (I6).
 - CI infrastructure as an explicit deliverable [R8]: automation host (Horde / Jenkins / hosted CI), packaged-build nightly orchestration for Gauntlet, versioned baseline-JSON storage, and a named reference machine whose specs are recorded in every perf baseline [R10].
 
-**Exit criteria:** 2 units × 40 entities spawned from table data; a GAS attribute change is visible in `FUnitStatsSharedFragment` within 1 frame; killing an entity flips archetype, fires signal, updates roster. *(Phase 0 probe note: the archetype flip stays -- ADR-15 evaluated 5.8 sparse tags and reverted: chunk-granular storage + observer incompatibility, see `Docs/agent/api-audit-5.8.md`.)*
+**Exit criteria:** 2 units × 40 entities spawned from table data; a GAS attribute change is visible in `FUnitStatsSharedFragment` within 1 frame; killing an entity flips archetype, fires signal, updates roster. *(Phase 0 probe note: the archetype flip stays -- ADR-15 evaluated 5.8 sparse tags and reverted: chunk-granular storage + observer incompatibility, see `Docs/reference/engine-api-5.8.md`.)*
 
 **Test gate T0 — Foundation:**
 
@@ -290,7 +290,7 @@ Rule 6 keeps nightly baselines meaningful while systems are in flight — a capa
 
 ### B.9 Review-derived changes (2026-10-23)
 
-The 2026-10-23 plan review corrected six errors (E1–E6) and raised thirteen risks (R1–R13) plus seven improvements (I1–I7). Corrections are applied inline above and in the architecture doc; the gate changes are consolidated here. Full reasoning, evidence, and sources: `tw-battle-system-plan-review-findings.md`.
+The 2026-10-23 plan review corrected six errors (E1–E6) and raised thirteen risks (R1–R13) plus seven improvements (I1–I7). Corrections are applied inline above and in the architecture doc; the gate changes are consolidated here. Full reasoning, evidence, and sources: `Docs/reviews/plan-review-findings.md`.
 
 | Gate | Change | Motivated by |
 |------|--------|--------------|

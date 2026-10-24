@@ -1,5 +1,7 @@
 # MassBattle Pre-Phase-0 Handoff Report
 
+> **Archive note (2026-10-25 reorg).** Pre-phase-0 handoff report (was `Docs/agent/prephase0-report.md`). §2 corrections table and §4 tool recipes were consolidated into `Docs/reference/environment.md` and `Docs/reference/mcp-playbook.md` — read those for current truth. Current status: `Docs/README.md`.
+
 **Date:** 2026-10-23 · **Agent run:** autonomous pre-phase-0 setup per `BRIEF.md` v1.0
 **Engine:** UE 5.8.4 (CL 58902052, `++UE5+Release-5.8`, promoted) at `E:\Unreal\UE_5.8`
 **Project:** `E:\Unreal Projects\MassBattle\MassBattle.uproject`
@@ -28,9 +30,9 @@
 - `.gitattributes` — added `Data/**/*.txt text eol=lf` (see §3.8)
 
 ### Docs / agent memory
-- `Docs/agent/progress.md` — full step-by-step log with verification results per step
-- `Docs/agent/mcp-inventory.md` — 49 toolsets, relevant ones with qualified names, AgentSkills list, MCP quirks
-- `Docs/reference-machine.md` — i7-9700F 8C/8T, 16 GB RAM, GTX 1660 Ti, Win10 Home 19045 [roadmap R10]
+- `Docs/phases/pre-phase-0/progress.md` — full step-by-step log with verification results per step
+- `Docs/reference/mcp-playbook.md` — 49 toolsets, relevant ones with qualified names, AgentSkills list, MCP quirks
+- `Docs/spec/reference-machine.md` — i7-9700F 8C/8T, 16 GB RAM, GTX 1660 Ti, Win10 Home 19045 [roadmap R10]
 - This file.
 
 ### Project file changes forced by reality (deviations — details in §3)
@@ -52,7 +54,7 @@
 | 7 | Task 3: "Plane scaled ×2560 (→ 256 m × 256 m)" | ×2560 on the 100 cm engine plane = **2560 m**. Honored the stated 256 m intent: scale ×256, bounds-verified. |
 | 8 | §1.4 Python fallbacks (`unreal.LevelEditorSubsystem` etc.) | **Not reachable through MCP**: `ProgrammaticToolset.execute_tool_script` is a sandbox that only imports json/re/math/copy/datetime/time — `import unreal` is impossible. Level creation/save must go through asset/scene tools (see §4). The MCP toolsets cover the same ground. |
 
-Task-by-task corrections already logged in `Docs/agent/progress.md`; the table above is the distilled version.
+Task-by-task corrections already logged in `Docs/phases/pre-phase-0/progress.md`; the table above is the distilled version.
 
 ---
 
@@ -82,7 +84,7 @@ Task-by-task corrections already logged in `Docs/agent/progress.md`; the table a
 
 ## 5. Evidence (verbatim, condensed)
 
-- **UBT Task 2:** `Build.bat MassBattleEditor Win64 Development -Project="E:\Unreal Projects\MassBattle\MassBattle.uproject" -WaitMutex` → `EXIT CODE: 0`, `Result: Succeeded` (16.67 s, 10 actions) after fixes; key lines: `[8/10] Link UnrealEditor-MassBattle.dll`, `[9/10] Link UnrealEditor-MassBattleGame.dll`. (Earlier attempts: exit 8 CS0101, exit 6 missing MassEntity plugin — see progress.md.)
+- **UBT Task 2:** `Build.bat MassBattleEditor Win64 Development -Project="E:\Unreal Projects\MassBattle\MassBattle.uproject" -WaitMutex` → `EXIT CODE: 0`, `Result: Succeeded` (16.67 s, 10 actions) after fixes; key lines: `[8/10] Link UnrealEditor-MassBattle.dll`, `[9/10] Link UnrealEditor-MassBattleGame.dll`. (Earlier attempts: exit 8 CS0101, exit 6 missing MassEntity plugin — see Docs/phases/pre-phase-0/progress.md.)
 - **Module loaded in editor** (`LogsToolset.GetLogEntries`): `LogModuleManager: InternalLoadLibrary: 'MassBattle' ('E:/Unreal Projects/MassBattle/Plugins/MassBattle/Binaries/Win64/UnrealEditor-MassBattle.dll')` and `LogMassBattle: MassBattle module started`.
 - **Smoke test** (`AutomationTestToolset`): `ListTests` → `{"tests":["Battle.Smoke.PluginLoaded"],"total":1}`; `RunTests` → `{"tests":[{"name":"Battle.Smoke.PluginLoaded","state":"Success","duration":0.00977,"errors":[],"warnings":[]}],"passed":1,"failed":0,"skipped":0,"total":1}`.
 - **Levels on disk:** `L_MassBattle_Demo01.umap` (36,648 B), `L_MassBattle_T0_Sandbox.umap` (36,712 B); both `is_dirty=false`; editor left on Demo01.
@@ -91,7 +93,7 @@ Task-by-task corrections already logged in `Docs/agent/progress.md`; the table a
 
 ## 6. Open blockers
 
-None. (Two transient blockers were hit and resolved during Task 2 — see §3.2–3.3 of progress.md and `git log`.)
+None. (Two transient blockers were hit and resolved during Task 2 — see §3.2–3.3 of Docs/phases/pre-phase-0/progress.md and `git log`.)
 
 ## 7. Definition of done — checklist
 
@@ -101,7 +103,7 @@ None. (Two transient blockers were hit and resolved during Task 2 — see §3.2�
 - [x] `Battle.Smoke.PluginLoaded` passes (1 test / 1 pass, state Success — evidence above)
 - [x] `L_MassBattle_Demo01` + `L_MassBattle_T0_Sandbox` exist, load, saved (`is_dirty=false` both)
 - [x] `Data/EDU/golden_edu_v1.txt` exists, ASCII, LF, 2 unit types
-- [x] `Docs/agent/mcp-inventory.md`, `progress.md`, `prephase0-report.md`, `Docs/reference-machine.md`, `Tools/CI/README.md` all present and real
+- [x] `Docs/reference/mcp-playbook.md`, `Docs/phases/pre-phase-0/progress.md`, `Docs/phases/pre-phase-0/report.md`, `Docs/spec/reference-machine.md`, `Tools/CI/README.md` all present and real
 - [x] Editor left open on `L_MassBattle_Demo01`, zero unsaved changes (`get_current_level` + `is_dirty`×2 verified after final load), MCP server running (every call in this report went through it)
 
 ## 8. Where Phase 0 should start
@@ -110,4 +112,4 @@ None. (Two transient blockers were hit and resolved during Task 2 — see §3.2�
 2. Plugin C++ home: `Plugins/MassBattle/Source/MassBattle/` (module `MassBattle` — already linked against MassEntity, MassSpawner, MassSignals, MassCommon, GameplayAbilities; add MassSimulation/MassActors/etc. when needed per the Build.cs comment).
 3. New test suites go under `Battle.Unit.*`, `Battle.Data.*`, `Battle.Func.*` (roadmap B.0); use the AutomationTestToolset workflow in §4.6 — the `Battle.Smoke.PluginLoaded` test in `MassBattleSmokeTest.cpp` is the template.
 4. `UMassEntityConfigAsset` = `/Script/MassSpawner.MassEntityConfigAsset` in 5.8 (§2.6).
-5. This workspace's MCP access pattern is documented in `Docs/agent/mcp-inventory.md` + §4.1 above; re-run `list_toolsets` after any editor restart (C2).
+5. This workspace's MCP access pattern is documented in `Docs/reference/mcp-playbook.md` + §4.1 above; re-run `list_toolsets` after any editor restart (C2).

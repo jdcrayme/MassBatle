@@ -1,9 +1,11 @@
 # MassBattle — Pre-Phase 0 Environment Setup Brief
 
+> **Archive note (2026-10-25 reorg).** Preserved record of the pre-phase-0 run — executed as written; do not execute again. Several §1 facts were corrected on-machine afterwards: environment truth now lives in `Docs/reference/environment.md`, MCP truth in `Docs/reference/mcp-playbook.md` (read it instead of §1.3/§1.4), engine-API truth in `Docs/reference/engine-api-5.8.md`. Standing protocol generalized into `Docs/AGENTS.md`. Current status: `Docs/README.md`.
+
 **Version:** 1.0 · 2026-10-23
 **Consumer:** autonomous coding agent with file-system + shell access, connected to the live Unreal Editor via Epic's official **Unreal MCP** (plugin `ModelContextProtocol`, toolsets via `AllToolsets`).
 **Mission:** stand up the MassBattle plugin skeleton and the project scaffolding for the demo and automated-testing levels. Then **stop**. Phase 0 implementation (fragments, processors, registry logic, GAS attributes) is a later brief.
-**Spec sources (read-only, never edit):** `Docs/tw-battle-system-architecture.md` (arch), `Docs/tw-battle-system-roadmap-and-testing.md` (roadmap), `Docs/tw-battle-system-plan-review-findings.md` (findings).
+**Spec sources (read-only, never edit):** `Docs/spec/architecture.md` (arch), `Docs/spec/roadmap-and-testing.md` (roadmap), `Docs/reviews/plan-review-findings.md` (findings).
 
 ---
 
@@ -13,7 +15,7 @@
 2. Execute **Tasks 0–6 in order**. Each task has: *Goal → Steps → Acceptance check → Commit*. Do not claim a task done without running its acceptance check.
 3. All `<Project>` placeholders resolve in Task 0 (read the `.uproject` filename and game module name). Substitute everywhere.
 4. Token discipline: **do not read the three spec docs end-to-end.** They total ~50k tokens. Open only the sections cited in a task. Everything you need for pre-phase-0 is in this brief.
-5. Artifacts you produce live in `Docs/agent/` (create it in Task 0): `progress.md` (running log), `mcp-inventory.md`, `prephase0-report.md`. These are the institutional memory for every future agent run — write them well.
+5. Artifacts you produce live in `Docs/phases/pre-phase-0/` (create it in Task 0): `Docs/phases/pre-phase-0/progress.md` (running log), `Docs/reference/mcp-playbook.md`, `Docs/phases/pre-phase-0/report.md`. These are the institutional memory for every future agent run — write them well.
 
 ---
 
@@ -97,9 +99,9 @@ unreal.EditorAssetLibrary.does_asset_exist("/Game/MassBattle/Demo/Maps/L_MassBat
 
 **Division of labor.** File edits (.uplugin, .Build.cs, .cpp, .uproject, .ini, .txt, .gitignore) → direct file writes via your file tools. Anything requiring editor state (levels, assets, plugin loading, automation runs, screenshots) → MCP calls (or Python via `ProgrammaticToolset` / console). Anything requiring the editor to be closed (UBT build of a new module) → shell.
 
-**After every completed step:** append one line to `Docs/agent/progress.md` (`[task.step] what was done → verification result`). Commit after every task per the commit plan. Never claim done without the acceptance check.
+**After every completed step:** append one line to `Docs/phases/pre-phase-0/progress.md` (`[task.step] what was done → verification result`). Commit after every task per the commit plan. Never claim done without the acceptance check.
 
-**Failure policy.** Retry a failed step up to 3 times with diagnosis between attempts (read the returned error/logs — most failures are schema mismatches, fixable by re-running `describe_toolset`). Still failing → record the blocker in `progress.md` with full error text, move to the next independent task, and list all blockers in the final report. If a step corrupts editor state, `git checkout -- <files>` for text assets and report; .umap/.uasset damage → delete and recreate the asset. Do not edit spec docs in `Docs/` to make reality fit.
+**Failure policy.** Retry a failed step up to 3 times with diagnosis between attempts (read the returned error/logs — most failures are schema mismatches, fixable by re-running `describe_toolset`). Still failing → record the blocker in `Docs/phases/pre-phase-0/progress.md` with full error text, move to the next independent task, and list all blockers in the final report. If a step corrupts editor state, `git checkout -- <files>` for text assets and report; .umap/.uasset damage → delete and recreate the asset. Do not edit spec docs in `Docs/` to make reality fit.
 
 ---
 
@@ -112,12 +114,12 @@ unreal.EditorAssetLibrary.does_asset_exist("/Game/MassBattle/Demo/Maps/L_MassBat
 **Steps:**
 1. Identify `<Project>`: read the `.uproject` at the project root (name + `"Modules"` array → game module name). Record OS and the engine install path (probe common locations or `UnrealEditor` process command line; the UBT batch file is `<Engine>/Engine/Build/BatchFiles/Build.bat` on Windows, `Build.sh` elsewhere).
 2. Confirm engine version is 5.8.x (read the engine's `Engine/Build/Build.version`). If it is **not** 5.8.x — STOP Task 1+ and record a blocker; §1.2 facts assume 5.8.
-3. MCP inventory: `list_toolsets` → for each toolset relevant to this brief (Scene, Actor, Object/Asset, Testing, Programmatic, AgentSkill + anything named *Level*, *Editor*, *Blueprint*), record the fully-qualified name and a one-line capability summary (no need to describe every tool — `describe_toolset` again when needed). Write `Docs/agent/mcp-inventory.md` with the table + server URL + tool-search-mode confirmation.
+3. MCP inventory: `list_toolsets` → for each toolset relevant to this brief (Scene, Actor, Object/Asset, Testing, Programmatic, AgentSkill + anything named *Level*, *Editor*, *Blueprint*), record the fully-qualified name and a one-line capability summary (no need to describe every tool — `describe_toolset` again when needed). Write `Docs/reference/mcp-playbook.md` with the table + server URL + tool-search-mode confirmation.
 4. Check `AgentSkillToolset.ListSkills` (C10) and note any project skills in the inventory.
-5. Record the dev machine spec (CPU model/cores, RAM, GPU, OS) into `Docs/reference-machine.md` — this is the named reference machine for all future perf baselines [roadmap R10].
-6. Create `Docs/agent/progress.md`. Then VCS: write `.gitignore` (standard UE: `Binaries/`, `DerivedDataCache/`, `Intermediate/`, `Saved/`, `.vs/`, `.vscode/`, `*.sln`, `*.VC.db`, `.idea/`, `Build/` inside plugin `Intermediate` etc.) and `git init && git add -A && git commit -m "prephase0: baseline (empty project + docs)"`.
+5. Record the dev machine spec (CPU model/cores, RAM, GPU, OS) into `Docs/spec/reference-machine.md` — this is the named reference machine for all future perf baselines [roadmap R10].
+6. Create `Docs/phases/pre-phase-0/progress.md`. Then VCS: write `.gitignore` (standard UE: `Binaries/`, `DerivedDataCache/`, `Intermediate/`, `Saved/`, `.vs/`, `.vscode/`, `*.sln`, `*.VC.db`, `.idea/`, `Build/` inside plugin `Intermediate` etc.) and `git init && git add -A && git commit -m "prephase0: baseline (empty project + docs)"`.
 
-**Acceptance:** `mcp-inventory.md` lists ≥ 5 toolsets with qualified names; `Build.version` says 5.8.x; git log shows the baseline commit; `reference-machine.md` filled.
+**Acceptance:** `Docs/reference/mcp-playbook.md` lists ≥ 5 toolsets with qualified names; `Build.version` says 5.8.x; git log shows the baseline commit; `Docs/spec/reference-machine.md` filled.
 
 ### Task 1 — Plugin skeleton + plugin enablement (file-side, no restart yet)
 
@@ -150,7 +152,7 @@ unreal.EditorAssetLibrary.does_asset_exist("/Game/MassBattle/Demo/Maps/L_MassBat
 3. Relaunch the editor on the project (shell: start `UnrealEditor.exe "<proj>.uproject"`), wait for full load, then confirm MCP: `list_toolsets` returns again (if the server was set to auto-start it will; else note the manual-start console command for the user in the report).
 4. Run `ModelContextProtocol.RefreshTools` if toolsets changed, and re-list.
 
-**Acceptance:** UBT exit 0 (paste the last build lines into `progress.md`); editor relaunches without error dialogs; `list_toolsets` healthy. Commit (if any files changed during generation): `prephase0: plugin compiled and loaded`.
+**Acceptance:** UBT exit 0 (paste the last build lines into `Docs/phases/pre-phase-0/progress.md`); editor relaunches without error dialogs; `list_toolsets` healthy. Commit (if any files changed during generation): `prephase0: plugin compiled and loaded`.
 
 ### Task 3 — Content scaffold & levels
 
@@ -174,7 +176,7 @@ unreal.EditorAssetLibrary.does_asset_exist("/Game/MassBattle/Demo/Maps/L_MassBat
 **Steps:**
 1. Write `Data/EDU/golden_edu_v1.txt` — ASCII, LF line endings, exactly **2 unit types** in M2TW EDU field syntax (`type`, `dictionary`, `category`, `class`, `soldier`, `attributes`, `formation`, `stat_health`, `stat_pri`, `stat_pri_armour`, `stat_mental`, `stat_charge_dist`, `stat_cost`, `ownership`). Suggested: *Peasant Levy* (40 men, 1 HP, poor) and *Sergeant Spearmen* (40 men, spear reach, armored). Header comment: `// Phase 0 T0.2 fixture draft — validate field semantics against findings refs [27][28] before parser work; unknown fields must be rejected loudly.` Field values are placeholders pending the Phase 6 formula audit (roadmap) — do not overthink them.
 2. Edit `Config/DefaultEngine.ini`: under `[/Script/EngineSettings.GameMapsSettings]` set `EditorStartupMap=/Game/MassBattle/Demo/Maps/L_MassBattle_Demo01` and `GameDefaultMap=/Game/MassBattle/Demo/Maps/L_MassBattle_Demo01`. Change nothing else in config.
-3. Create `Tools/CI/README.md`: three lines — "Phase 0 deliverable per roadmap R8 (automation host, Gauntlet nightly, baseline JSON storage). Pre-phase-0 records only the reference machine: see Docs/reference-machine.md."
+3. Create `Tools/CI/README.md`: three lines — "Phase 0 deliverable per roadmap R8 (automation host, Gauntlet nightly, baseline JSON storage). Pre-phase-0 records only the reference machine: see Docs/spec/reference-machine.md."
 
 **Acceptance:** EDU file present and ASCII-clean (verify encoding, not just existence); config keys present; commit: `prephase0: EDU fixture, default maps, CI stub`.
 
@@ -185,15 +187,15 @@ unreal.EditorAssetLibrary.does_asset_exist("/Game/MassBattle/Demo/Maps/L_MassBat
 **Steps:**
 1. Preferred: via MCP Testing toolset (describe it, then run filter `Battle.Smoke`). Fallback: editor console `Automation RunTests Battle.Smoke`. Last resort: the CLI form from §1.5 A3 (editor closed) — record which path you used.
 2. Expect exactly **1 test, 1 pass**: `Battle.Smoke.PluginLoaded`. If the test is not listed → flags problem (A1) or module not loaded (back to Task 2 diagnosis).
-3. Capture the result (export JSON via `-ReportExportPath` on CLI runs, or screenshot/copy the result line) into `Docs/agent/prephase0-report.md`.
+3. Capture the result (export JSON via `-ReportExportPath` on CLI runs, or screenshot/copy the result line) into `Docs/phases/pre-phase-0/report.md`.
 
 **Acceptance:** pass recorded with the actual output line(s). Commit if report files changed: `prephase0: smoke test green`.
 
 ### Task 6 — Handoff report & stop
 
 **Steps:**
-1. Write `Docs/agent/prephase0-report.md`: what was created (paths), tool quirks discovered (anything §1/§2 got wrong — corrections are gold), deviations from the brief and why, open blockers, and the DoD checklist below with real checkboxes filled.
-2. Append final status to `progress.md`. `git add -A && git commit -m "prephase0: complete"`.
+1. Write `Docs/phases/pre-phase-0/report.md`: what was created (paths), tool quirks discovered (anything §1/§2 got wrong — corrections are gold), deviations from the brief and why, open blockers, and the DoD checklist below with real checkboxes filled.
+2. Append final status to `Docs/phases/pre-phase-0/progress.md`. `git add -A && git commit -m "prephase0: complete"`.
 3. **STOP.** Do not start Phase 0 (no fragments, no processors, no registry logic, no GAS attributes, no EDU parser). The next brief owns that.
 
 ---
@@ -206,7 +208,7 @@ unreal.EditorAssetLibrary.does_asset_exist("/Game/MassBattle/Demo/Maps/L_MassBat
 - [ ] `Battle.Smoke.PluginLoaded` passes (evidence captured)
 - [ ] `L_MassBattle_Demo01` + `L_MassBattle_T0_Sandbox` exist, load, saved
 - [ ] `Data/EDU/golden_edu_v1.txt` exists, ASCII, 2 unit types
-- [ ] `Docs/agent/mcp-inventory.md`, `progress.md`, `prephase0-report.md`, `Docs/reference-machine.md`, `Tools/CI/README.md` all present and real
+- [ ] `Docs/reference/mcp-playbook.md`, `Docs/phases/pre-phase-0/progress.md`, `Docs/phases/pre-phase-0/report.md`, `Docs/spec/reference-machine.md`, `Tools/CI/README.md` all present and real
 - [ ] Editor left open on `L_MassBattle_Demo01`, zero unsaved changes, MCP server running
 
 ## 5. Explicitly out of scope (do not do these)
@@ -222,7 +224,7 @@ Any Mass code (fragments/tags/processors/subsystems/spawn logic) · GAS attribut
 {
         "FileVersion": 3,
         "FriendlyName": "MassBattle",
-        "Description": "Total War-style battle simulation on Mass entities + GAS unit actors. See Docs/tw-battle-system-architecture.md.",
+        "Description": "Total War-style battle simulation on Mass entities + GAS unit actors. See Docs/spec/architecture.md.",
         "Category": "Gameplay",
         "CanContainContent": false,
         "Installed": false,

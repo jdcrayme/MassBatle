@@ -1,8 +1,10 @@
 # MassBattle — Phase 0 BRIEF (v2.0 — owner-approved, ready to execute)
 
+> **Archive note (2026-10-25 reorg).** Preserved record of the Phase 0 run — executed as written; do not execute again. During the reorg: §4 (API digest) and Part III (sources) were extracted to `Docs/reference/engine-api-5.8.md` (Parts B/C); §2 (MCP manual) was consolidated into `Docs/reference/mcp-playbook.md`; the standing protocol from §0/§3/§8 was generalized into `Docs/AGENTS.md`. §-numbering kept for citation compatibility with the progress log and report.
+
 | | |
 |---|---|
-| **Companion to** | `tw-battle-system-architecture.md` (arch), `tw-battle-system-roadmap-and-testing.md` (roadmap), `tw-battle-system-plan-review-findings.md` (findings), `prephase0-report.md` (pre-phase-0 handoff) |
+| **Companion to** | `Docs/spec/architecture.md` (arch), `Docs/spec/roadmap-and-testing.md` (roadmap), `Docs/reviews/plan-review-findings.md` (findings), `Docs/phases/pre-phase-0/report.md` (pre-phase-0 handoff) |
 | **Engine pin** | UE 5.8.4 (CL 58902052) at `E:\Unreal\UE_5.8` — project `E:\Unreal Projects\MassBattle\MassBattle.uproject` |
 | **Run mode** | Fully autonomous, single run (same protocol as pre-phase-0): progress log, one commit per task, reality-wins, stop at DoD |
 | **Priority directive** | **Robust automation infrastructure (R8 CI) is the highest priority of this phase** — it is Task 1 and everything else lands inside it |
@@ -25,8 +27,8 @@
 **Read order (exact — do not read more than this before coding):**
 
 1. This brief: §1–§4 fully, then each task section of §5 just before executing it.
-2. `Docs/agent/prephase0-report.md`: **§2** (corrections table — these facts are authoritative), **§4** (MCP tool recipes — do not rediscover), **§8** (starting points).
-3. `Docs/agent/mcp-inventory.md` (skim the relevant-toolset table; re-verify after any editor restart).
+2. `Docs/phases/pre-phase-0/report.md`: **§2** (corrections table — these facts are authoritative), **§4** (MCP tool recipes — do not rediscover), **§8** (starting points).
+3. `Docs/reference/mcp-playbook.md` (skim the relevant-toolset table; re-verify after any editor restart).
 4. Architecture doc: §2 (domain model), §3 (fragments/tags/shared), §4 (pipeline), §5 (unit↔entity interaction), §10.1 (attribute set), §12 (budgets/tunables).
 5. Roadmap: "Phase 0 — Foundation" + T0 gate table; B.0 (tooling + test-mode contract); B.8 (definition of done).
 6. Findings file: blocks **E1, E4, E5** only.
@@ -34,12 +36,12 @@
 **Token discipline rules.**
 
 - Never re-derive a fact that §1 of this brief already states. Never re-research an API that §4 already states — cite the digest entry (e.g. `§4.3`) in your progress log instead.
-- If reality contradicts this brief, **reality wins**: fix the brief's fact in place (edit the line), log the discrepancy in `Docs/agent/phase0-progress.md`, and mark the affected §4 entry in the audit doc (Task 2).
+- If reality contradicts this brief, **reality wins**: fix the brief's fact in place (edit the line), log the discrepancy in `Docs/phases/phase-0/progress.md`, and mark the affected §4 entry in the audit doc (Task 2).
 - Code skeletons in §4 are **starting points with verify markers** — see the protocol in §4.0. You verify once (Task 2), then trust.
 
 ## §1. Verified environment facts (trust these over anything else)
 
-Distilled from `prephase0-report.md` §2 + verified public sources. All rows marked **[machine]** were verified on this machine at pre-phase-0.
+Distilled from `Docs/phases/pre-phase-0/report.md` §2 + verified public sources. All rows marked **[machine]** were verified on this machine at pre-phase-0.
 
 | # | Fact |
 |---|------|
@@ -51,14 +53,14 @@ Distilled from `prephase0-report.md` §2 + verified public sources. All rows mar
 | 1.6 | **[machine]** Plugin `MassBattle.Build.cs` deps already correct for Phase 0: Core + CoreUObject, Engine, MassEntity, MassSpawner, MassSignals, MassCommon, GameplayAbilities. Add modules only when a task requires them (e.g. Gauntlet plugin module for the nightly controller — see Task 1). |
 | 1.7 | **[machine]** Levels exist and load clean: `/Game/MassBattle/Demo/Maps/L_MassBattle_Demo01` and `/Game/MassBattle/Test/Maps/L_MassBattle_T0_Sandbox` (both: SkyLight/DirectionalLight/SkyAtmosphere/PlayerStart/Ground 256 m × 256 m). `MassDebugVisualizer_0` auto-respawns in Demo01 — harmless, ignore. |
 | 1.8 | **[machine]** EDU fixture: `Data/EDU/golden_edu_v1.txt` — ASCII, LF-only, 2 unit types × 14 fields (corrected during the run; originally said 13 — reality wins, count the fixture: type, dictionary, category, class, soldier, attributes, formation, stat_health, stat_pri, stat_pri_armour, stat_mental, stat_charge_dist, stat_cost, ownership). **This file is the schema source of truth for T0.2** (do not invent field names; parse what the fixture contains). `.gitattributes` enforces `Data/**/*.txt text eol=lf`; data files stay ASCII (no em-dashes). |
-| 1.9 | **[machine]** MCP server: `http://127.0.0.1:8000/mcp`, auto-starts with the editor (`bAutoStartServer=True`). No native MCP client in the harness — use the curl JSON-RPC helper pattern from `prephase0-report.md` §4.1. Keep calls **serial**. |
+| 1.9 | **[machine]** MCP server: `http://127.0.0.1:8000/mcp`, auto-starts with the editor (`bAutoStartServer=True`). No native MCP client in the harness — use the curl JSON-RPC helper pattern from `Docs/phases/pre-phase-0/report.md` §4.1. Keep calls **serial**. |
 | 1.10 | **[machine]** Git: repo pre-exists on `main`, git-lfs 2.13.3 active for `*.uasset/*.umap/*.uproject`. Last commit: `prephase0: complete`. Commits this phase use prefix `phase0:`. |
-| 1.11 | **[machine]** Reference machine (roadmap R10): i7-9700F 8C/8T, 16 GB RAM, GTX 1660 Ti, Win10 Home 19045 — recorded in `Docs/reference-machine.md`; every perf baseline JSON must embed this spec (Task 1 defines the schema). |
+| 1.11 | **[machine]** Reference machine (roadmap R10): i7-9700F 8C/8T, 16 GB RAM, GTX 1660 Ti, Win10 Home 19045 — recorded in `Docs/spec/reference-machine.md`; every perf baseline JSON must embed this spec (Task 1 defines the schema). |
 | 1.12 | 5.8 is the **terminal UE5 release** (ADR-13). Public 5.8 facts used throughout §4: Mass Signals moved to engine core; sparse/virtual fragments & tags added (add/remove **without archetype change** — designed for rarely-present, frequently-toggled data); processor execution/dependency resolution overhauled with thread-safe observer notifications; off-game-thread entity creation now possible (game-thread-only remains a deliberate project choice per ADR-02/I1); Mass events visible in Unreal Insights; new optional simplified processor API `UE::Mass::FQueryExecutor`. |
 
 ## §2. MCP operating manual (do not rediscover)
 
-Full transport recipe and tool-by-tool notes: `prephase0-report.md` §4. Quick-reference of the gotchas that matter every day:
+Full transport recipe and tool-by-tool notes: `Docs/phases/pre-phase-0/report.md` §4. Quick-reference of the gotchas that matter every day:
 
 | Tool | Recipe / gotcha |
 |------|-----------------|
@@ -74,7 +76,7 @@ Full transport recipe and tool-by-tool notes: `prephase0-report.md` §4. Quick-r
 
 ## §3. Ground rules (continuity with pre-phase-0)
 
-1. **Progress log**: `Docs/agent/phase0-progress.md`, one line per completed step: `[taskN.M] what was done → verification result`. Same format as `progress.md`. Write it as you go, not at the end.
+1. **Progress log**: `Docs/phases/phase-0/progress.md`, one line per completed step: `[taskN.M] what was done → verification result`. Same format as `Docs/phases/pre-phase-0/progress.md`. Write it as you go, not at the end.
 2. **Commits**: one commit per completed task, message prefix `phase0:`. Amend only pre-push local commits, as before.
 3. **Evidence before claim**: every "done" carries tool evidence — a log line, a test JSON (`"state":"Success"`), `is_dirty=false`, `git log` hash. No exceptions.
 4. **Reality wins** (§0): discrepancies are logged and the brief is corrected in place.
@@ -105,312 +107,17 @@ Full transport recipe and tool-by-tool notes: `prephase0-report.md` §4. Quick-r
 
 ## §4. Pre-researched UE 5.8.4 API digest (verify-then-trust)
 
-### §4.0 Protocol
-
-Every entry below carries a **verification status**. In Task 2 you audit each entry against the pinned 5.8.4 source (`E:\Unreal\UE_5.8\Engine\Source\...`) and record one of: ✅ confirmed · ⚠️ signature differs (write the actual) · ❌ absent (find the replacement, note the search path). Result goes to `Docs/agent/api-audit-5.8.md`. After Task 2, later tasks **cite** the audit instead of re-opening engine source. Entries marked ⚠️*pre-verified* below were already confirmed by the public 5.8 sources in Part III during this brief's research pass; audit is still mandatory but should be fast.
-
-### §4.1 Version-history cheat table (why old tutorials are wrong)
-
-| Version | Change that affects this project |
-|---------|----------------------------------|
-| 5.5 | MassEntity became an engine runtime module; StructUtils deprecated (FInstancedStruct → CoreUObject). |
-| 5.6+ | `ConfigureQueries(const TSharedRef<FMassEntityManager>&)` (parameterless = legacy); queries register by construction — `FMassEntityQuery Query(*this)` — `RegisterWithProcessor(UMassProcessor&)` still exists (audit C1: MassEntityQuery.h:86) but ctor registration is the pattern; `ForEachEntityChunk(Context, ...)` no longer takes the entity manager; optional new `UE::Mass::FQueryExecutor` API. |
-| 5.7 | Processor time-slicing (`UE::Mass::FExecutionLimiter`) — T0.9 must verify it is off under test; observer calls are batched while command buffers flush (relevant to T0.5/E5). |
-| 5.8 | Mass Signals in engine core (`Runtime/Mass/MassSignals`); **sparse/virtual fragments & tags** (add/remove without archetype change — designed for rarely-present, frequently-toggled data; `FDeadTag` decision, roadmap Open Decision 7); reworked processor scheduling + thread-safe observers; off-game-thread entity creation; Mass events in Insights. Observer API now: `ObservedTypes` (multiple) + `EMassObservedOperationFlags` (incl. `CreateEntity`/`DestroyEntity`); old single `ObservedType`/`Operation` (Add/Remove) **deprecated**. 5.8 batch element APIs renamed (`AddElementToEntities` → `BatchAddElementToEntities` family). |
-
-### §4.2 Fragments, tags, shared fragments
-
-```cpp
-// Per-entity fragment (each entity owns one):
-USTRUCT()
-struct FOwnerUnitFragment : public FMassFragment
-{
-    GENERATED_BODY()
-    UPROPERTY() FUnitHandle Owner;      // §5 Task 3 defines FUnitHandle (arch §2.3)
-    UPROPERTY() int32  RosterIndex = INDEX_NONE;
-};
-
-// Shared fragment (one instance shared by many entities — content-hash deduped):
-USTRUCT()
-struct FUnitStatsSharedFragment : public FMassSharedFragment
-{
-    GENERATED_BODY()
-    // ADR-14 / review E1: FIRST field is the uniqueness anchor. Mass dedups shared
-    // fragments by content hash; two units with identical stats would otherwise
-    // silently share one instance and cross-contaminate on in-place mutation.
-    UPROPERTY() FUnitHandle OwnerUnit;
-    UPROPERTY() float SpeedMult = 1.f;
-    UPROPERTY() float MeleeAttackMult = 1.f;
-    UPROPERTY() float MeleeDefenseMult = 1.f;
-    UPROPERTY() float RangedAttackMult = 1.f;
-    UPROPERTY() float BlockMult = 1.f;
-    UPROPERTY() float FatigueAttackMult = 1.f;
-    UPROPERTY() float FatigueDefenseMult = 1.f;
-    UPROPERTY() float ArmorAdd = 0.f;
-    UPROPERTY() float AccuracyMult = 1.f;
-    UPROPERTY() float MoraleBonus = 0.f;
-};
-
-// Tag (empty UScriptStruct — never hold members). Bases come from MassCore:
-// #include "Mass/EntityElementTypes.h" (audit C7).
-USTRUCT()
-struct FInfantryTag : public FMassTag { GENERATED_BODY() };
-```
-
-**Shared-fragment creation with a custom hash** ⚠️*pre-verified semantics*: "Shared fragments must be CRC hashable, otherwise you may not actually create a new instance when you call `GetOrCreateSharedFragmentByHash`. You can pass in your own hash with `GetOrCreateSharedFragmentByHash`, which helps if you prefer to control what makes each one unique" (MassSample §4.2.1 — this is the E1 citation). ADR-14 pattern:
-
-```cpp
-FUnitStatsSharedFragment Payload;
-Payload.OwnerUnit = UnitHandle;                 // uniqueness anchor
-Payload.SpeedMult = Snapshot.SpeedMult;         // ...fill from registry snapshot
-// Audit C8: GetOrCreateSharedFragmentByHash is PRIVATE in 5.8. The anchor
-// makes the payload value-distinct, so the public routes both yield per-unit
-// instances: (a) EntityManager.GetOrCreateSharedFragment<FUnitStatsSharedFragment>(Payload)
-// (content-CRC create), or (b) archetype attach via
-// FMassArchetypeSharedFragmentValues::AddSharedFragment(FSharedStruct) + BatchCreateEntities
-// (the Phase 0 spawn route, Task 6).
-FSharedStruct Shared = EntityManager.GetOrCreateSharedFragment<FUnitStatsSharedFragment>(Payload);
-```
-
-**Two creation routes to audit in Task 2** (both must end with the fragment instance attached to the unit's entities):
-
-- **Route A — archetype-first** ⚠️: build `FMassArchetypeCompositionDescriptor` (fragments+tags) and `FMassArchetypeSharedFragmentValues` (add the shared fragment handle), `EntityManager.CreateArchetype(Desc, Params)`, then `BatchCreateEntities` (optionally `BatchReserveEntities`) into that archetype. Reference: public 5.8 quickstart uses exactly `UMassEntitySubsystem::GetMutableEntityManager()` → `CreateArchetype` → `FMassArchetypeSharedFragmentValues` → `BatchCreateEntities`.
-- **Route B — spawner/template** ⚠️: `UMassEntityConfigAsset` → entity template → `UMassSpawnerSubsystem::SpawnEntities` (5.8 template-based; pre-5.8 `SpawnEntitiesFromConfig` obsolete — review E4). Audit the exact 5.8 overload set (the subsystem has two `SpawnEntities` methods per 5.8-era forum confirmation).
-
-**Sparse (virtual) fragments/tags — 5.8** ⚠️*pre-verified*: optional fragments and tags can be added/removed **without triggering an archetype change**; official guidance: regular fragments for data every entity of the archetype has, sparse ones for "rarely present, frequently toggled data". `FDeadTag` is the textbook case (roadmap R1 / Open Decision 7 → ADR-15 in Task 9; decided — adopt, §3.1 A3).
-
-**Later mutation of a shared fragment**: processors declare `AddSharedRequirement<FUnitStatsSharedFragment>(EMassFragmentAccess::ReadWrite)` and write through `Context.GetMutableSharedFragment<FUnitStatsSharedFragment>()` per chunk ⚠️*pre-verified accessor*. Direct out-of-query mutation path (registry-held `FSharedStruct` → `GetMutable<T>()`) — audit existence in Task 2; UnitSync (Task 8) does **not** need it if it uses the query route.
-
-### §4.3 Processors (5.8 signatures)
-
-⚠️*pre-verified* against 5.8 public sources — the single most outdated area in older tutorials:
-
-```cpp
-UCLASS()
-class UUnitSyncProcessor : public UMassProcessor
-{
-    GENERATED_BODY()
-public:
-    UUnitSyncProcessor();
-protected:
-    virtual void ConfigureQueries(const TSharedRef<FMassEntityManager>& EntityManager) override;
-    virtual void Execute(FMassEntityManager& EntityManager, FMassExecutionContext& Context) override;
-private:
-    FMassEntityQuery SyncQuery;
-};
-
-UUnitSyncProcessor::UUnitSyncProcessor()
-    : SyncQuery(*this)                                  // 5.6+: ctor registers the query
-{
-    bAutoRegisterWithProcessingPhases = true;           // auto-instantiated, runs every frame
-    SetProcessingPhase(EMassProcessingPhase::PrePhysics);
-    ExecutionOrder.ExecuteInGroup = TEXT("Battle");     // custom group; built-ins in MassCommonTypes.h
-    // ExecutionOrder.ExecuteAfter.Add(TEXT("..."));    // string-based ordering
-    ExecutionFlags = (int32)EProcessorExecutionFlags::AllWorldModes;  // see note below
-    bRequiresGameThreadExecution = true;                // UnitSync is game-thread (arch §4 row 0)
-}
-
-void UUnitSyncProcessor::ConfigureQueries(const TSharedRef<FMassEntityManager>& EntityManager)
-{
-    SyncQuery.AddRequirement<FOwnerUnitFragment>(EMassFragmentAccess::ReadOnly);
-    SyncQuery.AddSharedRequirement<FUnitStatsSharedFragment>(EMassFragmentAccess::ReadWrite);
-}
-
-void UUnitSyncProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionContext& Context)
-{
-    SyncQuery.ForEachEntityChunk(Context, [](FMassExecutionContext& Context)
-    {
-        auto Owners   = Context.GetFragmentView<FOwnerUnitFragment>();
-        auto& Stats   = Context.GetMutableSharedFragment<FUnitStatsSharedFragment>();
-        // per-owner dirty check against the registry, write in place, early-continue
-        for (int32 i = 0; i < Context.GetNumEntities(); ++i) { /* ... */ }
-    });
-}
-```
-
-Notes verified from public sources:
-- All processors auto-register and default to `EMassProcessingPhase::PrePhysics`; phases map to tick groups (PrePhysics→TG_PrePhysics ... FrameEnd→TG_LastDemotable).
-- **ExecutionFlags**: `Standalone|Server|Client|Editor|EditorWorld` (+ combos `AllNetModes`, `AllWorldModes`, `All`). Default excludes EditorWorld — **explicitly set `AllWorldModes`** so Phase 0 structure probes work in editor worlds; PIE/standalone runs are unaffected.
-- 5.8's scheduler derives parallelism from query access declarations — `ReadOnly` vs `ReadWrite` correctness is load-bearing (arch §4 "Threading rules").
-- Optional modern API ⚠️: `UE::Mass::FQueryExecutor` (`AutoExecuteQuery = Executor;`) — official page "Simplified Mass Processor/Query API (Query Executor)". Phase 0 uses the classic style above (better reference coverage); note the option in the audit.
-
-### §4.4 Query requirement & accessor cheat table
-
-| Requirement | Call (5.8) |
-|---|---|
-| Fragment, R/W | `Query.AddRequirement<FFoo>(EMassFragmentAccess::ReadWrite)` |
-| Presence | second arg `EMassFragmentPresence::All / Any / None / Optional` |
-| Tag | `Query.AddTagRequirement<FTag>(EMassFragmentPresence::All)` |
-| Shared fragment | `Query.AddSharedRequirement<FFoo>(EMassFragmentAccess::ReadWrite)` |
-| World subsystem | `Query.AddSubsystemRequirement<USub>(EMassFragmentAccess::ReadOnly)` |
-| Processor-level subsystem | `ProcessorRequirements.AddSubsystemRequirement<USub>(...)` (accessed in `Execute` outside query scope) |
-
-Chunk-lambda accessors: `GetFragmentView<T>()` / `GetMutableFragmentView<T>()` (arrays), `GetConstSharedFragment<T>()` / `GetMutableSharedFragment<T>()`, `GetSubsystemChecked<T>(World)` / `GetMutableSubsystemChecked<T>(World)`, `GetChunkFragment<T>()` for chunk fragments. Tags have no accessors (no data). ⚠️*pre-verified* (MassSample §4.7 tables).
-
-### §4.5 Command buffers & the E5 flush contract
-
-- Inside processors: `Context.Defer().AddFragment<T>(E)` / `.RemoveFragment<T>(E)` / `.AddTag<T>(E)` / `.RemoveTag<T>(E)` / `.DestroyEntity(E)`; long form `PushCommand<FMassCommand...>`. ⚠️*pre-verified examples for Add/RemoveFragment*.
-- Outside processors (game thread, not mid-processing): guard with `EntityManager.IsProcessing()`; if true, use `EntityManager.Defer()...`, else direct calls. Deferred create from outside: `EntityManager.Defer().PushCommand<FMassDeferredCreateCommand>(lambda)` ⚠️.
-- **Flush contract (review E5) -- RESOLVED by Task 2 audit**: 5.8.4 flushes (a) at the end of each processor's processing scope (MassExecutor.cpp:153 / MassProcessingQueue.cpp:317, observers unlocked pre-flush) and (b) at processing-phase end for the manager buffer (MassProcessingPhaseManager.cpp:664). T0.5 asserts **directly post-Death-processor** semantics: deferred commands are applied before the next processor in the same phase observes state.
-- 5.8 renamed batch element commands (`AddElementToEntities` → `BatchAddElementToEntities` family) — audit if you touch them directly (you mostly shouldn't; use `Defer()`).
-
-### §4.6 Observers & Signals (exact 5.8 signatures)
-
-**Signals** ⚠️*pre-verified full API* (module MassSignals, header `/Engine/Source/Runtime/Mass/MassSignals/Public/MassSignalSubsystem.h`):
-
-```cpp
-void UMassSignalSubsystem::SignalEntity(FName SignalName, const FMassEntityHandle Entity);
-void SignalEntityDeferred(FMassExecutionContext& Context, FName SignalName, const FMassEntityHandle Entity);
-void SignalEntities(FName, TConstArrayView<FMassEntityHandle>);
-void SignalEntitiesDeferred(FMassExecutionContext&, FName, TConstArrayView<FMassEntityHandle>);
-void DelaySignalEntity(FName, const FMassEntityHandle, const float DelayInSeconds);  // + Deferred variant
-UE::Mass::FSignalDelegate& GetSignalDelegateByName(FName);
-```
-
-Receiver processor: subclass `UMassSignalProcessorBase`, call `SubscribeToSignal(Subsystem, SignalName)` and override `SignalEntities(FMassEntityManager&, FMassExecutionContext&, FMassSignalNameLookup&)` (5.8 shape — audit C2: no ConfigureSignals/SignalReceiveDelegate exists; optional `OnSignalReceived(FName, TConstArrayView<FMassEntityHandle>)`). **Signals carry only a name + one entity handle**: the handler reads `FOwnerUnitFragment` from the entity to recover the owning unit. The death chain (Task 9) is therefore:
-
-```
-kill (deferred tag add) → observer on FDeadTag add fires during flush
-  → SignalEntityDeferred("Battle.UnitDeath", Entity)
-  → receiver processor (game thread) reads FOwnerUnitFragment
-  → registry roster update → SendGameplayEventToActor(UnitActor, "Battle.Unit.Died", ...)
-```
-
-**Observers** ⚠️: `UMassObserverProcessor` subclasses fire on structural operations at flush time. 5.8 API: `ObservedTypes` (multiple types) + `EMassObservedOperationFlags` (`Add`/`Remove`/`CreateEntity`/`DestroyEntity`); the pre-5.8 single `ObservedType`+`Operation` pair is deprecated. Audit `MassObserverProcessor.h` in Task 2 and record the exact registration shape (tag discovery from the cached entity query vs explicit `ObservedTypes`).
-
-### §4.7 World subsystems usable by Mass (registry pattern)
-
-`UUnitRegistrySubsystem` must be readable by worker processors from Phase 1 — bake the discipline now ⚠️*pre-verified pattern* (MassSample §4.4):
-
-```cpp
-UCLASS()
-class UUnitRegistrySubsystem : public UWorldSubsystem
-{
-    GENERATED_BODY()
-public:
-    virtual void Initialize(FSubsystemCollectionBase& Collection) override;
-    virtual void Deinitialize() override;
-    // Phase 0: game-thread API only. Phase 1 adds scoped read access for workers.
-    // Phase 1+ worker reads:
-    // UE_MT_SCOPED_READ_ACCESS(AccessDetector);
-private:
-    UE_MT_DECLARE_RW_ACCESS_DETECTOR(AccessDetector);
-    TMap<FUnitHandle, FUnitRuntimeState> Units;   // plain structs, no UObject*
-    // free-list + serial counters per arch §2.3
-};
-
-template<>
-struct TMassExternalSubsystemTraits<UUnitRegistrySubsystem> final
-{
-    enum { GameThreadOnly = false, ThreadSafeWrite = false };
-};
-```
-
-(Members are `GameThreadOnly`/`ThreadSafeWrite` -- audit C3; header is MassCore `Mass/ExternalSubsystemTraits.h`, the old `MassExternalSubsystemTraits.h` is a 5.8 deprecated shim. If traits cannot live in the same header, use the `MassGameplayExternalTraits.h` separate-header pattern.)
-
-### §4.8 Spawning & entity creation
-
-- **Subsystem access**: `World->GetSubsystem<UMassEntitySubsystem>()` → `GetMutableEntityManager()` ⚠️*pre-verified*.
-- **Structural-change guard**: never mutate archetypes while Mass is processing — check `EntityManager.IsProcessing()`; defer if true (§4.5).
-- **Route A (C++ archetype-first — primary for Phase 0 spawn library)**: `CreateArchetype(FMassArchetypeCompositionDescriptor, FMassArchetypeCreationParams)` + `FMassArchetypeSharedFragmentValues` → `BatchReserveEntities` → `BatchCreateEntities` → fixup pass writes `FOwnerUnitFragment`/`FBaseStatsFragment` values ⚠️*pre-verified call names*.
-- **Route B (config-driven)**: `UMassEntityConfigAsset` (MassSpawner) + traits (`UMassEntityTraitBase::BuildTemplate(FMassEntityTemplateBuildContext&, const UWorld&)`; `BuildContext.AddFragment<T>() / AddFragment_GetRef<T>() / AddTag<T>() / AddSharedFragment(FSharedStruct)` -- audit C6: `RequireFragment<T>` absent in 5.8) → `UMassSpawnerSubsystem::SpawnEntities` (5.8 template-based overloads — audit exact set; E4). T0.3 requires the config asset path to exist and resolve; Task 6 authors the assets via ExecBridge (§4.11) rather than by hand in the editor (decided — §3.1 A5).
-- **Kill (test path)**: defer tag add, see §4.5/Task 9.
-
-### §4.9 GAS essentials (stable API, low audit risk)
-
-```cpp
-UCLASS()
-class UUnitAttributeSet : public UAttributeSet
-{
-    GENERATED_BODY()
-public:
-    // Closed set — arch §10.1. Full GAMEPLAYATTRIBUTE_ macros per attribute:
-    UPROPERTY(VisibleAnywhere, Category = "Battle") FGameplayAttributeData Morale;
-    ATTRIBUTE_ACCESSORS(UUnitAttributeSet, Morale)
-    // ... MeleeAttackMod, MeleeDefenseMod, RangedAttackMod, SpeedMod,
-    //     BlockChanceMod, Fatigue, Experience, ArmourUpgrade, OrderLatency, AmmoPool
-};
-```
-
-- Wire-up: `ASC->InitAbilityActorInfo(this, this)` in `PostInitializeComponents`; then for each attribute in a static list `{ GetMoraleAttribute(), GetMeleeAttackModAttribute(), ... }` register `ASC->GetGameplayAttributeValueChangeDelegate(Attr).AddUObject(this, &AUnitActor::OnAttributeChanged)` → handler sets the registry dirty flag for the unit (arch §5.1; one frame of latency accepted).
-- Test drive for T0.4 — **no GE asset needed**: `ASC->SetNumericAttributeBase(UUnitAttributeSet::GetMeleeAttackModAttribute(), Value);` fires the same delegate path.
-- Up-path event (Task 9): `AbilitySystemBlueprintLibrary::SendGameplayEventToActor(UnitActor, FGameplayTag("Battle.Unit.Died"), FGameplayEventData())` (approx. — audit exact signature).
-
-### §4.10 Automation framework essentials
-
-```cpp
-#include "Misc/AutomationTest.h"
-
-// No-world / created-world unit test (per-commit tier):
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRegistryLifecycle, "Battle.Unit.Registry.Lifecycle",
-    EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter);
-
-bool FRegistryLifecycle::RunTest(const FString& Parameters)
-{
-    UWorld* World = UWorld::CreateWorld(EWorldType::Game, false);   // world subsystems initialize
-    UUnitRegistrySubsystem* Reg = World->GetSubsystem<UUnitRegistrySubsystem>();
-    TestNotNull(TEXT("registry"), Reg);
-    // ... assertions; AddError() fails the test; TestEqual/TestTrue helpers
-    World->DestroyWorld();
-    return true;
-}
-```
-
-- `FAutomationEditorCommonUtils::CreateNewMap()` is the editor-map alternative but requires an `UnrealEd` dependency — **use `UWorld::CreateWorld(EWorldType::Game, false)` instead** to keep the runtime plugin module clean.
-- Editor-context tests run in the editor session → verify through `AutomationTestToolset` (§2). The existing `Battle.Smoke.PluginLoaded` in `MassBattleSmokeTest.cpp` is the template for flags/naming.
-- Functional tests (T0.4/T0.5) tick the world → `AFunctionalTest` subclass on a minimal map `L_MassBattle_T0_Functional`, driven through `UFunctionalTestingManager` (the `AutomationTestToolset` path handles this). Fallback if PIE automation is flaky through MCP: run the functional tier headless via the Task 1 CI script and read the log/report — the roadmap's `-ExecCmds="Automation RunTests Battle.Func" -TestExit="Automation Test Queue Empty"` line exists for exactly this.
-- Expected-error whitelist: `AddExpectedError(...)`.
-- Fixed-step: `FApp::SetUseFixedTimeStep(true); FApp::SetFixedDeltaTime(1.0/60.0);` in test setup (audit C4: `SetFixedTimeStepValue` does not exist in 5.8; read-back is `FApp::UseFixedTimeStep()` / `GetFixedDeltaTime()`); T0.9 helper in Task 11 reads **active** values not just the CVars it set.
-
-### §4.11 ExecBridge pattern (C++ console commands as the MCP bridge)
-
-Anything the MCP toolsets cannot do (build configs, spawn rosters, kill entities, dump registry state) becomes an `FAutoConsoleCommandWithWorldAndArgs` that logs structured, grep-able output:
-
-```cpp
-#include "Containers/UnrealString.h"
-#include "HAL/IConsoleManager.h"
-
-namespace BattleExec
-{
-    static void SpawnRoster(const TArray<FString>& Args, UWorld* World)
-    {
-        // Args: <Type=Peasant|Sergeant> <Count> <X> <Y>
-        // ... build unit actor + entities via the spawn library ...
-        UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SpawnRoster Unit=%u:%u Entities=%d"),
-               UnitHandle.Index, UnitHandle.Serial, Count);
-    }
-}
-static FAutoConsoleCommandWithWorldAndArgs GBattleSpawnRoster(
-    TEXT("Battle.SpawnRoster"),
-    TEXT("<Type> <Count> <X> <Y> — spawns a unit actor + roster; logs EXEC_RESULT lines"),
-    FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BattleExec::SpawnRoster));
-```
-
-Phase 0 command set (implemented across Tasks 4–9): `Battle.SpawnRoster`, `Battle.BuildT0Configs`, `Battle.SetAttr <Unit> <Attr> <Value>`, `Battle.KillEntity <Unit> <RosterIndex>`, `Battle.DumpRegistry`, `Battle.DumpSharedFrag <Unit>`, `Battle.StateHash`. Convention: every command emits at least one `EXEC_RESULT <Name> ...` line → verified via `LogsToolset.GetLogEntries(category:"", pattern:"EXEC_RESULT")`. Commands must be safe in the editor world (structure-only probes); anything needing sim ticks runs as a functional test instead (§4.10 split).
-
-### §4.12 CI stack (R8) — verified building blocks
-
-| Block | Verified facts |
-|---|---|
-| Headless automation run | `UnrealEditor-Cmd.exe "<uproject>" -game -unattended -nopause -nosplash -nullrhi -log=CI.log -ExecCmds="Automation RunTests Battle.Unit+Battle.Data+Battle.Smoke; Quit" -TestExit="Automation Test Queue Empty"` — long-standing documented pattern (Epic forums/StackOverflow; roadmap B.0 already mandates the same flags). Script parses the log for the pass/fail summary rather than trusting exit codes. Audit C5: 5.8 renames it to `-ReportExportPath=<dir>` (writes index.json, UTF-8 BOM); the old name still parses with a deprecation warning. |
-| Gauntlet | Engine framework "to run sessions of projects and validate results"; C# driver under `Engine/Source/Programs/AutomationTool/Gauntlet`, invoked via RunUAT (`RunGauntlet`); game-side controllers are `UGauntletTestController` subclasses in the **Gauntlet plugin** (`-gauntlet=<ControllerName>` enables one). Official 5.8 doc pages: "Gauntlet Automation Framework in Unreal Engine" → Overview / Run Gauntlet Tests / Gauntlet Controller. Phase 0 ships one stub controller (`UBattleSmokeController`: wait N s, assert no errors, `EndTest`) purely to prove the packaged-nightly loop end-to-end. ⚠️ audit: plugin location/state in 5.8 (`Engine/Plugins/...Gauntlet`) and the exact RunUAT verb/args. |
-| Orchestration host | Roadmap R8 names "Horde / Jenkins / hosted CI". Horde in 5.8 is aimed at build farms (release notes: Horde analytics/perf reporting) — heavier than a single-machine project needs. Jenkins LTS controller+agent on the reference machine (or initially Windows Task Scheduler as a stopgap) runs: per-commit gate (build + unit/data/smoke) and the nightly job (package Win64 via `RunUAT BuildCookRun`, then Gauntlet stub, then baseline compare). The Jenkinsfile skeleton in Task 1 is a starting point, not doctrine — Task 1's ADR-16 records the host decision and why. |
-| Baseline JSON storage | `Baselines/perf/<machine-tag>/<gate>.json`, schema `{ machine, engineCL, date, metrics{...} }`; `Tools/CI/compare_baseline.py` fails on regression beyond tolerance. Phase 0 seeds the loop with two trivial-but-real metrics (80-entity spawn time; smoke test duration) so storage+compare is exercised before real perf gates arrive in Phase 2 (T2.9). Every file embeds the reference-machine spec (R10). |
-| Zen/server caution (5.8) | 5.8 release notes: for automated/build processes, set `LimitProcessLifetime=false` in `[Zen.AutoLaunch]` of `DefaultEngine.ini` so Zenserver doesn't churn during CI runs. |
-
-### §4.13 Sources for §4 (full list in Part III)
-
-Primary: MassSample README (Megafunk, updated to 5.8) · vrealmatic Mass Framework wiki (explicitly updated to UE 5.8) · Epic 5.8 release notes · Epic API docs (`UMassSignalSubsystem`) · Epic "Simplified Mass Processor" page · Gauntlet doc pages · nukethebees query-API quickstart · Epic forums (spawner usage, Jan 2026 threads).
+> **Extracted 2026-10-25 (documentation reorg).** The digest now lives as **Part B** of `Docs/reference/engine-api-5.8.md`, alongside the Task 2 verification audit (Part A) and the research sources (Part C). Historical citations to "§4.x" or "BRIEF §4" resolve there. This stub keeps the brief's §-numbering intact for the progress log and report.
 
 ## §5. Phase 0 task plan
 
 Scope = roadmap Phase 0 **in full** (owner decision: R8 CI included at full weight) **plus the owner-approved adjustments in §3.1 (A1–A5, A7)**. Ordering = CI first per the owner's priority directive; the roadmap's build order inside the data spine is otherwise preserved. One task = one commit (+ progress-log lines + gate evidence where applicable).
 
 ### Task 0 — Kickoff
-1. Read order per §0; open `prephase0-report.md` §2/§4 beside you.
-2. Refresh MCP: `list_toolsets` → update `Docs/agent/mcp-inventory.md` if the toolset list differs (note console-command tool location for §4.11).
+1. Read order per §0; open `Docs/phases/pre-phase-0/report.md` §2/§4 beside you.
+2. Refresh MCP: `list_toolsets` → update `Docs/reference/mcp-playbook.md` if the toolset list differs (note console-command tool location for §4.11).
 3. `git status` clean check on `main`; create branch `phase0` (or continue on `main` if the pre-phase-0 protocol did — follow repo convention).
-4. Create `Docs/agent/phase0-progress.md` with the session header.
+4. Create `Docs/phases/phase-0/progress.md` with the session header.
 
 **Verify**: MCP handshake OK; editor responsive; clean tree. **Commit**: `phase0: kickoff`.
 
@@ -428,7 +135,7 @@ Scope = roadmap Phase 0 **in full** (owner decision: R8 CI included at full weig
 **Commit**: `phase0: CI foundation (R8) — gate script, Jenkinsfile, nightly, gauntlet stub, baselines`.
 
 ### Task 2 — Pinned-API audit (roadmap I6)
-Audit every ⚠️ entry in §4 against `E:\Unreal\UE_5.8\Engine\Source` (+ engine plugin sources). Produce `Docs/agent/api-audit-5.8.md` as a table: symbol → status (✅/⚠️/❌) → actual 5.8.4 signature → source file path → notes. This file is cited by every later task; it is also the reusable template for future engine upgrades (ADR-13's scripted-diff goal — a text checklist is sufficient this phase; the scripted diff can graduate later).
+Audit every ⚠️ entry in §4 against `E:\Unreal\UE_5.8\Engine\Source` (+ engine plugin sources). Produce `Docs/reference/engine-api-5.8.md` as a table: symbol → status (✅/⚠️/❌) → actual 5.8.4 signature → source file path → notes. This file is cited by every later task; it is also the reusable template for future engine upgrades (ADR-13's scripted-diff goal — a text checklist is sufficient this phase; the scripted diff can graduate later).
 
 Then apply the first approved spec patch (§3.1 A7): the architecture doc's §4 processor table gets a note recording the 5.8 signatures — `ConfigureQueries(const TSharedRef<FMassEntityManager>&)`, `Execute(FMassEntityManager&, FMassExecutionContext&)`, ctor-registered queries — citing this audit.
 
@@ -502,7 +209,7 @@ Then apply the approved roadmap B.0 patch (§3.1 A7): the roadmap's "test-mode c
 
 ### Task 12 — Debug overlay skeleton (B.2, slimmed per §3.1 A1)
 1. `UBattleDebugSubsystem` + `Battle.Debug.*` CVars: on-screen toggle hook point (draw implementation arrives with Phase 2 — nothing visual exists yet), log-dump endpoints (registry, shared fragments, per-unit aggregates), counters stub (per-frame processor ms, archetype count — recorded into the B.4 metrics format now, drawn later).
-2. Wire MassInsights/Mass Debugger cross-check note (roadmap I2): confirm in the audit that 5.8 Insights shows Mass events; record the verification path in `Docs/agent/api-audit-5.8.md`. Do **not** hand-roll metrics the debugger already exposes.
+2. Wire MassInsights/Mass Debugger cross-check note (roadmap I2): confirm in the audit that 5.8 Insights shows Mass events; record the verification path in `Docs/reference/engine-api-5.8.md`. Do **not** hand-roll metrics the debugger already exposes.
 
 **Scope note (§3.1 A1, approved)**: hooks only — CVars, dump/counter endpoints, metrics format, MassInsights wiring. **No HUD/canvas drawing code in this phase**; all on-screen visualization (pairing lines, coverage heat, unstuck colors) moves to Phase 2, where the first drawable state exists.
 
@@ -512,7 +219,7 @@ Then apply the approved roadmap B.0 patch (§3.1 A7): the roadmap's "test-mode c
 End-to-end on `L_MassBattle_T0_Functional` (or Demo01 if world type demands): spawn **2 units × 40 entities from the parsed EDU table** → apply a GAS attribute change on unit A → assert shared-fragment visibility ≤ 1 frame (T0.4 re-assert) and unit-B isolation (T0.8 re-assert) → kill one entity → assert removal from live queries (sparse tag per ADR-15 — no archetype flip expected), signal, roster update (T0.5 re-assert) → emit `Battle.StateHash` before/after → record spawn-perf baseline (Task 1 storage) → run the **full** per-commit tier headless via `Tools/CI/run_tests.bat` as the final green run.
 
 ### Task 14 — Handoff report
-Write `Docs/agent/phase0-report.md` in the prephase0-report format: paths, facts-digest corrections, deviations, tool quirks, verbatim evidence, DoD checklist (§7), "where Phase 1 should start". Final commit `phase0: complete`. **STOP.**
+Write `Docs/phases/phase-0/report.md` in the prephase0-report format: paths, facts-digest corrections, deviations, tool quirks, verbatim evidence, DoD checklist (§7), "where Phase 1 should start". Final commit `phase0: complete`. **STOP.**
 
 ## §6. T0 gate → implementation map
 
@@ -534,9 +241,9 @@ Write `Docs/agent/phase0-report.md` in the prephase0-report format: paths, facts
 - [ ] Exit criteria (roadmap Phase 0, wording per §3.1 A3/A7): 2×40 entities spawned from table data; attribute change visible in `FUnitStatsSharedFragment` ≤ 1 frame; death → removed from live queries (sparse tag, ADR-15) + signal + roster update
 - [ ] R8 CI: gate script + Jenkins LTS (§3.1 A4; ADR-16 records the decision, or the enforced Task-Scheduler fallback), nightly packaged-build job incl. Gauntlet stub controller, baseline JSON storage with ≥ 2 real entries, compare script, Zen config
 - [ ] ADR-15 recorded (decided: adopt sparse tag — §3.1 A3); ADR-16 (CI host) recorded
-- [ ] `Docs/agent/api-audit-5.8.md` complete (I6) — every §4 ⚠️ resolved
+- [ ] `Docs/reference/engine-api-5.8.md` complete (I6) — every §4 ⚠️ resolved
 - [ ] Approved spec patches applied (§3.1 A7): architecture §4 signature note (Task 2), roadmap exit-criteria + T0.5 wording (Task 9), roadmap B.0 test-mode reference (Task 11)
-- [ ] `Docs/agent/phase0-progress.md` complete; `phase0: complete` commit exists
+- [ ] `Docs/phases/phase-0/progress.md` complete; `phase0: complete` commit exists
 - [ ] B.8 DoD per capability: unit tests over math, scenario test, debug overlay hook, metric, regression-checklist entry, `Battle.*` cvar flag (registry/EDU/spawn/sync/death paths each checked)
 - [ ] Editor left clean (no dirty maps), MCP responsive, all evidence reproducible
 
@@ -547,7 +254,7 @@ You are the MassBattle Phase 0 implementation agent. You execute
 Docs/BRIEF_phase0.md autonomously, exactly like the pre-phase-0 run.
 
 NON-NEGOTIABLES
-1. Facts: prephase0-report.md §2 and BRIEF §1 are authoritative. If reality
+1. Facts: Docs/phases/pre-phase-0/report.md §2 and BRIEF §1 are authoritative. If reality
    contradicts them, reality wins: correct the doc in place, log the
    discrepancy, keep moving.
 2. Token discipline: never re-research anything BRIEF §4 states — cite it.
@@ -558,7 +265,7 @@ NON-NEGOTIABLES
 4. Evidence before claim: every "done" has tool evidence (log line, test JSON,
    is_dirty, git hash). No claim without it.
 5. One commit per task, prefix "phase0:". Progress log line per step in
-   Docs/agent/phase0-progress.md, format [taskN.M] what → verification.
+   Docs/phases/phase-0/progress.md, format [taskN.M] what → verification.
 6. Scope lock: build exactly Task 1–14. Do not pull Phase 1+ work forward
    (no spatial hash, no slots, no servo). Roadmap-faithful; deviations only
    where reality forces them, and each deviation is logged with reason.
@@ -574,7 +281,7 @@ NON-NEGOTIABLES
    land it completely before starting the data-spine tasks.
 
 STOP CONDITION
-All of §7 DoD checked → write Docs/agent/phase0-report.md (prephase0-report
+All of §7 DoD checked → write Docs/phases/phase-0/report.md (prephase0-report
 format) → final commit "phase0: complete" → stop.
 ```
 
@@ -614,13 +321,15 @@ T0.3 needs `UMassEntityConfigAsset` assets to exist and resolve. Authoring them 
 - Architecture §4 processor table: note 5.8 signatures (`ConfigureQueries(const TSharedRef<FMassEntityManager>&)`, `Execute(FMassEntityManager&, FMassExecutionContext&)`, ctor-registered queries) in the next revision, citing the I6 audit.
 
 ### A8. Optional accelerators — NOT REQUESTED (owner listed A1–A7 only; still available on demand)
-- I can draft the full text of `Docs/agent/api-audit-5.8.md` as a pre-filled checklist (symbol → expected signature → blank verdict column) so Task 2 is pure confirmation.
+- I can draft the full text of `Docs/reference/engine-api-5.8.md` as a pre-filled checklist (symbol → expected signature → blank verdict column) so Task 2 is pure confirmation.
 - I can pre-write `Tools/CI/run_tests.bat`, `compare_baseline.py`, and the `Jenkinsfile` skeletons now so Task 1 becomes copy-in + verify.
 - I can draft ADR-15/ADR-16 texts in advance for the agent to ratify.
 
 ---
 
 # PART III — Research sources (verified 2026-10-24)
+
+> **Extracted 2026-10-25 (documentation reorg).** Now **Part C** of `Docs/reference/engine-api-5.8.md`.
 
 | Source | Used for |
 |---|---|
@@ -632,4 +341,4 @@ T0.3 needs `UMassEntityConfigAsset` assets to exist and resolve. Authoring them 
 | Gauntlet doc pages (dev.epicgames.com, 5.8): Framework / Overview / Run Gauntlet Tests / Gauntlet Controller | nightly orchestration design, `UGauntletTestController`, RunUAT invocation |
 | Epic forums: "Correct way to create mass entities" (Jan 2026), "Mass Signal vs. Observer processor" (Jan 2026), automation command-line threads; StackOverflow automation answer | spawner usage discipline (IsProcessing/Defer), two SpawnEntities overloads, `-ExecCmds`/`-TestExit` headless pattern |
 | Epic "Write C++ Tests in Unreal Engine"; unreal-garden testing tutorial | `IMPLEMENT_SIMPLE_AUTOMATION_TEST`, flags, `FAutomationEditorCommonUtils` |
-| `prephase0-report.md` §2/§4 (on-machine) | all [machine] facts in §1/§2 |
+| `Docs/phases/pre-phase-0/report.md` §2/§4 (on-machine) | all [machine] facts in §1/§2 |
