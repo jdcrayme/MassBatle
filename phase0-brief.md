@@ -163,10 +163,13 @@ struct FInfantryTag : public FMassTag { GENERATED_BODY() };
 FUnitStatsSharedFragment Payload;
 Payload.OwnerUnit = UnitHandle;                 // uniqueness anchor
 Payload.SpeedMult = Snapshot.SpeedMult;         // ...fill from registry snapshot
-const uint32 Seed = HashCombine(::GetTypeHash(UnitHandle.Index),
-                                ::GetTypeHash(UnitHandle.Serial));  // handle-seeded
-// FMassEntityManager (audit exact name/args):
-FSharedStruct Shared = EntityManager.GetOrCreateSharedFragmentByHash<FUnitStatsSharedFragment>(Seed, Payload);
+// Audit C8: GetOrCreateSharedFragmentByHash is PRIVATE in 5.8. The anchor
+// makes the payload value-distinct, so the public routes both yield per-unit
+// instances: (a) EntityManager.GetOrCreateSharedFragment<FUnitStatsSharedFragment>(Payload)
+// (content-CRC create), or (b) archetype attach via
+// FMassArchetypeSharedFragmentValues::AddSharedFragment(FSharedStruct) + BatchCreateEntities
+// (the Phase 0 spawn route, Task 6).
+FSharedStruct Shared = EntityManager.GetOrCreateSharedFragment<FUnitStatsSharedFragment>(Payload);
 ```
 
 **Two creation routes to audit in Task 2** (both must end with the fragment instance attached to the unit's entities):

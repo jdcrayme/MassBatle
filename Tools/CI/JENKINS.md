@@ -59,5 +59,10 @@ Scripted management (all without crumb; API token bypasses CSRF):
   wizard disabled (bootstrap groovy exists precisely to set up credentials).
 - CSRF crumbs are session-bound in 2.580; scripted access must use the API
   token (Basic auth with an API token skips the crumb).
+- The git plugin refuses `file:///` (local-directory) remotes unless the
+  controller runs with `-Dhudson.plugins.git.GitSCM.ALLOW_LOCAL_CHECKOUT=true`
+  (this flag is part of the start line above).
+- Once a pipeline job adopts its Jenkinsfile `parameters {}`, plain POST
+  `/build` returns 400 — use `/buildWithParameters?TIER=unit`.
 - The first nightly ran via `nightly.bat` directly (manual first-run evidence,
   Task 1); the Jenkins job wraps exactly the same script for subsequent runs.

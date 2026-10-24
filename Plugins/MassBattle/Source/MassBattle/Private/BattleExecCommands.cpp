@@ -5,6 +5,7 @@
 #include "BattleExecCommands.h"
 #include "BattleRegistry.h"
 #include "BattleFragments.h"
+#include "BattleDeathPath.h"
 #include "BattleSpawnLibrary.h"
 #include "BattleUnitTrait.h"
 #include "MassBattleModule.h"
@@ -219,9 +220,45 @@ namespace BattleExec
 		}
 	}
 
+	// -- Task 9: kill path (deferred sparse tag + explicit flush; E5 audited
+	// flush point: the observer fires during this flush) --
 	void KillEntity(const TArray<FString>& Args, UWorld* World)
 	{
-		UE_LOG(LogMassBattle, Warning, TEXT("EXEC_RESULT KillEntity FAIL not-implemented (Task 9)"));
+		// Args: <UnitIndex> <RosterIndex>
+		if (Args.Num() < 2 || !World)
+		{
+			UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT KillEntity FAIL usage: <UnitIndex> <RosterIndex>"));
+			return;
+		}
+		const uint32 UnitIndex = (uint32)FCString::Atoi(*Args[0]);
+		const int32 RosterIndex = FCString::Atoi(*Args[1]);
+
+		UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>();
+		UMassEntitySubsystem* ES = World->GetSubsystem<UMassEntitySubsystem>();
+		if (!Registry || !ES)
+		{
+			UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT KillEntity FAIL no subsystems"));
+			return;
+		}
+		FMassEntityManager& EM = ES->GetMutableEntityManager();
+		checkf(!EM.IsProcessing(), TEXT("KillEntity: forbidden while Mass is processing"));
+
+		FUnitHandle Target;
+		for (const FUnitHandle& H : Registry->GetSortedHandles())
+		{
+			if (H.Index == UnitIndex) { Target = H; break; }
+		}
+		const TArray<FMassEntityHandle>* Roster = Registry->FindRoster(Target);
+		if (!Target.IsValid() || !Roster || !Roster->IsValidIndex(RosterIndex))
+		{
+			UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT KillEntity FAIL unit=%u roster=%d"), UnitIndex, RosterIndex);
+			return;
+		}
+		const FMassEntityHandle Entity = (*Roster)[RosterIndex];
+		EM.Defer().AddTag<FDeadTag>(Entity);
+		EM.FlushCommands();
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT KillEntity Unit=%u:%u RosterIndex=%d Entity=%u:%u Flushed=1"),
+		       Target.Index, Target.Serial, RosterIndex, Entity.Index, Entity.SerialNumber);
 	}
 
 	// -- Task 6: shared-fragment dump --

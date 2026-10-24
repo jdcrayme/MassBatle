@@ -21,7 +21,7 @@ Guiding principle: **riskiest systems first, gray-box always.** The engagement s
 - Pre-Phase 0 [Review 2026-10-23]: pin engine to **UE 5.8.x** (ADR-13) and adopt ADR-14 — apply the E1 correction (unit handle embedded in every per-unit shared fragment payload + handle-seeded creation hash) and the E4 correction (5.8 template-based spawn API) before any Mass code is written; run the scripted pinned-version API audit over every Mass/GAS symbol named in the architecture doc (I6).
 - CI infrastructure as an explicit deliverable [R8]: automation host (Horde / Jenkins / hosted CI), packaged-build nightly orchestration for Gauntlet, versioned baseline-JSON storage, and a named reference machine whose specs are recorded in every perf baseline [R10].
 
-**Exit criteria:** 2 units × 40 entities spawned from table data; a GAS attribute change is visible in `FUnitStatsSharedFragment` within 1 frame; killing an entity flips archetype, fires signal, updates roster.
+**Exit criteria:** 2 units × 40 entities spawned from table data; a GAS attribute change is visible in `FUnitStatsSharedFragment` within 1 frame; killing an entity flips archetype, fires signal, updates roster. *(Phase 0 probe note: the archetype flip stays -- ADR-15 evaluated 5.8 sparse tags and reverted: chunk-granular storage + observer incompatibility, see `Docs/agent/api-audit-5.8.md`.)*
 
 **Test gate T0 — Foundation:**
 
@@ -31,7 +31,7 @@ Guiding principle: **riskiest systems first, gray-box always.** The engagement s
 | T0.2 | Unit | EDU parser round-trip | golden `.txt` → tables → re-serialize **canonical form** compared against a canonical golden file — byte-identical is over-strict (EDU comments/formatting are not reconstructible) [R11]; unknown fields rejected loudly |
 | T0.3 | Editor | Entity-config integrity | every `MassEntityConfigAsset` resolves fragments/tags; archetype buildable; roster specs instantiate |
 | T0.4 | Functional | Spawn + sync latency | attribute change → shared fragment ≤ 1 frame (asserted on tick count, not wall time) |
-| T0.5 | Functional | Death path | `FDeadTag` removes entity from live queries within the stated flush contract — buffer state asserted directly post-Death processor, or end-of-phase semantics [E5]; signal updates roster; queued destroy completes |
+| T0.5 | Functional | Death path | `FDeadTag` removes entity from live queries within the stated flush contract — observer fires during the kill flush [E5]; signal updates roster; queued destroy completes. *(Implemented as Battle.Func.S0_DeathPath; ADR-15 final state: regular tag.)* |
 | T0.6 | Unit | State-hash stability | identical sim state → identical hash; any relevant mutation changes it |
 | T0.7 | Unit | RNG registry discipline | suite green under N different seeds — a seed-dependent failure means leaked global RNG |
 | T0.8 [new] | Unit | Shared-fragment uniqueness | spawn 8 units with identical base stats → 8 distinct shared-fragment instances; a change on unit A is not observable on unit B in the same frame [E1] |
@@ -207,7 +207,7 @@ Standing rule from Phase 0 onward: pure-math seam audit at every code review (B.
 
 **The pure-math seam (Phase 0 requirement).** Every test-relevant algorithm lives as a free function or plain struct — `FBattleMath::MeleeHitChance()`, `FSlotAssigner::Assign()`, `FBattleSpatialHash`, `FPathFrameLayout::Project()`, fatigue multiplier table, morale aggregator. Processors are thin shims: read fragments → call pure function → write fragments. Math found inside a `ForEachEntityChunk` lambda is a refactor flag at code review, every phase.
 
-**Test-mode contract** (all tests run under it; one switch, grouped as `Battle.Test.*` CVars):
+**Test-mode contract** (all tests run under it; one switch, grouped as `Battle.Test.*` CVars -- implemented by `UBattleTestSettings::ApplyTestMode()` and asserted against active engine state by `UBattleTestSettings::AssertTestMode()` in `Plugins/MassBattle/Source/MassBattle/Public/BattleTestSettings.h`; applied + asserted at every S-scenario start):
 - Fixed delta-time stepping; assertions run after N explicit sim ticks — never wall-clock waits.
 - SimLOD forced to full detail and variable-tick disabled (LOD scheduling would make results nondeterministic); 5.7+ processor **time-slicing disabled** under the same contract — asserted by T0.9 against active engine settings, not just CVars [R3].
 - Seeded RNG registry active; deterministic (index-sorted) iteration flag available.

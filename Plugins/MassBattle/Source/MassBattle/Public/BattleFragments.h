@@ -97,17 +97,18 @@ USTRUCT() struct FBowTag : public FMassTag { GENERATED_BODY() };
 USTRUCT() struct FOfficerTag : public FMassTag { GENERATED_BODY() };
 
 /**
- * Death marker. ADR-15 (owner-approved, resolves roadmap Open Decision 7 /
- * review R1): derives FMassSparseTag, so add/remove does NOT change archetype --
- * the entity is simply excluded from live queries. Kills are the hottest
- * structural event in the pipeline (mass-death during a rout); sparse removes
- * that churn entirely. The kill path defers AddTag<FDeadTag>() like any tag
- * (command-buffer-only structural edits, arch §4 threading rules). Task 9
- * probes the on-machine behavior; the regular-tag fallback stays behind
- * MASSBATTLE_USE_REGULAR_DEAD_TAG if the sparse probe fails.
+ * Death marker. ADR-15 final state (Phase 0 Task 9 on-machine probe --
+ * reality wins): the sparse-tag adoption was REVERTED. 5.8.4 sparse tags are
+ * stored per archetype CHUNK (MassSparseElementsStorage.h: "Sparse tags live
+ * there since they don't contain any data per instance" -- a per-chunk bitset),
+ * so AddTag on one entity marks every same-chunk entity as dead; and the
+ * observer registry rejects sparse elements entirely (audit C10/C11). Per-entity
+ * death marking therefore requires the regular tag: killing an entity DOES
+ * archetype-flip (the roadmap's original wording), amortized fine at Phase 0
+ * scale; revisit if 5.8.x patches per-instance sparse tags.
  */
 USTRUCT()
-struct FDeadTag : public FMassSparseTag
+struct FDeadTag : public FMassTag
 {
 	GENERATED_BODY()
 };

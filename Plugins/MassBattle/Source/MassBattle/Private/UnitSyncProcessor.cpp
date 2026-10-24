@@ -1,9 +1,12 @@
 #include "UnitSyncProcessor.h"
 #include "BattleFragments.h"
 #include "BattleRegistry.h"
+#include "BattleDebugSubsystem.h"
 #include "MassBattleModule.h"
 
 #include "MassExecutionContext.h"
+#include "HAL/PlatformTime.h"
+#include "Misc/ScopeExit.h"
 
 UUnitSyncProcessor::UUnitSyncProcessor(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
@@ -33,6 +36,19 @@ void UUnitSyncProcessor::Execute(FMassEntityManager& EntityManager, FMassExecuti
 	{
 		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT UnitSync ExecuteCalls=%lld"), ExecuteCount);
 	}
+
+	// B.4 metric: per-frame processor ms into the debug subsystem (Task 12).
+	const double SyncStartMs = FPlatformTime::ToMilliseconds(FPlatformTime::Cycles());
+	ON_SCOPE_EXIT
+	{
+		if (UWorld* World = Context.GetWorld())
+		{
+			if (UBattleDebugSubsystem* Debug = World->GetSubsystem<UBattleDebugSubsystem>())
+			{
+				Debug->RecordUnitSyncMs(FPlatformTime::ToMilliseconds(FPlatformTime::Cycles()) - SyncStartMs);
+			}
+		}
+	};
 
 	int32 ChunksMatched = 0;
 	SyncQuery.ForEachEntityChunk(Context, [&ChunksMatched](FMassExecutionContext& Context)

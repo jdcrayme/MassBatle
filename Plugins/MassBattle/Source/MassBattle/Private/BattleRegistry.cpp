@@ -127,6 +127,24 @@ const TArray<FMassEntityHandle>* UUnitRegistrySubsystem::FindRoster(FUnitHandle 
 	return State ? &State->Roster : nullptr;
 }
 
+void UUnitRegistrySubsystem::HandleUnitDeath(FUnitHandle Unit, FMassEntityHandle Entity, int32 RosterIndex)
+{
+	UE_MT_SCOPED_WRITE_ACCESS(AccessDetector);
+	if (FUnitRuntimeState* State = Units.Find(Unit))
+	{
+		const int32 Removed = State->Roster.RemoveSingle(Entity);
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT RosterDeath Unit=%u:%u Entity=%u:%u RosterIndex=%d Removed=%d Size=%d"),
+		       Unit.Index, Unit.Serial, Entity.Index, Entity.SerialNumber, RosterIndex, Removed, State->Roster.Num());
+	}
+}
+
+int32 UUnitRegistrySubsystem::GetRosterSize(FUnitHandle Handle) const
+{
+	UE_MT_SCOPED_READ_ACCESS(AccessDetector);
+	const FUnitRuntimeState* State = Units.Find(Handle);
+	return State ? State->Roster.Num() : 0;
+}
+
 void UUnitRegistrySubsystem::UpdateCachedAttributes(FUnitHandle Handle, const FBattleAttributeSnapshot& Snapshot)
 {
 	UE_MT_SCOPED_WRITE_ACCESS(AccessDetector);

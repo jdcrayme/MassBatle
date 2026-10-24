@@ -32,6 +32,12 @@ void AUnitActor::PostInitializeComponents()
 	}
 }
 
+void AUnitActor::OnDeathEvent(FGameplayTag EventTag, const FGameplayEventData* Payload)
+{
+	++DeathEventCount;
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT UnitDiedEvent Actor=%s Count=%d"), *GetName(), DeathEventCount);
+}
+
 void AUnitActor::OnAttributeChanged(const FOnAttributeChangeData& Data)
 {
 	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT AttrChange Actor=%s Handle=%u:%u Attr=%s Value=%.4f Registry=%d"),
@@ -41,6 +47,24 @@ void AUnitActor::OnAttributeChanged(const FOnAttributeChangeData& Data)
 	{
 		if (UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>())
 		{
+			// arch §5.1 down-path: (1) write the new value into the registry's
+			// cached plain-struct snapshot, (2) set the dirty flag for UnitSync.
+			if (FBattleAttributeSnapshot* Cached =
+				const_cast<FBattleAttributeSnapshot*>(Registry->FindCachedAttributes(UnitHandle)))
+			{
+				const FString& AttrName = Data.Attribute.AttributeName;
+				if (AttrName == TEXT("Morale")) { Cached->Morale = Data.NewValue; }
+				else if (AttrName == TEXT("Fatigue")) { Cached->Fatigue = Data.NewValue; }
+				else if (AttrName == TEXT("Experience")) { Cached->Experience = Data.NewValue; }
+				else if (AttrName == TEXT("ArmourUpgrade")) { Cached->ArmourUpgrade = Data.NewValue; }
+				else if (AttrName == TEXT("MeleeAttackMod")) { Cached->MeleeAttackMod = Data.NewValue; }
+				else if (AttrName == TEXT("MeleeDefenseMod")) { Cached->MeleeDefenseMod = Data.NewValue; }
+				else if (AttrName == TEXT("RangedAttackMod")) { Cached->RangedAttackMod = Data.NewValue; }
+				else if (AttrName == TEXT("SpeedMod")) { Cached->SpeedMod = Data.NewValue; }
+				else if (AttrName == TEXT("BlockChanceMod")) { Cached->BlockChanceMod = Data.NewValue; }
+				else if (AttrName == TEXT("OrderLatency")) { Cached->OrderLatency = Data.NewValue; }
+				else if (AttrName == TEXT("AmmoPool")) { Cached->AmmoPool = Data.NewValue; }
+			}
 			Registry->MarkStatsDirty(UnitHandle);
 		}
 	}
@@ -94,6 +118,16 @@ bool AUnitActor::SpawnEntities(FBattleSpawnResult& OutResult, FString& OutError)
 				AbilitySystem->GetGameplayAttributeValueChangeDelegate(Attribute).AddUObject(this, &AUnitActor::OnAttributeChanged);
 			}
 			bDelegatesBound = true;
+		}
+
+		if (!bDeathEventBound && AbilitySystem)
+		{
+			// Up-path observation (arch §5.2): "Battle.Unit.Died" events land here.
+			FGameplayTagContainer Filter;
+			Filter.AddTag(FGameplayTag::RequestGameplayTag(TEXT("Battle.Unit.Died"), /*ErrorIfNotFound*/ false));
+			DeathEventHandle = AbilitySystem->AddGameplayEventTagContainerDelegate(
+				Filter, FGameplayEventTagMulticastDelegate::FDelegate::CreateUObject(this, &AUnitActor::OnDeathEvent));
+			bDeathEventBound = true;
 		}
 
 		Spec = FUnitSpawnSpec();

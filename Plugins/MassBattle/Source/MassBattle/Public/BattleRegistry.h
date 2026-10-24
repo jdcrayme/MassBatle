@@ -53,6 +53,14 @@ public:
 	/** Entity->unit side reads this to find the roster. Null when stale. */
 	const TArray<FMassEntityHandle>* FindRoster(FUnitHandle Handle) const;
 
+	/** Death-path bookkeeping (arch §5.3): remove one entity from the unit's
+	 *  roster. Called by the death-signal receiver on the game thread. */
+	void HandleUnitDeath(FUnitHandle Unit, FMassEntityHandle Entity, int32 RosterIndex);
+
+
+	/** Current roster size (0 when stale). */
+	int32 GetRosterSize(FUnitHandle Handle) const;
+
 	// -- attribute snapshot & dirty flags (arch §5.1) --
 
 	void UpdateCachedAttributes(FUnitHandle Handle, const FBattleAttributeSnapshot& Snapshot);
@@ -94,6 +102,7 @@ private:
 	/** Per-slot generation counter; persists across free/reuse so stale
 	 *  handles (old Serial) never alias a new tenant. */
 	TMap<uint32, int32> NextGenerationByIndex;
+
 
 	/** Next never-used slot index (0 reserved for the null handle). */
 	uint32 NextIndex = 1;

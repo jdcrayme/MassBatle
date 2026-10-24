@@ -1,0 +1,18 @@
+// BattleStateHash.h -- deterministic sim-state hash (roadmap B.5 hooks,
+// T0.6). Pure function: no wall clock, no frame counters, no non-sim state.
+// Folds: registry bookkeeping (sorted handles, serials, roster sizes, dirty
+// bits) + per-entity quantized state (HP at 1e-2, FDeadTag presence) +
+// archetype count + per-unit shared-fragment values (quantized at 1e-2).
+#pragma once
+
+#include "CoreMinimal.h"
+#include "BattleTypes.h"
+
+struct FBattleStateHash
+{
+	/** Full sim-state hash of the world's battle data (CityHash64). */
+	static uint64 Compute(UWorld* World);
+
+	/** Quantize helper: value at 1e-2 precision, as int64 (stable across runs). */
+	static int64 Quantize2(float Value);
+};

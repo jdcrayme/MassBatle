@@ -83,6 +83,9 @@ public:
 	/** Registry handle once spawned; invalid before. */
 	FUnitHandle GetUnitHandle() const { return UnitHandle; }
 
+	/** Count of "Battle.Unit.Died" gameplay events observed on this unit's ASC. */
+	int32 GetDeathEventCount() const { return DeathEventCount; }
+
 	/** EDU row this unit instantiates (index into the fixture table). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Battle") int32 EduRowIndex = INDEX_NONE;
 
@@ -103,4 +106,9 @@ protected:
 
 	/** Attribute-change delegates bound exactly once (see SpawnEntities). */
 	bool bDelegatesBound = false;
+	bool bDeathEventBound = false;
+	int32 DeathEventCount = 0;
+	FDelegateHandle DeathEventHandle;
+
+	void OnDeathEvent(FGameplayTag EventTag, const FGameplayEventData* Payload);
 };

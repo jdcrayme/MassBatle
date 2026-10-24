@@ -7,7 +7,9 @@
 #include "Misc/AutomationTest.h"
 
 #include "BattleFuncTestActor.h"
+#include "BattleTestSettings.h"
 #include "EngineUtils.h"
+#include "UObject/UObjectIterator.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
@@ -73,12 +75,12 @@ namespace
 		double Deadline = 0.0;
 	};
 
-	/** Finds/spawns the named AFunctionalTest actor, starts it, polls completion. */
+	/** Finds/spawns the named S-scenario actor class, begins it, polls completion. */
 	class FRunBattleFuncTest : public IAutomationLatentCommand
 	{
 	public:
-		FRunBattleFuncTest(FAutomationTestBase* InOwner, const TCHAR* InTestActorName)
-			: Owner(InOwner), TestActorName(InTestActorName)
+		FRunBattleFuncTest(FAutomationTestBase* InOwner, const TCHAR* InTestName, const TCHAR* InActorClassName)
+			: Owner(InOwner), TestName(InTestName), ActorClassName(InActorClassName)
 		{
 		}
 
@@ -91,29 +93,62 @@ namespace
 			}
 			if (!bStarted)
 			{
-				for (AUnitSyncLatencyTest* Test : TActorRange<AUnitSyncLatencyTest>(World))
+				// Deterministic factory registry (reflection lookups proved
+				// unreliable in -game processes -- see FBattleFuncTestRegistry).
+				AFunctionalTest* Found = nullptr;
+				for (TActorIterator<AFunctionalTest> It(World); It; ++It)
 				{
-					TestActor = Test;
-					break;
+					if (It->GetName().Contains(TestName))
+					{
+						Found = *It;
+						break;
+					}
+				}
+				if (Found)
+				{
+					TestActor = Found;
+				}
+				else
+				{
+					if (FBattleFuncTestRegistry::FFactory* Factory = FBattleFuncTestRegistry::Get().Find(ActorClassName))
+					{
+						FActorSpawnParameters Params;
+						Params.ObjectFlags |= RF_Transient;
+						TestActor = (*Factory)(World);
+					}
 				}
 				if (!TestActor)
 				{
-					FActorSpawnParameters Params;
-					Params.ObjectFlags |= RF_Transient;
-					TestActor = World->SpawnActor<AUnitSyncLatencyTest>(FVector::ZeroVector, FRotator::ZeroRotator, Params);
+					Owner->AddError(FString::Printf(TEXT("actor %s not resolvable"), *ActorClassName));
+					return true;
 				}
 				if (!TestActor)
 				{
 					Owner->AddError(TEXT("could not spawn the functional test actor"));
 					return true;
 				}
-				Deadline = FPlatformTime::Seconds() + 45.0;
+				Deadline = FPlatformTime::Seconds() + 60.0;
 				bStarted = true;
-				// The FunctionalTestingManager entry point is PrepareTest(): it
-				// sets bIsRunning + enables ticking; Tick then calls StartTest
-				// once IsReady. Calling StartTest directly leaves the actor
-				// unticked (on-machine verified both ways).
-				TestActor->BeginTest();
+				// Manager-equivalent start via the subclass hook (PrepareTest is
+				// protected; the native path leaves the test stopped when driven
+				// outside the manager -- on-machine verified).
+				if (AUnitSyncLatencyTest* Sync = Cast<AUnitSyncLatencyTest>(TestActor))
+				{
+					Sync->BeginTest();
+				}
+				else if (AUnitDeathPathTest* Death = Cast<AUnitDeathPathTest>(TestActor))
+				{
+					Death->BeginTest();
+				}
+				else if (AUnitExitCriteriaTest* Exit = Cast<AUnitExitCriteriaTest>(TestActor))
+				{
+					Exit->BeginTest();
+				}
+				// T0.9: apply + assert the test-mode contract at scenario start
+				// (roadmap B.0: assert ACTIVE engine settings, not CVars being
+				// set; the -game process does not seed the contract on its own).
+				UBattleTestSettings::ApplyTestMode();
+				UBattleTestSettings::AssertTestMode(Owner);
 				return false;
 			}
 
@@ -121,8 +156,9 @@ namespace
 			{
 				if (FPlatformTime::Seconds() > Deadline)
 				{
-					Owner->AddError(FString::Printf(TEXT("%s timed out"), *TestActorName));
-					TestActor->CompleteTest(EFunctionalTestResult::Error, TEXT("harness timeout"));
+					Owner->AddError(FString::Printf(TEXT("%s timed out"), *TestName));
+					TestActor->Result = EFunctionalTestResult::Error;
+					TestActor->bIsRunning = false;
 					return true;
 				}
 				return false; // keep polling
@@ -131,15 +167,16 @@ namespace
 			if (TestActor->Result != EFunctionalTestResult::Succeeded)
 			{
 				Owner->AddError(FString::Printf(TEXT("%s finished with result %d"),
-					*TestActorName, static_cast<int32>(TestActor->Result)));
+					*TestName, static_cast<int32>(TestActor->Result)));
 			}
 			return true;
 		}
 
 	private:
 		FAutomationTestBase* Owner = nullptr;
-		FString TestActorName;
-		TObjectPtr<AUnitSyncLatencyTest> TestActor;
+		FString TestName;
+		FString ActorClassName;
+		TObjectPtr<AFunctionalTest> TestActor;
 		bool bStarted = false;
 		double Deadline = 0.0;
 	};
@@ -178,6 +215,40 @@ bool FS0_SyncLatency::RunTest(const FString& Parameters)
 {
 	IFunctionalTestingModule::Get().MarkPendingActivation();
 	ADD_LATENT_AUTOMATION_COMMAND(FOpenBattleFuncMap(this));
-	ADD_LATENT_AUTOMATION_COMMAND(FRunBattleFuncTest(this, TEXT("S0_SyncLatency")));
+	ADD_LATENT_AUTOMATION_COMMAND(FRunBattleFuncTest(this, TEXT("S0_SyncLatency"), TEXT("AUnitSyncLatencyTest")));
+	return true;
+}
+
+IMPLEMENT_CUSTOM_COMPLEX_AUTOMATION_TEST(FS0_DeathPath, FBattleFuncTestBase,
+	"Battle.Func.S0_DeathPath", (EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter))
+
+void FS0_DeathPath::GetTests(TArray<FString>& OutBeautifiedNames, TArray<FString>& OutTestCommands) const
+{
+	OutBeautifiedNames.Add(TEXT("S0_DeathPath"));
+	OutTestCommands.Add(TEXT(""));
+}
+
+bool FS0_DeathPath::RunTest(const FString& Parameters)
+{
+	IFunctionalTestingModule::Get().MarkPendingActivation();
+	ADD_LATENT_AUTOMATION_COMMAND(FOpenBattleFuncMap(this));
+	ADD_LATENT_AUTOMATION_COMMAND(FRunBattleFuncTest(this, TEXT("S0_DeathPath"), TEXT("AUnitDeathPathTest")));
+	return true;
+}
+
+IMPLEMENT_CUSTOM_COMPLEX_AUTOMATION_TEST(FS0_ExitCriteria, FBattleFuncTestBase,
+	"Battle.Func.S0_ExitCriteria", (EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter))
+
+void FS0_ExitCriteria::GetTests(TArray<FString>& OutBeautifiedNames, TArray<FString>& OutTestCommands) const
+{
+	OutBeautifiedNames.Add(TEXT("S0_ExitCriteria"));
+	OutTestCommands.Add(TEXT(""));
+}
+
+bool FS0_ExitCriteria::RunTest(const FString& Parameters)
+{
+	IFunctionalTestingModule::Get().MarkPendingActivation();
+	ADD_LATENT_AUTOMATION_COMMAND(FOpenBattleFuncMap(this));
+	ADD_LATENT_AUTOMATION_COMMAND(FRunBattleFuncTest(this, TEXT("S0_ExitCriteria"), TEXT("AUnitExitCriteriaTest")));
 	return true;
 }
