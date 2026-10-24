@@ -67,3 +67,5 @@ Discrepancies found so far (reality-wins, BRIEF corrected in place):
 [task13.2] Final per-commit tier headless GREEN: run_tests.bat unit -> 15/15 passed, 0 failed, ok=True (Tools/CI/last_run/unit.log; -ReportExportPath index.json agrees)
 [task13.3] Spawn-perf baseline recorded into Task 1 storage: entity_spawn_80_us=35.1 (real: EXEC_RESULT SpawnPerf 23.0+12.1us for the 2x40 rosters); baseline compare PASS; BattleMetrics EXEC line shows Archetypes=2 tracked
 [task13.4] Roadmap B.7 regression checklist: Phase 0 entry added (B.8 item 5)
+[task14.1] Handoff report written: Docs/agent/phase0-report.md (prephase0 format: paths, corrections, deviations, tool quirks, verbatim evidence, DoD checklist, Phase 1 start)
+[task14.2] Final editor state verified: editor open on /Game/MassBattle/Demo/Maps/L_MassBattle_Demo01; L_MassBattle_T0_Functional is_dirty=false; L_MassBattle_Demo01 is_dirty=false; MCP session responsive -> handoff state clean
