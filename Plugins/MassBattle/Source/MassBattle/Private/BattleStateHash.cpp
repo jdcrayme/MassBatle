@@ -1,10 +1,12 @@
 #include "BattleStateHash.h"
 #include "BattleFragments.h"
+#include "BattleMovementFragments.h"
 #include "BattleRegistry.h"
 #include "Hash/CityHash.h"
 #include "MassEntitySubsystem.h"
 #include "MassEntityManager.h"
 #include "MassEntityView.h"
+#include "MassCommonFragments.h"
 #include "Engine/World.h"
 
 int64 FBattleStateHash::Quantize2(float Value)
@@ -39,7 +41,8 @@ uint64 FBattleStateHash::Compute(UWorld* World)
 	uint64 Bookkeeping = Registry->ComputeBookkeepingHash();
 	AppendU64(Bookkeeping);
 
-	// 2. Per-unit entity state, in roster order: HP (quantized 1e-2), dead flag.
+	// 2. Per-unit entity state, in roster order: HP (quantized 1e-2), dead flag,
+	// transform (quantized 1 cm; yaw at 0.1 deg -- phase-1 ground rule 7).
 	for (const FUnitHandle& Handle : Registry->GetSortedHandles())
 	{
 		const TArray<FMassEntityHandle>* Roster = Registry->FindRoster(Handle);
@@ -57,6 +60,17 @@ uint64 FBattleStateHash::Compute(UWorld* World)
 			}
 			const bool bDead = View.HasTag<FDeadTag>() ? 1 : 0;
 			AppendU64(bDead);
+			if (const FTransformFragment* Transform = View.GetFragmentDataPtr<FTransformFragment>())
+			{
+				const FVector Pos = Transform->GetTransform().GetTranslation();
+				// 1 cm quantization: UE units are centimeters, so round to
+				// integer units; symmetric rounding stays deterministic.
+				AppendU64(static_cast<uint64>(FMath::RoundToDouble(Pos.X)));
+				AppendU64(static_cast<uint64>(FMath::RoundToDouble(Pos.Y)));
+				AppendU64(static_cast<uint64>(FMath::RoundToDouble(Pos.Z)));
+				const float Yaw = Transform->GetTransform().Rotator().Yaw;
+				AppendU64(static_cast<uint64>(FMath::RoundToDouble(static_cast<double>(Yaw) * 10.0)));
+			}
 		}
 	}
 
@@ -79,6 +93,17 @@ uint64 FBattleStateHash::Compute(UWorld* World)
 			AppendU64(static_cast<uint64>(Quantize2(Stats->MeleeAttackMult)));
 			AppendU64(static_cast<uint64>(Quantize2(Stats->MeleeDefenseMult)));
 			AppendU64(static_cast<uint64>(Quantize2(Stats->MoraleBonus)));
+		}
+		// 5. Formation movement state (phase-1 ground rule 7): anchor at 1 cm,
+		// facing at 0.1 deg, speed limit + spacing scale at 1e-2.
+		if (const FUnitFormationSharedFragment* Formation = EntityManager.GetSharedFragmentDataPtr<FUnitFormationSharedFragment>((*Roster)[0]))
+		{
+			AppendU64(static_cast<uint64>(FMath::RoundToDouble(static_cast<double>(Formation->AnchorPos.X))));
+			AppendU64(static_cast<uint64>(FMath::RoundToDouble(static_cast<double>(Formation->AnchorPos.Y))));
+			AppendU64(static_cast<uint64>(FMath::RoundToDouble(static_cast<double>(Formation->FacingYaw) * 10.0)));
+			AppendU64(static_cast<uint64>(Quantize2(Formation->SpeedLimit)));
+			AppendU64(static_cast<uint64>(Quantize2(Formation->SpacingScale)));
+			AppendU64(static_cast<uint64>(Formation->Generation));
 		}
 	}
 

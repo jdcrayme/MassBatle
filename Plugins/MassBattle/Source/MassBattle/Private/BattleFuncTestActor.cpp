@@ -21,21 +21,21 @@
 
 namespace
 {
-	UUnitRegistrySubsystem* GetRegistry(UWorld* World)
+	UUnitRegistrySubsystem* GetFuncTestRegistry(UWorld* World)
 	{
 		return World ? World->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
 	}
 
-	FMassEntityManager* GetEntityManager(UWorld* World)
+	FMassEntityManager* GetFuncTestEntityManager(UWorld* World)
 	{
 		UMassEntitySubsystem* ES = World ? World->GetSubsystem<UMassEntitySubsystem>() : nullptr;
 		return ES ? &ES->GetMutableEntityManager() : nullptr;
 	}
 
-	const FUnitStatsSharedFragment* GetSharedStats(UWorld* World, FUnitHandle Unit)
+	const FUnitStatsSharedFragment* GetFuncTestSharedStats(UWorld* World, FUnitHandle Unit)
 	{
-		UUnitRegistrySubsystem* Registry = GetRegistry(World);
-		FMassEntityManager* EM = GetEntityManager(World);
+		UUnitRegistrySubsystem* Registry = GetFuncTestRegistry(World);
+		FMassEntityManager* EM = GetFuncTestEntityManager(World);
 		if (!Registry || !EM)
 		{
 			return nullptr;
@@ -171,7 +171,7 @@ void AUnitSyncLatencyTest::Tick(float DeltaSeconds)
 	}
 
 	UWorld* World = GetWorld();
-	UUnitRegistrySubsystem* Registry = GetRegistry(World);
+	UUnitRegistrySubsystem* Registry = GetFuncTestRegistry(World);
 	if (!Registry)
 	{
 		CompleteTest(EFunctionalTestResult::Error, TEXT("no registry"));
@@ -179,8 +179,8 @@ void AUnitSyncLatencyTest::Tick(float DeltaSeconds)
 	}
 
 	// T0.4: attribute change visible in FUnitStatsSharedFragment within 1 frame.
-	const FUnitStatsSharedFragment* StatsA = GetSharedStats(World, UnitA->GetUnitHandle());
-	const FUnitStatsSharedFragment* StatsB = GetSharedStats(World, UnitB->GetUnitHandle());
+	const FUnitStatsSharedFragment* StatsA = GetFuncTestSharedStats(World, UnitA->GetUnitHandle());
+	const FUnitStatsSharedFragment* StatsB = GetFuncTestSharedStats(World, UnitB->GetUnitHandle());
 	if (!StatsA || !StatsB)
 	{
 		CompleteTest(EFunctionalTestResult::Error, TEXT("shared fragments missing on roster heads"));

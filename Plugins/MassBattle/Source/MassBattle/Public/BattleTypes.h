@@ -64,8 +64,10 @@ struct FUnitRuntimeState
 	// engagement records arrive with the Phase 2 engagement solver.
 };
 
-/** Spawn request: one parsed EDU row + roster size. Formation is a stub until
- *  the Phase 1 slot layout exists. */
+/** Spawn request: one parsed EDU row + roster size. Formation params seed the
+ *  Phase 1 movement spine (FUnitFormationSharedFragment). SpawnPos is engine
+ *  units (centimeters); FormationSpacing is meters (project convention) --
+ *  converted at the fragment boundary (phase-1 ground rule 2). */
 struct FUnitSpawnSpec
 {
 	/** Index of the EDU row this unit instantiates (Data/EDU fixture order). */
@@ -79,4 +81,13 @@ struct FUnitSpawnSpec
 
 	/** Formation stub (Phase 1 replaces with the layout-function preset). */
 	float FormationSpacing = 1.2f;
+
+	/** Formation anchor at spawn, planar (centimeters, engine space). */
+	FVector2D SpawnPos = FVector2D::ZeroVector;
+
+	/** Commanded facing at spawn (degrees). */
+	float SpawnYaw = 0.f;
+
+	/** Ranks in the formed layout (files = ceil(SoldierCount / NumRanks)). */
+	int32 NumRanks = 2;
 };

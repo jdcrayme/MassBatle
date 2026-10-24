@@ -2,8 +2,9 @@
 // T0.6). Pure function: no wall clock, no frame counters, no non-sim state
 // (dirty flags are pipeline scheduling state and are excluded -- audit M4).
 // Folds: registry bookkeeping (sorted handles, serials, roster sizes) +
-// per-entity quantized state (HP at 1e-2, FDeadTag presence) + archetype
-// count + per-unit shared-fragment values (quantized at 1e-2).
+// per-entity quantized state (HP at 1e-2, FDeadTag presence, transform at
+// 1 cm / yaw at 0.1 deg -- phase-1 ground rule 7) + archetype count + per-unit
+// shared-fragment values (stats quantized at 1e-2; formation anchor at 1 cm).
 #pragma once
 
 #include "CoreMinimal.h"

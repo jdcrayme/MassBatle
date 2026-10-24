@@ -1,5 +1,6 @@
 #include "BattleSpawnLibrary.h"
 #include "BattleFragments.h"
+#include "BattleMovementFragments.h"
 #include "BattleRegistry.h"
 #include "MassBattleModule.h"
 
@@ -8,6 +9,8 @@
 #include "MassEntitySubsystem.h"
 #include "MassEntityManager.h"
 #include "MassEntityView.h"
+#include "MassCommonFragments.h"
+#include "MassMovementFragments.h"
 #include "StructUtils/SharedStruct.h"
 
 bool FBattleRowStats::FromEdu(const FEduUnit& Row, FBattleRowStats& OutStats, FString& OutError)
@@ -88,19 +91,43 @@ FBattleSpawnResult UBattleSpawnLibrary::SpawnUnit(UWorld* World, const FUnitSpaw
 	StatsPayload.MoraleBonus = 0.f;
 	const FSharedStruct SharedStats = FSharedStruct::Make(StatsPayload);
 
-	// 3. Per-role archetype (Route A): fragments + tags + the shared fragment type.
+	// 2b. ADR-14 anchored formation fragment (phase-1 data spine): layout
+	// params from the spec; meters->centimeters conversion happens here at the
+	// fragment boundary (ground rule 2). Path stays empty until the planner
+	// (Task 3) fills it via UnitLocomotion.
+	FUnitFormationSharedFragment FormationPayload;
+	FormationPayload.OwnerUnit = Unit;      // uniqueness anchor -- keep first
+	FormationPayload.AnchorPos = Spec.SpawnPos;
+	FormationPayload.FacingYaw = Spec.SpawnYaw;
+	FormationPayload.SpeedLimit = 0.f;
+	FormationPayload.SpacingScale = 1.f;
+	FormationPayload.Generation = 1;
+	FormationPayload.NumFiles = FMath::Max(1, FMath::CeilToInt(static_cast<float>(Spec.SoldierCount) / FMath::Max(1, Spec.NumRanks)));
+	FormationPayload.RankSpacing = Spec.FormationSpacing * 100.f;
+	FormationPayload.FileSpacing = Spec.FormationSpacing * 100.f;
+	const FSharedStruct SharedFormation = FSharedStruct::Make(FormationPayload);
+
+	// 3. Per-role archetype (Route A): fragments + tags + the shared fragment types.
+	// Phase 1: the movement spine rides on every battle entity uniformly so the
+	// role archetypes do not split further (Task 2 archetype probe).
 	const UScriptStruct* Fragments[] = {
 		FOwnerUnitFragment::StaticStruct(),
 		FLoadoutFragment::StaticStruct(),
 		FBaseStatsFragment::StaticStruct(),
 		FHealthFragment::StaticStruct(),
+		FTransformFragment::StaticStruct(),   // MassCommon: position (engine stack, cm)
+		FMassVelocityFragment::StaticStruct(),// MassMovement: adopted per arch §3.1 note
+		FSlotAssignmentFragment::StaticStruct(),
+		FSlotTargetFragment::StaticStruct(),
+		FMovementStateFragment::StaticStruct(),
+		FServoStateFragment::StaticStruct(),
 	};
 	TArray<const UScriptStruct*> Tags;
 	if (Row.bInfantry) { Tags.Add(FInfantryTag::StaticStruct()); }
 	if (Row.bCavalry)  { Tags.Add(FCavalryTag::StaticStruct()); }
 	if (Row.bMelee)    { Tags.Add(FMeleeTag::StaticStruct()); }
 	if (Row.bBow)      { Tags.Add(FBowTag::StaticStruct()); }
-	const UScriptStruct* Shareds[] = { FUnitStatsSharedFragment::StaticStruct() };
+	const UScriptStruct* Shareds[] = { FUnitStatsSharedFragment::StaticStruct(), FUnitFormationSharedFragment::StaticStruct() };
 
 	FMassArchetypeCompositionDescriptor Descriptor(
 		TConstArrayView<const UScriptStruct*>(Fragments),
@@ -120,9 +147,14 @@ FBattleSpawnResult UBattleSpawnLibrary::SpawnUnit(UWorld* World, const FUnitSpaw
 		return FBattleSpawnResult();
 	}
 
-	// 4. Batch-create the roster into the archetype with the shared value.
+	// 4. Batch-create the roster into the archetype with the shared values.
+	// Add_GetRef does not sort (MassEntityTypes.cpp) -- Sort() before the batch
+	// create; BatchCreateEntities asserts a sorted value set (MassArchetypeData
+	// PrepareNextEntitiesSpanInternal).
 	FMassArchetypeSharedFragmentValues SharedValues;
 	(void)SharedValues.Add_GetRef(SharedStats);
+	(void)SharedValues.Add_GetRef(SharedFormation);
+	SharedValues.Sort();
 
 	TArray<FMassEntityHandle> Entities;
 	Entities.Reserve(Spec.SoldierCount);
@@ -156,6 +188,22 @@ FBattleSpawnResult UBattleSpawnLibrary::SpawnUnit(UWorld* World, const FUnitSpaw
 		FHealthFragment& Health = View.GetFragmentData<FHealthFragment>();
 		Health.CurrentHP = Row.BaseHealth;
 		Health.QueuedDamage = 0.f;
+
+		// Movement spine init (phase-1 Task 2): spawn transform, zeroed
+		// velocity, initial slot layout, HoldSlot state.
+		FTransformFragment& Transform = View.GetFragmentData<FTransformFragment>();
+		Transform.GetMutableTransform().SetTranslation(FVector(Spec.SpawnPos.X, Spec.SpawnPos.Y, 0.f));
+		Transform.GetMutableTransform().SetRotation(FQuat(FRotator(0.f, Spec.SpawnYaw, 0.f)));
+
+		FMassVelocityFragment& Velocity = View.GetFragmentData<FMassVelocityFragment>();
+		Velocity.Value = FVector::ZeroVector;
+
+		FSlotAssignmentFragment& Slot = View.GetFragmentData<FSlotAssignmentFragment>();
+		Slot.SlotIndex = i;
+		Slot.Generation = FormationPayload.Generation;
+
+		FMovementStateFragment& MoveState = View.GetFragmentData<FMovementStateFragment>();
+		MoveState.State = EBattleMovementState::HoldSlot;
 	}
 
 	// 6. Publish the roster + initial attribute cache.

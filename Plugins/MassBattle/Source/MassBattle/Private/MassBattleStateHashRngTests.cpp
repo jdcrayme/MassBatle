@@ -8,10 +8,12 @@
 #include "MassEntityManager.h"
 #include "MassEntityView.h"
 #include "BattleFragments.h"
+#include "BattleMovementFragments.h"
 #include "Misc/App.h"
 #include "Misc/ScopeExit.h"
 #include "HAL/IConsoleManager.h"
 
+#include "MassCommonFragments.h"
 #include "BattleStateHash.h"
 #include "BattleRngRegistry.h"
 #include "BattleTestSettings.h"
@@ -123,6 +125,35 @@ bool FStateHash_Stability::RunTest(const FString& Parameters)
 			TestNotEqual(TEXT("HP mutation changes the hash"), FBattleStateHash::Compute(World), Baseline);
 			Health->CurrentHP += 0.5f;
 			TestEqual(TEXT("HP restore restores the hash"), FBattleStateHash::Compute(World), Baseline);
+		}
+	}
+
+	// Seeded mutation #4 (phase-1 ground rule 7): transform terms -- a 1 mm
+	// nudge is below the 1 cm grid (no hash change); a 1 m move changes it;
+	// restoring restores it. Also covers the formation anchor via a 1 m bump.
+	{
+		const TArray<FMassEntityHandle>* Roster = Registry->FindRoster(Registry->GetSortedHandles()[0]);
+		FMassEntityView View(EM, (*Roster)[0]);
+		FTransformFragment* Transform = View.GetFragmentDataPtr<FTransformFragment>();
+		FUnitFormationSharedFragment* Formation =
+			EM.GetSharedFragmentDataPtr<FUnitFormationSharedFragment>((*Roster)[0]);
+		if (TestNotNull(TEXT("transform fragment"), Transform) && TestNotNull(TEXT("formation fragment"), Formation))
+		{
+			Transform->GetMutableTransform().AddToTranslation(FVector(0.1, 0.0, 0.0)); // 1 mm
+			TestEqual(TEXT("sub-cm transform change does not change the hash"),
+				FBattleStateHash::Compute(World), Baseline);
+
+			Transform->GetMutableTransform().AddToTranslation(FVector(100.0, 0.0, 0.0)); // +1 m
+			TestNotEqual(TEXT("1 m entity move changes the hash"), FBattleStateHash::Compute(World), Baseline);
+			Transform->GetMutableTransform().AddToTranslation(FVector(-100.1, 0.0, 0.0)); // restore
+			TestEqual(TEXT("entity transform restore restores the hash"),
+				FBattleStateHash::Compute(World), Baseline);
+
+			const FVector2D SavedAnchor = Formation->AnchorPos;
+			Formation->AnchorPos += FVector2D(100.0, 0.0); // 1 m
+			TestNotEqual(TEXT("anchor move changes the hash"), FBattleStateHash::Compute(World), Baseline);
+			Formation->AnchorPos = SavedAnchor;
+			TestEqual(TEXT("anchor restore restores the hash"), FBattleStateHash::Compute(World), Baseline);
 		}
 	}
 
