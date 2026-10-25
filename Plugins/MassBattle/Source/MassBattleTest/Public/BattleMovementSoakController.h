@@ -25,7 +25,7 @@ public:
 private:
 	void FinishTest(int32 ExitCode);
 
-	enum class EPhase : uint8 { WaitForWorld, Spawn, Soak, Done };
+	enum class EPhase : uint8 { WaitForWorld, Spawn, Soak, FinalSettle, Assert, Done };
 
 	EPhase Phase = EPhase::WaitForWorld;
 	float PhaseTime = 0.f;
@@ -37,6 +37,8 @@ private:
 	int32 EscalationsAtSpawn = 0;
 	int32 SeparationViolations = 0;
 	int32 Samples = 0;
+	int32 SoakEscalations = 0;
+	int32 SettleTicks = 0;
 	bool bTestModeOk = false;
 
 	static constexpr float SoakDurationSeconds = 600.f;

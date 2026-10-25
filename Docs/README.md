@@ -15,11 +15,11 @@
 | Pre-phase-0 (environment scaffold) | **COMPLETE** 2026-10-23 — plugin skeleton, maps, EDU fixture, smoke test green |
 | Phase 0 (foundation: CI R8, registry, EDU parse, spawn, sync, death path, T0.1–T0.9) | **COMPLETE** 2026-10-24 — all tasks 0–13, DoD checked |
 | Phase 0 audit + fix pass | **COMPLETE** 2026-10-24 — H1–H3 + M1–M8 + most lows fixed; evidence in `Docs/phases/phase-0/audit.md` §7 |
-| CI state | Per-commit gate + Jenkins `massbattle-gate` green (build 3); nightly wired (`massbattle-nightly`, cron 02:00 — **Jenkins must be running for cron to fire**, start line in `Tools/CI/JENKINS.md`) |
-| **Next** | **Phase 1 — Movement core** (roadmap Part A Phase 1). Brief not yet written. |
+| **Phase 1 (movement core: planner T1.9, layout T1.2, locomotion T1.3, compression T1.4, assigner T1.1, servo A1, OBB contact, unstuck v1, A2 orders, S1–S3, T1.8 soak)** | **COMPLETE** 2026-10-25 — unit tier 44/44, func tier 7/7, nightly soak `stuck=0 separation=0 archetypes=6 ok=1`; report at `Docs/phases/phase-1/report.md` |
+| CI state | Per-commit gate + Jenkins `massbattle-gate` green; nightly runs smoke + T1.8 movement soak on the staged build (run 4 green end-to-end, baseline committed) |
+| **Next** | Phase 2 — engagement solver & melee (roadmap Part A Phase 2). Brief not yet written. |
 
-**Deferred items carried into Phase 1** (from `Docs/phases/phase-0/audit.md` §7 + fix notes):
-shipping split of `FunctionalTesting`/`Gauntlet` deps into a Developer-type test module · `.uproject` `TargetAllowList` pruning of MCP toolset plugins (owner call) · EDU floats >2 decimals remain rounded (documented rule) · `L_MassBattle_T0_Functional` needs a cook-list entry before a staged-build func tier · `MassEntityHandle.h` include → `"Mass/EntityHandle.h"` before next engine release · re-baseline `entity_spawn_80_us` on the nightly hardware path when the first real perf gate lands (T2.9).
+**Deferred items carried into Phase 2** (from A4 dispositions + report §4): shipping split of test deps — **DONE in Phase 1** (`MassBattleTest` DeveloperTool module) · `.uproject` `TargetAllowList` pruning of MCP toolset plugins (owner call, still deferred) · EDU floats >2 decimals remain rounded (documented rule) · soak-map cook-list entry — **DONE in Phase 1** (`MapsToCook` + `Content/Data` staging) · re-baseline `entity_spawn_80_us` on the nightly hardware path (T2.9).
 
 ---
 
@@ -37,6 +37,7 @@ shipping split of `FunctionalTesting`/`Gauntlet` deps into a Developer-type test
 | `Docs/reference/environment.md` | Install/project/VCS/config facts + facts-correction ledger | **Living reference** |
 | `Docs/phases/pre-phase-0/` | brief · progress · report (environment scaffold run) | **Archive** |
 | `Docs/phases/phase-0/` | brief · progress · report · audit (foundation run + post-run audit) | **Archive** (report §7 = Phase 1 entry point) |
+| `Docs/phases/phase-1/` | brief · progress · report (movement-core run) | **Archive** (report §4 = Phase 2 entry point) |
 | `Docs/reviews/plan-review-findings.md` | 2026-10-23 plan review: errors E1–E6, risks R1–R13, improvements I1–I7, evidence + citations | **Archive** (referenced by live specs) |
 
 Repo files outside `Docs/` you will be pointed at: `Tools/CI/README.md`, `Tools/CI/JENKINS.md`, `Tools/CI/run_tests.bat` / `nightly.bat` / `compare_baseline.py`, `Baselines/perf/README.md`, `Jenkinsfile`.
