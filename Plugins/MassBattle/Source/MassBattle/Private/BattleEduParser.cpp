@@ -299,7 +299,7 @@ bool FBattleEduParser::Parse(const FString& EduText, TArray<FEduUnit>& OutUnits,
 		const FEduFieldSpec* Spec = FindSpec(Key);
 		if (!Spec)
 		{
-			Fail(OutError, LineNumber, FString::Printf(TEXT("unknown field '%s' (schema has %d fields; see Data/EDU/golden_edu_v1.txt)"), *Key, SchemaFieldCount()));
+			Fail(OutError, LineNumber, FString::Printf(TEXT("unknown field '%s' (schema has %d fields; see Content/Data/EDU/golden_edu_v1.txt)"), *Key, SchemaFieldCount()));
 			return false;
 		}
 		if (bNoValues && Spec->MinValues > 0)

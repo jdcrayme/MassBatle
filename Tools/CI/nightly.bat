@@ -57,6 +57,19 @@ if errorlevel 1 (
     exit /b 1
 )
 
+echo [nightly 3b/5] Running T1.8 movement mini-soak on staged build...
+set SOAK_LOG=%NIGHT_DIR%gauntlet_soak.log
+if exist "%SOAK_LOG%" del "%SOAK_LOG%"
+"%GAME_EXE%" -unattended -nosplash -nullrhi -nopause -abslog="%SOAK_LOG%" -gauntlet=BattleMovementSoak
+set SOAK_EXIT=%ERRORLEVEL%
+echo [nightly] soak exit code: %SOAK_EXIT%
+findstr /c:"GAUNTLET BattleMovementSoak FINAL" "%SOAK_LOG%"
+findstr /c:"TEST COMPLETE. EXIT CODE: 0" "%SOAK_LOG%" >nul
+if errorlevel 1 (
+    echo [nightly] T1.8 movement soak FAILED ^(no clean TEST COMPLETE^)
+    exit /b 1
+)
+
 echo [nightly 4/5] Writing candidate baseline + comparing against the committed reference...
 REM Audit H2 fix: the nightly writes a CANDIDATE under last_nightly/ (untracked)
 REM and compares it against the COMMITTED reference. The reference is promoted

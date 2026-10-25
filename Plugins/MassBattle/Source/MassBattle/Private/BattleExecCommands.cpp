@@ -136,7 +136,7 @@ namespace BattleExec
 		Spec.SoldierCount = FCString::Atoi(*Args[1]);
 		Spec.UnitName = Args.Num() > 2 ? Args[2] : FString::Printf(TEXT("Exec_%d"), Spec.EduRowIndex);
 
-		const FString FixturePath = FPaths::ProjectDir() / TEXT("Data/EDU/golden_edu_v1.txt");
+		const FString FixturePath = FPaths::ProjectContentDir() / TEXT("Data/EDU/golden_edu_v1.txt");
 		FString EduText;
 		TArray<FEduUnit> Rows;
 		FEduParseError Err;

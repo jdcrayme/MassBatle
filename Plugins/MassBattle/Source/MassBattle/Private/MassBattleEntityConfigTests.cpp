@@ -27,7 +27,7 @@ namespace
 
 	bool LoadFixtureRows(TArray<FEduUnit>& OutRows, FString& OutError)
 	{
-		const FString Path = FPaths::ProjectDir() / TEXT("Data/EDU/golden_edu_v1.txt");
+		const FString Path = FPaths::ProjectContentDir() / TEXT("Data/EDU/golden_edu_v1.txt");
 		FString Text;
 		if (!FFileHelper::LoadFileToString(Text, *Path))
 		{

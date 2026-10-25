@@ -193,7 +193,7 @@ bool AUnitActor::SpawnEntities(FBattleSpawnResult& OutResult, FString& OutError)
 
 		// Row stats: fixture path (editor-time import path, Phase 0; cook-time
 		// commandlet integration is Phase 2 per A2).
-		const FString FixturePath = FPaths::ProjectDir() / TEXT("Data/EDU/golden_edu_v1.txt");
+		const FString FixturePath = FPaths::ProjectContentDir() / TEXT("Data/EDU/golden_edu_v1.txt");
 		FString EduText;
 		if (!FFileHelper::LoadFileToString(EduText, *FixturePath))
 		{

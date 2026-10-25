@@ -13,7 +13,7 @@ namespace
 {
 	bool LoadFixture(FString& OutText, FString& OutFailReason)
 	{
-		const FString Path = FPaths::ProjectDir() / TEXT("Data/EDU/golden_edu_v1.txt");
+		const FString Path = FPaths::ProjectContentDir() / TEXT("Data/EDU/golden_edu_v1.txt");
 		if (!FPlatformFileManager::Get().GetPlatformFile().FileExists(*Path))
 		{
 			OutFailReason = FString::Printf(TEXT("fixture missing: %s"), *Path);
