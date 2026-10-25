@@ -163,28 +163,40 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlots_PredictiveSwapTerminates,
 
 bool FSlots_PredictiveSwapTerminates::RunTest(const FString& Parameters)
 {
-	// Two entities converging head-on across their slots: projections come
-	// within threshold within 1 s -> one swap, each slot still used exactly
-	// once. (Head-on convergence never strictly intersects -- the threshold
-	// check is the detector under test.)
-	TArray<FVector2D> Positions = { FVector2D(0.f, 0.f), FVector2D(5.f, 0.f) };
-	TArray<FVector2D> Velocities = { FVector2D(3.f, 0.f), FVector2D(-3.f, 0.f) };
+	// Two entities converging head-on, each nearer the OTHER's slot (the
+	// 2-opt precondition): projections come within threshold within 1 s ->
+	// one swap, each slot still used exactly once. (Head-on convergence never
+	// strictly intersects -- the threshold check is the detector under test.)
+	TArray<FVector2D> Positions = { FVector2D(4.f, 0.f), FVector2D(1.f, 0.f) };
+	TArray<FVector2D> Velocities = { FVector2D(-3.f, 0.f), FVector2D(3.f, 0.f) };
 	TArray<int32> Assignment = { 0, 1 };
+	TArray<FVector2D> Slots = { FVector2D(0.f, 0.f), FVector2D(5.f, 0.f) };
 
 	TArray<FIntPoint> Pairs;
-	FSlotAssigner::FindCrossingPairs(Positions, Velocities, Assignment, { FVector2D(0.f, 0.f), FVector2D(5.f, 0.f) }, 1.0f, 0.5f, Pairs);
+	FSlotAssigner::FindCrossingPairs(Positions, Velocities, Assignment, Slots, 1.0f, 0.5f, Pairs);
 	TestEqual(TEXT("converging pair detected"), Pairs.Num(), 1);
 
 	FSlotAssigner::ApplyPredictiveSwaps(Assignment, Pairs);
 	TestEqual(TEXT("swapped: entity 0 takes slot 1"), Assignment[0], 1);
 	TestEqual(TEXT("swapped: entity 1 takes slot 0"), Assignment[1], 0);
 
-		// Non-crossing neighbors (moving apart) must NOT pair up.
+		// Non-crossing neighbors (moving apart, each on their own slot) must
+		// NOT pair up -- neither proximity nor 2-opt holds.
 		TArray<FVector2D> Apart = { FVector2D(0.f, 0.f), FVector2D(5.f, 0.f) };
 		TArray<FVector2D> Away = { FVector2D(-3.f, 0.f), FVector2D(3.f, 0.f) };
 		TArray<FIntPoint> NoPairs;
-		FSlotAssigner::FindCrossingPairs(Apart, Away, Assignment, { FVector2D(0.f, 0.f), FVector2D(5.f, 0.f) }, 1.0f, 0.5f, NoPairs);
+		FSlotAssigner::FindCrossingPairs(Apart, Away, Assignment, Slots, 1.0f, 0.5f, NoPairs);
 		TestEqual(TEXT("diverging pair not detected"), NoPairs.Num(), 0);
+
+		// 2-opt guard: a converging pair already on their own slots (swap
+		// would LENGTHEN both walks) is rejected even though the paths cross
+		// (thrash prevention). Fresh assignment -- the block above swapped it.
+		TArray<FVector2D> OwnSlots = { FVector2D(0.f, 0.f), FVector2D(5.f, 0.f) };
+		TArray<int32> OwnAssignment = { 0, 1 };
+		TArray<FIntPoint> NoSwapPairs;
+		FSlotAssigner::FindCrossingPairs({ FVector2D(0.f, 0.f), FVector2D(5.f, 0.f) },
+			{ FVector2D(3.f, 0.f), FVector2D(-3.f, 0.f) }, OwnAssignment, OwnSlots, 1.0f, 0.5f, NoSwapPairs);
+		TestEqual(TEXT("non-improving swap rejected (2-opt guard)"), NoSwapPairs.Num(), 0);
 
 		// Termination: 300 entities, random crossings, one pass -- runs and
 		// keeps the assignment a bijection.

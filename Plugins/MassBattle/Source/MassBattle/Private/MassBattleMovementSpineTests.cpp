@@ -207,6 +207,7 @@ bool FMovementSpine_SlotLayoutInit::RunTest(const FString& Parameters)
 	// full T1.1 assigner guarantees land in Task 7.
 	TSet<int32> SlotIds;
 	bool bTransformsOk = true;
+	const float Rad = FMath::DegreesToRadians(90.f);
 	for (int32 i = 0; i < Roster->Num(); ++i)
 	{
 		const FMassEntityView View(EM, (*Roster)[i]);
@@ -218,10 +219,21 @@ bool FMovementSpine_SlotLayoutInit::RunTest(const FString& Parameters)
 		const FTransformFragment* Transform = View.GetFragmentDataPtr<FTransformFragment>();
 		if (Transform)
 		{
+			// Formed spawn (phase-1 Task 10 fix): entity i sits at its slot
+			// offset around the anchor -- rank behind, files lateral, rotated
+			// by the spawn yaw. Facing yaw propagates to every entity.
 			const FVector Pos = Transform->GetTransform().GetTranslation();
+			const int32 Rank = i / Formation->NumFiles;
+			const int32 File = i % Formation->NumFiles;
+			const FVector2D Offset(
+				-static_cast<float>(Rank) * Formation->RankSpacing,
+				(static_cast<float>(File) - (Formation->NumFiles - 1) * 0.5f) * Formation->FileSpacing);
+			const FVector2D Expected = Spec.SpawnPos
+				+ FVector2D(Offset.X * FMath::Cos(Rad) - Offset.Y * FMath::Sin(Rad),
+					Offset.X * FMath::Sin(Rad) + Offset.Y * FMath::Cos(Rad));
 			bTransformsOk = bTransformsOk
-				&& FMath::IsNearlyEqual(Pos.X, 5000.f)
-				&& FMath::IsNearlyEqual(Pos.Y, -3000.f)
+				&& FMath::IsNearlyEqual(Pos.X, Expected.X, 1.f)
+				&& FMath::IsNearlyEqual(Pos.Y, Expected.Y, 1.f)
 				&& FMath::IsNearlyEqual(Transform->GetTransform().Rotator().Yaw, 90.f);
 		}
 		else
@@ -230,7 +242,7 @@ bool FMovementSpine_SlotLayoutInit::RunTest(const FString& Parameters)
 		}
 	}
 	TestEqual(TEXT("slot ids are a 0..39 bijection"), SlotIds.Num(), 40);
-	TestTrue(TEXT("spawn transform propagated (cm)"), bTransformsOk);
+	TestTrue(TEXT("formed spawn transforms (anchor + slot offset, cm)"), bTransformsOk);
 
 	World->DestroyWorld(false);
 	return true;

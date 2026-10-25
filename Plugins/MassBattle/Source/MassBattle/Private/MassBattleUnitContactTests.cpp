@@ -14,6 +14,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FContact_OBBOverlapGolden,
 
 bool FContact_OBBOverlapGolden::RunTest(const FString& Parameters)
 {
+	// Axis-true body: facing +X, rank depth 1 m ALONG X, frontage 5 m ACROSS Y
+	// (arch §8.6: ranks behind the anchor, files lateral).
 	FUnitOBB A;
 	A.Center = FVector2D::ZeroVector;
 	A.HalfAlongFacing = 1.f;
@@ -25,16 +27,16 @@ bool FContact_OBBOverlapGolden::RunTest(const FString& Parameters)
 	B.Center = FVector2D(11.f, 0.f);
 	TestEqual(TEXT("separated -> depth 0"), FUnitContact::OverlapDepth(A, B), 0.f);
 
-	// Overlapping along X by 1 m (centers 9 m apart, halves sum 10 m).
-	B.Center = FVector2D(9.f, 0.f);
-	TestTrue(TEXT("head-on overlap depth 1"), FMath::IsNearlyEqual(FUnitContact::OverlapDepth(A, B), 1.f, 1e-3f));
+	// Front-to-back overlap along X by 0.5 m (halves sum 2, centers 1.5 apart).
+	B.Center = FVector2D(1.5f, 0.f);
+	TestTrue(TEXT("head-on overlap depth 0.5"), FMath::IsNearlyEqual(FUnitContact::OverlapDepth(A, B), 0.5f, 1e-3f));
 
-	// Touching (exactly 10 m apart) counts as no penetration.
-	B.Center = FVector2D(10.f, 0.f);
+	// Touching (exactly 2 m apart) counts as no penetration.
+	B.Center = FVector2D(2.f, 0.f);
 	TestEqual(TEXT("touching -> depth 0"), FUnitContact::OverlapDepth(A, B), 0.f);
 
-	// Lateral overlap: side by side, 1.5 m apart, halves-depth sum 2 m -> 0.5 m.
-	B.Center = FVector2D(0.f, 1.5f);
+	// Lateral overlap: side by side, 9.5 m apart, frontage halves sum 10 -> 0.5 m.
+	B.Center = FVector2D(0.f, 9.5f);
 	TestTrue(TEXT("lateral overlap depth 0.5"), FMath::IsNearlyEqual(FUnitContact::OverlapDepth(A, B), 0.5f, 1e-3f));
 
 	// Rotated crossing at right angles: depth on the tight axes.
@@ -46,9 +48,9 @@ bool FContact_OBBOverlapGolden::RunTest(const FString& Parameters)
 	TestTrue(TEXT("T-crossing overlaps"), FUnitContact::OverlapDepth(A, C) > 0.f);
 
 	// Point containment: inside, outside, corner.
-	TestTrue(TEXT("point inside"), FUnitContact::ContainsPoint(A, FVector2D(3.f, 0.5f)));
-	TestFalse(TEXT("point outside"), FUnitContact::ContainsPoint(A, FVector2D(6.f, 0.f)));
-	TestFalse(TEXT("point beyond corner"), FUnitContact::ContainsPoint(A, FVector2D(4.5f, 1.5f)));
+	TestTrue(TEXT("point inside"), FUnitContact::ContainsPoint(A, FVector2D(0.5f, 3.f)));
+	TestFalse(TEXT("point outside"), FUnitContact::ContainsPoint(A, FVector2D(3.f, 0.f)));
+	TestFalse(TEXT("point beyond corner"), FUnitContact::ContainsPoint(A, FVector2D(0.5f, 5.5f)));
 
 	// §8.2 hard rule key: interpenetrating predicate matches the depth test.
 	TestTrue(TEXT("interpenetrating true"), FUnitContact::Interpenetrating(A, C));
