@@ -29,23 +29,23 @@ namespace FUnitContact
 	};
 
 	/** SAT overlap depth of two OBBs (m); 0 when separated. */
-	float OverlapDepth(const FUnitOBB& A, const FUnitOBB& B);
+	MASSBATTLE_API float OverlapDepth(const FUnitOBB& A, const FUnitOBB& B);
 
 	/** True when the point lies inside the OBB (shove-zone test). */
-	bool ContainsPoint(const FUnitOBB& OBB, const FVector2D& P);
+	MASSBATTLE_API bool ContainsPoint(const FUnitOBB& OBB, const FVector2D& P);
 
 	/** True while two unit bodies interpenetrate -- the §8.2 hard rule keys
 	 *  off this: NO facing change while interpenetrating another unit. */
-	bool Interpenetrating(const FUnitOBB& A, const FUnitOBB& B);
+	MASSBATTLE_API bool Interpenetrating(const FUnitOBB& A, const FUnitOBB& B);
 
 	/** Policy resolution by friendliness, mass, mobility, right-of-way:
 	 *  hostile -> Block (melee contact is Phase 2 territory); friendly +
 	 *  mobility advantage + right-of-way -> PassThrough; friendly + mobility
 	 *  advantage without right-of-way -> Yield; friendly equal -> Block. */
-	EContactPolicy ResolvePolicy(bool bFriendly, bool bMobilityAdvantage, bool bRightOfWay);
+	MASSBATTLE_API EContactPolicy ResolvePolicy(bool bFriendly, bool bMobilityAdvantage, bool bRightOfWay);
 
 	/** §8.6 shove blend: w = clamp(MassRatio * OverlapDepth, 0, 1). */
-	float ShoveBlend(float MassRatio, float OverlapDepthM);
+	MASSBATTLE_API float ShoveBlend(float MassRatio, float OverlapDepthM);
 
 	/** Displacement speed handed to shoved entities (m/s), blended by w. */
 	constexpr float ShoveSpeed = 1.5f;

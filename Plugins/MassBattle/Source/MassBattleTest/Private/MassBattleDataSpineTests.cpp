@@ -1,3 +1,4 @@
+#if WITH_DEV_AUTOMATION_TESTS
 // Battle.Unit.Mass.* -- API-level probes of the Mass data spine (T0.8 probe half).
 // The spawn-level T0.8 assertions (spawned units -> distinct fragments, A/B
 // isolation) live in the functional sync test (Task 8); this file proves the
@@ -131,3 +132,5 @@ bool FMassBattle_SharedFragUniqueness::RunTest(const FString& Parameters)
 	World->DestroyWorld(false);
 	return true;
 }
+
+#endif // WITH_DEV_AUTOMATION_TESTS

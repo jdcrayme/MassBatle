@@ -1,3 +1,4 @@
+#if WITH_DEV_AUTOMATION_TESTS
 // Battle.Unit.Registry.* -- T0.1: handle registry lifecycle (roadmap T0 gate).
 // stale handles rejected (generation counter) / free-list reuse safe /
 // 10k spawn-destroy round-trip leak-free / dirty-flag idempotence.
@@ -271,3 +272,5 @@ bool FRegistry_ExecProbes::RunTest(const FString& Parameters)
 	World->DestroyWorld(false);
 	return true;
 }
+
+#endif // WITH_DEV_AUTOMATION_TESTS

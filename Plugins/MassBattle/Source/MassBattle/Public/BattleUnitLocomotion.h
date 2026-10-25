@@ -32,21 +32,21 @@ namespace FUnitLocomotion
 	};
 
 	/** The §8.2 Min3, verbatim. All meters/seconds. */
-	float ComputeUnitSpeedLimit(const FSpeedLimitInputs& In);
+	MASSBATTLE_API float ComputeUnitSpeedLimit(const FSpeedLimitInputs& In);
 
 	/** Hysteresis on the limit (arch §8.2): drops apply immediately, rises only
 	 *  once the raw limit exceeds the current by HysteresisFraction. */
-	float ApplyHysteresis(float CurrentLimit, float RawLimit, float HysteresisFraction);
+	MASSBATTLE_API float ApplyHysteresis(float CurrentLimit, float RawLimit, float HysteresisFraction);
 
 	/** Anchor progression: advance arc length S by Speed*DT, clamped to
 	 *  [0, TotalLength]. */
-	float AdvanceAnchor(float S, float Speed, float DT, float TotalLength);
+	MASSBATTLE_API float AdvanceAnchor(float S, float Speed, float DT, float TotalLength);
 
 	/** Commanded facing-change rate cap: rotate CurrentYawDeg toward
 	 *  TargetYawDeg by at most MaxRateRadS*DT (shortest arc). */
-	float AdvanceFacing(float CurrentYawDeg, float TargetYawDeg, float MaxRateRadS, float DT);
+	MASSBATTLE_API float AdvanceFacing(float CurrentYawDeg, float TargetYawDeg, float MaxRateRadS, float DT);
 
 	/** Anchor turn radius at arc length S: arc distance over heading change
 	 *  across a symmetric lookahead window (straight path -> very large r). */
-	float PathRadiusAt(const FBattlePlannedPath& Path, float S, float LookaheadMeters);
+	MASSBATTLE_API float PathRadiusAt(const FBattlePlannedPath& Path, float S, float LookaheadMeters);
 }

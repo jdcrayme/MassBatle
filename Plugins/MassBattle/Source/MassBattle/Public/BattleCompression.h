@@ -17,10 +17,10 @@ namespace FUnitCompression
 
 	/** Advance SpacingScale toward TargetScale for DT seconds. Drops are
 	 *  immediate (clamped at FloorScale); rises are rate-limited. */
-	float AdvanceSpacingScale(float CurrentScale, float TargetScale, float DT,
+	MASSBATTLE_API float AdvanceSpacingScale(float CurrentScale, float TargetScale, float DT,
 		float FloorScale = CompressionFloor, float RecoveryPerSec = RecoveryPerSecond);
 
 	/** The compressed slot position: anchor + R(facing) * LayoutOffset * Scale. */
-	FVector2D CompressedSlot(const FVector2D& Anchor, float FacingYawDeg,
+	MASSBATTLE_API FVector2D CompressedSlot(const FVector2D& Anchor, float FacingYawDeg,
 		const FVector2D& LayoutOffset, float SpacingScale);
 }

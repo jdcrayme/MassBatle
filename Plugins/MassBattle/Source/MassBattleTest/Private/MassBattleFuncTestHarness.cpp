@@ -1,3 +1,4 @@
+#if WITH_DEV_AUTOMATION_TESTS
 // Battle.Func.* harness -- bridges the S-scenario AFunctionalTest actors into
 // the automation framework (roadmap B.0: functional tier runs headless via
 // UnrealEditor-Cmd -game -ExecCmds="Automation RunTests Battle.Func"
@@ -341,3 +342,5 @@ bool FS3_SqueezeMorph::RunTest(const FString& Parameters)
 	ADD_LATENT_AUTOMATION_COMMAND(FRunBattleFuncTest(this, TEXT("S3_SqueezeMorph"), TEXT("AUnitSqueezeMorphTest")));
 	return true;
 }
+
+#endif // WITH_DEV_AUTOMATION_TESTS

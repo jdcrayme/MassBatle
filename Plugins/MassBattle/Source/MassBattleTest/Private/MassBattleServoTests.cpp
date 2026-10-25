@@ -1,3 +1,4 @@
+#if WITH_DEV_AUTOMATION_TESTS
 // Battle.Unit.Servo.* -- gate support for the §8.3 servo + A1 avoidance +
 // §8.5 unstuck ladder (T1.5/T1.6 pin the end-to-end behavior on the functional
 // map; these unit tests pin the math). Pure-math seam, meters, ground rule 5
@@ -147,3 +148,5 @@ bool FServo_UnstuckLadderEscalation::RunTest(const FString& Parameters)
 
 	return true;
 }
+
+#endif // WITH_DEV_AUTOMATION_TESTS

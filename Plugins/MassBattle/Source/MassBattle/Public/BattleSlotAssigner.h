@@ -20,7 +20,7 @@ namespace FSlotAssigner
 	 *  first dress): candidates farther than MaxFileDisplacement files from
 	 *  the entity's previous file are skipped unless nothing else is vacant.
 	 *  OutAssignment[EntityIdx] = SlotIdx -- a bijection over the slot set. */
-	void Assign(const TArray<FVector2D>& EntityPositions, const TArray<FVector2D>& SlotPositions,
+	MASSBATTLE_API void Assign(const TArray<FVector2D>& EntityPositions, const TArray<FVector2D>& SlotPositions,
 		int32 NumFiles, const TArray<int32>& PreviousAssignment, int32 MaxFileDisplacement,
 		TArray<int32>& OutAssignment);
 
@@ -31,19 +31,19 @@ namespace FSlotAssigner
 	 *  improvement -- each entity is nearer the other's slot than its own.
 	 *  The 2-opt guard is what makes swap-then-reswap thrash impossible.
 	 *  Deterministic order. */
-	void FindCrossingPairs(const TArray<FVector2D>& Positions, const TArray<FVector2D>& Velocities,
+	MASSBATTLE_API void FindCrossingPairs(const TArray<FVector2D>& Positions, const TArray<FVector2D>& Velocities,
 		const TArray<int32>& Assignment, const TArray<FVector2D>& SlotPositions,
 		float HorizonSeconds, float ThresholdMeters, TArray<FIntPoint>& OutPairs);
 
 	/** Swap slot indices for every reported pair (each slot used once per
 	 *  pass; pairs processed in the given order -- single pass terminates). */
-	void ApplyPredictiveSwaps(TArray<int32>& InOutAssignment, const TArray<FIntPoint>& Pairs);
+	MASSBATTLE_API void ApplyPredictiveSwaps(TArray<int32>& InOutAssignment, const TArray<FIntPoint>& Pairs);
 }
 
 /** Batched reflow cadence (arch §8.4): reflow at most every IntervalSeconds,
  *  except a detected rank gap triggers immediately. Idempotent within an
  *  interval: Advance consumes the decision exactly once. */
-struct FReflowScheduler
+struct MASSBATTLE_API FReflowScheduler
 {
 	float IntervalSeconds = 0.5f; // §12 reflow interval
 	float Cooldown = 0.f;

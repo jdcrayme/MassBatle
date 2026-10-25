@@ -30,7 +30,7 @@
 #include "CoreMinimal.h"
 
 /** One EDU field: key + normalized values (values as written post-normalization). */
-struct FEduField
+struct MASSBATTLE_API FEduField
 {
 	FString Key;
 	TArray<FString> Values;
@@ -43,7 +43,7 @@ struct FEduField
 };
 
 /** One EDU unit block = ordered fields in schema order. */
-struct FEduUnit
+struct MASSBATTLE_API FEduUnit
 {
 	TArray<FEduField> Fields;
 
@@ -51,14 +51,14 @@ struct FEduUnit
 };
 
 /** Parse failure details (logged / asserted by tests; never swallowed). */
-struct FEduParseError
+struct MASSBATTLE_API FEduParseError
 {
 	bool bFailed = false;
 	int32 LineNumber = INDEX_NONE;
 	FString Message;
 };
 
-struct FBattleEduParser
+struct MASSBATTLE_API FBattleEduParser
 {
 	/** Number of fields in the schema (reality-checked: 14). */
 	static int32 SchemaFieldCount();

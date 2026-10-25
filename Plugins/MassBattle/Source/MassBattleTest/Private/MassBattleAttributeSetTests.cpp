@@ -1,3 +1,4 @@
+#if WITH_DEV_AUTOMATION_TESTS
 // Battle.Unit.AttributeSet.* -- Task 7: closed GAS attribute set stubs.
 // completeness (arch §10.1 closed set), delegate fires on
 // SetNumericAttributeBase, registry dirty flag behaves across change bursts.
@@ -126,3 +127,5 @@ bool FAttributeSet_DelegateAndDirtyFlag::RunTest(const FString& Parameters)
 	World->DestroyWorld(false);
 	return true;
 }
+
+#endif // WITH_DEV_AUTOMATION_TESTS

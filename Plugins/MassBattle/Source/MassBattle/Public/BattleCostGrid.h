@@ -9,7 +9,7 @@
 
 /** 8-connected heightfield cost grid. Flat tile in Phase 1 (B.1); the height
  *  array + slope weight keep the cost model slope-aware for later terrain. */
-struct FBattleCostGrid
+struct MASSBATTLE_API FBattleCostGrid
 {
 	/** Impassable marker in CellCost. */
 	static constexpr uint8 Impassable = 255;

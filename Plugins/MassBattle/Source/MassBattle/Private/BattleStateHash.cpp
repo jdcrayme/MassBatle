@@ -74,8 +74,15 @@ uint64 FBattleStateHash::Compute(UWorld* World)
 		}
 	}
 
-	// 3. Archetype count (unbounded-growth watch, B.4).
-	const int32 ArchetypeCount = EntityManager.DebugGetArchetypesCount();
+	// 3. Archetype count (unbounded-growth watch, B.4). Debug-only engine API:
+	// absent in Shipping (WITH_MASSENTITY_DEBUG off) -- folds 0 there, keeping
+	// the term position-stable without shipping the debug build.
+	const int32 ArchetypeCount =
+#if WITH_MASSENTITY_DEBUG
+		EntityManager.DebugGetArchetypesCount();
+#else
+		0;
+#endif
 	AppendU64(static_cast<uint64>(ArchetypeCount));
 
 	// 4. Per-unit shared stat values (quantized), in the same sorted order.

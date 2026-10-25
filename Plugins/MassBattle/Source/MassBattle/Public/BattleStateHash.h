@@ -10,7 +10,7 @@
 #include "CoreMinimal.h"
 #include "BattleTypes.h"
 
-struct FBattleStateHash
+struct MASSBATTLE_API FBattleStateHash
 {
 	/** Full sim-state hash of the world's battle data (CityHash64). */
 	static uint64 Compute(UWorld* World);

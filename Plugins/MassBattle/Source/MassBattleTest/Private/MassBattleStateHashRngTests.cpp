@@ -1,3 +1,4 @@
+#if WITH_DEV_AUTOMATION_TESTS
 // Battle.Unit.StateHash.* / Battle.Unit.Rng.* / Battle.Unit.TestMode.* --
 // T0.6 (state-hash stability), T0.7 (RNG registry discipline), T0.9
 // (test-mode contract assertion + violation detection).
@@ -320,3 +321,5 @@ bool FTestMode_AssertAndViolation::RunTest(const FString& Parameters)
 	TestTrue(TEXT("restored state passes again"), UBattleTestSettings::AssertTestMode());
 	return true;
 }
+
+#endif // WITH_DEV_AUTOMATION_TESTS

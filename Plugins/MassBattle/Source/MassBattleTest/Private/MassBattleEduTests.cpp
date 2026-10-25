@@ -1,3 +1,4 @@
+#if WITH_DEV_AUTOMATION_TESTS
 // Battle.Data.* -- T0.2: EDU parser round-trip + canonical golden + edge cases.
 // The on-disk fixture (Data/EDU/golden_edu_v1.txt) is the schema source of
 // truth; tests load it via FPaths::ProjectDir (per-commit tier runs in the
@@ -239,3 +240,5 @@ bool FEdu_EdgeCases::RunTest(const FString& Parameters)
 
 	return true;
 }
+
+#endif // WITH_DEV_AUTOMATION_TESTS

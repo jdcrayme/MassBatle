@@ -1,3 +1,4 @@
+#if WITH_DEV_AUTOMATION_TESTS
 // Battle.Unit.Compression.* -- gate T1.4 (arch §8.2/§12): 60% floor respected;
 // recovery rate bounded; no oscillation under step input. One cm/m conversion
 // case (ground rule 2).
@@ -102,3 +103,5 @@ bool FCompression_NoOscillationUnderStep::RunTest(const FString& Parameters)
 
 	return true;
 }
+
+#endif // WITH_DEV_AUTOMATION_TESTS

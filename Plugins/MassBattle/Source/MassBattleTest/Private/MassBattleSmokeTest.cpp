@@ -1,3 +1,4 @@
+#if WITH_DEV_AUTOMATION_TESTS
 // Pre-phase-0 scaffold proof: the automation harness works end to end.
 // Phase 0 replaces this file's namespace siblings with Battle.Unit / Battle.Data / Battle.Func suites (roadmap B.0).
 #include "Misc/AutomationTest.h"
@@ -13,3 +14,5 @@ bool FMassBattleSmoke_PluginLoaded::RunTest(const FString& Parameters)
 		FModuleManager::Get().IsModuleLoaded("MassBattle"));
 	return true;
 }
+
+#endif // WITH_DEV_AUTOMATION_TESTS

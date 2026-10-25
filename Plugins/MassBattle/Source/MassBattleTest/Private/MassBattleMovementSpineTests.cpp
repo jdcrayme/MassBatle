@@ -1,3 +1,4 @@
+#if WITH_DEV_AUTOMATION_TESTS
 // Battle.Unit.MovementSpine.* -- phase-1 Task 2 archetype probe + data-spine
 // init checks. Ground rule 1 (gate-first): asserts live composition queries
 // (fragment presence per entity, distinct archetype handles), not flags.
@@ -247,3 +248,5 @@ bool FMovementSpine_SlotLayoutInit::RunTest(const FString& Parameters)
 	World->DestroyWorld(false);
 	return true;
 }
+
+#endif // WITH_DEV_AUTOMATION_TESTS

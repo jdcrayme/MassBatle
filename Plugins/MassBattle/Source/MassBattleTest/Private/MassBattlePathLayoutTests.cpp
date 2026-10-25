@@ -1,3 +1,4 @@
+#if WITH_DEV_AUTOMATION_TESTS
 // Battle.Unit.PathLayout.* -- gate T1.2 (arch §8.6): rank arc-lengths
 // monotonic; laterals orthogonal to tangent; straight-path degeneracy equals
 // the anchor formula. Pure-math seam tests -- no world, no fragments except
@@ -188,3 +189,5 @@ bool FPathLayout_StraightDegeneracy::RunTest(const FString& Parameters)
 
 	return true;
 }
+
+#endif // WITH_DEV_AUTOMATION_TESTS

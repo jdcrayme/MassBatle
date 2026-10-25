@@ -1,3 +1,4 @@
+#if WITH_DEV_AUTOMATION_TESTS
 // Battle.Unit.Pass.* -- gate T1.7 support (arch §8.6): threshold decision
 // correct both sides; morph column files = floor(PassWidth / FileSpacing);
 // squeeze scale clamps to the compression floor; clear-width oracle vs a
@@ -92,3 +93,5 @@ bool FPass_ClearWidthOracle::RunTest(const FString& Parameters)
 	World->DestroyWorld(false);
 	return true;
 }
+
+#endif // WITH_DEV_AUTOMATION_TESTS

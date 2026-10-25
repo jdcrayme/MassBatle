@@ -1,3 +1,4 @@
+#if WITH_DEV_AUTOMATION_TESTS
 // Battle.Unit.Contact.* -- unit-vs-unit OBB contact + policy table + shove
 // blend (arch §8.6, gate T1.6 support). Includes the scripted two-unit wake
 // recovery case: shove displaces the infantry, the servo recovers once the
@@ -148,3 +149,5 @@ bool FContact_WakeRecoveryScripted::RunTest(const FString& Parameters)
 
 	return true;
 }
+
+#endif // WITH_DEV_AUTOMATION_TESTS

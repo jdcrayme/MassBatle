@@ -32,18 +32,18 @@ struct FAvoidanceNeighbor
 namespace FUnitServo
 {
 	/** §8.3: V = clamp((SlotPos - Pos) / Tau, MaxSpeed * CatchupBoost). */
-	FVector2D ComputeServoVelocity(const FVector2D& Pos, const FVector2D& SlotPos,
+	MASSBATTLE_API FVector2D ComputeServoVelocity(const FVector2D& Pos, const FVector2D& SlotPos,
 		float Tau, float MaxSpeed, float CatchupBoost);
 
 	/** Acceleration clamp: |New - Old| <= MaxAccel * DT. */
-	FVector2D ClampAcceleration(const FVector2D& OldVel, const FVector2D& NewVel, float MaxAccel, float DT);
+	MASSBATTLE_API FVector2D ClampAcceleration(const FVector2D& OldVel, const FVector2D& NewVel, float MaxAccel, float DT);
 
 	/** A1 velocity-space avoidance deflection (RVO-lite): for each neighbor
 	 *  whose predicted closest approach violates the combined radius, add a
 	 *  lateral deflection away from the conflict, scaled by Weight (per-state,
 	 *  §4.5) and the asymmetry rule: the LOWER handle index has priority and
 	 *  deflects half; the higher yields double. Deterministic. */
-	FVector2D ComputeAvoidanceDeflection(const FVector2D& MyPos, const FVector2D& MyDesiredVel,
+	MASSBATTLE_API FVector2D ComputeAvoidanceDeflection(const FVector2D& MyPos, const FVector2D& MyDesiredVel,
 		float MyRadius, uint32 MyHandleIndex, const TArray<FAvoidanceNeighbor>& Neighbors,
 		float Weight, float HorizonSeconds = 1.5f);
 }
@@ -54,12 +54,12 @@ namespace FUnstuckLadder
 	 *  accumulates; past EscalateAfterSeconds the level rises (1..4, clamped
 	 *  -- level 4 is the terminal "unit AI" handoff). Reaching the slot
 	 *  resets to level 0. Returns the new level. */
-	int32 Advance(int32 CurrentLevel, bool bMovingSlowly, bool bNearSlot,
+	MASSBATTLE_API int32 Advance(int32 CurrentLevel, bool bMovingSlowly, bool bNearSlot,
 		float DT, float& InOutTimer, float EscalateAfterSeconds);
 
 	/** Avoidance weight multiplier at a ladder level (step 1 doubles it). */
-	float AvoidanceWeightMultiplier(int32 Level);
+	MASSBATTLE_API float AvoidanceWeightMultiplier(int32 Level);
 
 	/** True when the level injects a sidestep impulse (step 2). */
-	bool WantsSidestep(int32 Level);
+	MASSBATTLE_API bool WantsSidestep(int32 Level);
 }

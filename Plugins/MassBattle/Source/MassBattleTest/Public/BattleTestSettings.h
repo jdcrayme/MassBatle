@@ -20,7 +20,7 @@ class FAutomationTestBase;
 class UWorld;
 
 UCLASS()
-class MASSBATTLE_API UBattleTestSettings : public UObject
+class MASSBATTLETEST_API UBattleTestSettings : public UObject
 {
 	GENERATED_BODY()
 

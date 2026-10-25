@@ -1,3 +1,4 @@
+#if WITH_DEV_AUTOMATION_TESTS
 // Battle.Unit.Planner.* -- gate T1.9 (roadmap; risks R4): paths valid against
 // impassable cells, arc-length monotonicity, determinism under seeded RNG,
 // bounded re-plan latency when anchors move. Ground rule 1: this gate-first
@@ -254,3 +255,5 @@ bool FPlanner_ReplanLatencyBounded::RunTest(const FString& Parameters)
 	World->DestroyWorld(false);
 	return true;
 }
+
+#endif // WITH_DEV_AUTOMATION_TESTS

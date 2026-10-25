@@ -9,7 +9,7 @@
 #include "Subsystems/WorldSubsystem.h"
 #include "BattleRngRegistry.generated.h"
 
-struct FBattleRngRegistry
+struct MASSBATTLE_API FBattleRngRegistry
 {
 	/** Derive a stream seed from the battle root: HashCombine(root, hash(name)). */
 	static int32 DeriveSeed(int32 RootSeed, FName StreamName)

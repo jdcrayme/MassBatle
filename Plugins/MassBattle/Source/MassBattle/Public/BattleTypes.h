@@ -31,7 +31,7 @@ inline uint32 GetTypeHash(const FUnitHandle& Handle)
 
 /** Plain-struct mirror of the closed GAS attribute set (arch §10.1). Cached in
  *  the registry; UnitSync derives the shared-fragment multipliers from it. */
-struct FBattleAttributeSnapshot
+struct MASSBATTLE_API FBattleAttributeSnapshot
 {
 	float Morale = 0.f;
 	float Fatigue = 0.f;

@@ -1,3 +1,4 @@
+#if WITH_DEV_AUTOMATION_TESTS
 // Battle.Unit.DeathPath.* -- death up-path unit-level probes.
 // TagRegistered (audit H1): "Battle.Unit.Died" must exist as a REGISTERED
 // gameplay tag in every configuration. The pre-fix implementation requested it
@@ -27,3 +28,5 @@ bool FDeathPath_TagRegistered::RunTest(const FString& Parameters)
 
 	return true;
 }
+
+#endif // WITH_DEV_AUTOMATION_TESTS

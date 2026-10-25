@@ -28,12 +28,9 @@ public class MassBattle : ModuleRules
 			"GameplayAbilities",
 			// Task 9: FGameplayTag / FGameplayTagContainer (death up-path events)
 			"GameplayTags",
-			// Task 1 (R8): Gauntlet smoke controller (engine plugin; Experimental in 5.8)
-			"Gauntlet",
-			// Task 8: AFunctionalTest S-scenarios (Developer module; Development
-			// game builds only -- the func tier is a dev-build tier per B.0)
-			"FunctionalTesting"
-			// Future (add at the phase that needs them — see arch §3/§4):
+			// FunctionalTesting/Gauntlet deps moved to the MassBattleTest
+			// Developer module (phase-1 Task 13; audit deferred item).
+			// Future (add at the phase that needs them -- see arch §3/§4):
 			// "MassSimulation", "MassActors", "MassLOD", "MassRepresentation",
 			// "MassNavigation", "MassAvoidance", "MassMovement", "MassAIBehavior", "MassStateTree"
 		});

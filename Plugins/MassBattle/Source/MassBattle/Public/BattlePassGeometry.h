@@ -21,12 +21,12 @@ namespace FUnitPassGeometry
 	};
 
 	/** The §8.6 threshold, both sides. */
-	FPassDecision DecideSqueezeOrMorph(float PassWidthM, float FormationWidthM,
+	MASSBATTLE_API FPassDecision DecideSqueezeOrMorph(float PassWidthM, float FormationWidthM,
 		float FileSpacingM, float CompressionFloor = FUnitCompression::CompressionFloor);
 
 	/** Clear width across the path at a point: walk along PerpDir (and back)
 	 *  until impassable cells; returns the total clear span (m). Used by the
 	 *  locomotion ahead-scan and by tests as the PassWidth oracle. */
-	float MeasureClearWidth(const FBattleCostGrid& Grid, const FVector2D& Pos,
+	MASSBATTLE_API float MeasureClearWidth(const FBattleCostGrid& Grid, const FVector2D& Pos,
 		const FVector2D& PerpDir, float MaxScanM);
 }

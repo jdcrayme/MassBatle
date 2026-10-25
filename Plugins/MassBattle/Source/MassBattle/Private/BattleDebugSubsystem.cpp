@@ -103,10 +103,12 @@ void UBattleDebugSubsystem::DumpMetrics()
 		return;
 	}
 	int32 ArchetypeCount = 0;
+#if WITH_MASSENTITY_DEBUG
 	if (UMassEntitySubsystem* ES = World->GetSubsystem<UMassEntitySubsystem>())
 	{
 		ArchetypeCount = ES->GetMutableEntityManager().DebugGetArchetypesCount();
 	}
+#endif
 	LastMetrics.ArchetypeCount = ArchetypeCount;
 
 	UE_LOG(LogMassBattle, Display,

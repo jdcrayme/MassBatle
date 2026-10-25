@@ -13,7 +13,7 @@
 class AUnitActor;
 
 UCLASS()
-class MASSBATTLE_API AUnitSyncLatencyTest : public AFunctionalTest
+class MASSBATTLETEST_API AUnitSyncLatencyTest : public AFunctionalTest
 {
 	GENERATED_BODY()
 
@@ -57,7 +57,7 @@ protected:
 // live roster positions (audit M5).
 // ---------------------------------------------------------------------------
 UCLASS()
-class MASSBATTLE_API AUnitDeathPathTest : public AFunctionalTest
+class MASSBATTLETEST_API AUnitDeathPathTest : public AFunctionalTest
 {
 	GENERATED_BODY()
 
@@ -84,7 +84,7 @@ private:
 // S0_ExitCriteria (Task 13): the roadmap Phase 0 exit scenario end-to-end.
 // ---------------------------------------------------------------------------
 UCLASS()
-class MASSBATTLE_API AUnitExitCriteriaTest : public AFunctionalTest
+class MASSBATTLETEST_API AUnitExitCriteriaTest : public AFunctionalTest
 {
 	GENERATED_BODY()
 
@@ -114,7 +114,7 @@ private:
 // above threshold; no flank shedding; arrival at the ordered anchors.
 // ---------------------------------------------------------------------------
 UCLASS()
-class MASSBATTLE_API AUnitMarchWheelTest : public AFunctionalTest
+class MASSBATTLETEST_API AUnitMarchWheelTest : public AFunctionalTest
 {
 	GENERATED_BODY()
 
@@ -140,7 +140,7 @@ private:
 // reach the ordered anchor (brief Task 10 item 2).
 // ---------------------------------------------------------------------------
 UCLASS()
-class MASSBATTLE_API AUnitOrderSmokeTest : public AFunctionalTest
+class MASSBATTLETEST_API AUnitOrderSmokeTest : public AFunctionalTest
 {
 	GENERATED_BODY()
 
@@ -165,7 +165,7 @@ private:
 // bounded settle after the pass (coherence + separation).
 // ---------------------------------------------------------------------------
 UCLASS()
-class MASSBATTLE_API AUnitPassThroughTest : public AFunctionalTest
+class MASSBATTLETEST_API AUnitPassThroughTest : public AFunctionalTest
 {
 	GENERATED_BODY()
 
@@ -195,7 +195,7 @@ private:
 // commits once -- no re-decision thrash); clean re-deploy past the exit.
 // ---------------------------------------------------------------------------
 UCLASS()
-class MASSBATTLE_API AUnitSqueezeMorphTest : public AFunctionalTest
+class MASSBATTLETEST_API AUnitSqueezeMorphTest : public AFunctionalTest
 {
 	GENERATED_BODY()
 
@@ -225,7 +225,7 @@ private:
 // on this machine; a static registry registered beside each actor definition
 // cannot miss).
 // ---------------------------------------------------------------------------
-struct MASSBATTLE_API FBattleFuncTestRegistry
+struct MASSBATTLETEST_API FBattleFuncTestRegistry
 {
 	using FFactory = AFunctionalTest* (*)(UWorld* World);
 

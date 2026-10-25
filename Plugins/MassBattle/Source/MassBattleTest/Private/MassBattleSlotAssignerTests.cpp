@@ -1,3 +1,4 @@
+#if WITH_DEV_AUTOMATION_TESTS
 // Battle.Unit.Slots.* -- gate T1.1 (arch §8.4): assignment is a bijection;
 // <= k-file displacement; predictive swap terminates; batched reflow
 // idempotent. Ground rule 2: one cm/m conversion case; ground rule 5: seeded
@@ -258,3 +259,5 @@ bool FSlots_BatchedReflowIdempotent::RunTest(const FString& Parameters)
 
 	return true;
 }
+
+#endif // WITH_DEV_AUTOMATION_TESTS

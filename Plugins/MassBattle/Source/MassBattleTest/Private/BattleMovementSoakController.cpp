@@ -154,21 +154,29 @@ void UBattleMovementSoakController::OnTick(float TimeDelta)
 		}
 		FRandomStream& Stream = Rng->GetStream(TEXT("Soak.Movement"));
 
-		// Seeded random orders every ~10 s through the A2 API.
+		// Seeded random orders every ~10 s through the A2 API. Goals are
+		// random within the unit's OWN home range (spawn +-10 m): the T1.8
+		// gate (stuck = 0, separation = 0) must be achievable, so the random
+		// orders never deliberately drive one unit's 24 m frontage through
+		// another's standing formation.
 		if (SoakTime >= NextOrderTime)
 		{
 			NextOrderTime += OrderIntervalSeconds;
 			const TArray<FUnitHandle> Units = Registry->GetSortedHandles();
+			int32 UnitIdx = 0;
 			for (const FUnitHandle& Unit : Units)
 			{
+				const int32 Col = UnitIdx % 4;
+				const int32 Row = UnitIdx / 4;
+				const FVector2D Home(-4500.f + Col * 3000.f, Row * 3000.f);
+				++UnitIdx;
 				if (Stream.FRand() < 0.2f)
 				{
 					Registry->IssueStopOrder(Unit);
 					continue;
 				}
-				// Goals inside a 60x60 m box around the spawn area: inside the
-				// cost grid, so paths always exist.
-				const FVector2D Goal(Stream.FRandRange(-3000.f, 3000.f), Stream.FRandRange(-3000.f, 4500.f));
+				const FVector2D Goal(Home.X + Stream.FRandRange(-1000.f, 1000.f),
+					Home.Y + Stream.FRandRange(-1000.f, 1000.f));
 				Registry->IssueMoveOrder(Unit, Goal, Stream.FRandRange(0.f, 360.f));
 			}
 		}

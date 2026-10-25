@@ -1,3 +1,4 @@
+#if WITH_DEV_AUTOMATION_TESTS
 // Battle.Unit.SpeedLimits.* -- gate T1.3 (arch §8.2, review E2): the unit
 // speed limit is min(commanded, slowest x catchup, v_wheel = omega_max *
 // r_path, facing cap = FacingDeltaRate * r_path). Golden cases carry the E2
@@ -225,3 +226,5 @@ bool FSpeedLimits_AnchorAndFacingProgression::RunTest(const FString& Parameters)
 
 	return true;
 }
+
+#endif // WITH_DEV_AUTOMATION_TESTS

@@ -18,22 +18,22 @@ namespace FPathFrameLayout
 	 *  polyline is centimeters; the layout math is meters. Recomputes nothing
 	 *  else -- points and arc lengths scale by 1/100. Returns false when the
 	 *  fragment path is empty (UnitLocomotion has not planned yet). */
-	bool FromFragment(const FBattlePathPolyline& FragmentPath, FBattlePlannedPath& OutPathMeters);
+	MASSBATTLE_API bool FromFragment(const FBattlePathPolyline& FragmentPath, FBattlePlannedPath& OutPathMeters);
 
 	/** Position + unit tangent at arc length S (clamped to [0, TotalLength]). */
-	bool SampleAt(const FBattlePlannedPath& Path, float S, FVector2D& OutPos, FVector2D& OutTangent);
+	MASSBATTLE_API bool SampleAt(const FBattlePlannedPath& Path, float S, FVector2D& OutPos, FVector2D& OutTangent);
 
 	/** Arc length of the given rank behind the anchor, clamped to the path
 	 *  (monotone nonincreasing in Rank; gate T1.2 asserts this directly). */
-	float RankArcLength(float SAnchor, int32 Rank, float RankSpacing, float TotalLength);
+	MASSBATTLE_API float RankArcLength(float SAnchor, int32 Rank, float RankSpacing, float TotalLength);
 
 	/** §8.6 slot projection. Rank 0 = front; File 0 = leftmost when looking
 	 *  along the path tangent. Returns false on a degenerate path. */
-	bool Project(const FBattlePlannedPath& Path, float SAnchor, int32 Rank, int32 File, int32 NumFiles,
+	MASSBATTLE_API bool Project(const FBattlePlannedPath& Path, float SAnchor, int32 Rank, int32 File, int32 NumFiles,
 		float RankSpacing, float FileSpacing, FVector2D& OutPos, float& OutYawDeg);
 
 	/** The straight-path degenerate form: anchor + R(facing) * LayoutOffset.
 	 *  LayoutOffset = (-rank*RankSpacing, (file-(files-1)/2)*FileSpacing). */
-	FVector2D AnchorFormula(const FVector2D& Anchor, float FacingYawDeg, int32 Rank, int32 File, int32 NumFiles,
+	MASSBATTLE_API FVector2D AnchorFormula(const FVector2D& Anchor, float FacingYawDeg, int32 Rank, int32 File, int32 NumFiles,
 		float RankSpacing, float FileSpacing);
 }

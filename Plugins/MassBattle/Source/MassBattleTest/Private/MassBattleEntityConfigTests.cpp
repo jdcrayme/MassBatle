@@ -1,3 +1,4 @@
+#if WITH_DEV_AUTOMATION_TESTS
 // Battle.Data.EntityConfig* -- T0.3: entity-config integrity (configs resolve
 // fragments/tags, archetype buildable) + roster specs instantiated from the
 // parsed table. Self-heals by running the Battle.BuildT0Configs authoring
@@ -201,3 +202,5 @@ bool FEntityConfig_Integrity::RunTest(const FString& Parameters)
 	World->DestroyWorld(false);
 	return true;
 }
+
+#endif // WITH_DEV_AUTOMATION_TESTS
