@@ -152,6 +152,14 @@ namespace
 				{
 					Smoke->BeginTest();
 				}
+				else if (AUnitPassThroughTest* S2 = Cast<AUnitPassThroughTest>(TestActor))
+				{
+					S2->BeginTest();
+				}
+				else if (AUnitSqueezeMorphTest* S3 = Cast<AUnitSqueezeMorphTest>(TestActor))
+				{
+					S3->BeginTest();
+				}
 				// T0.9: apply + assert the test-mode contract at scenario start
 				// (roadmap B.0: assert ACTIVE engine settings, not CVars being
 				// set; the -game process does not seed the contract on its own).
@@ -297,5 +305,39 @@ bool FS1_MarchWheel::RunTest(const FString& Parameters)
 	IFunctionalTestingModule::Get().MarkPendingActivation();
 	ADD_LATENT_AUTOMATION_COMMAND(FOpenBattleFuncMap(this));
 	ADD_LATENT_AUTOMATION_COMMAND(FRunBattleFuncTest(this, TEXT("S1_MarchWheel"), TEXT("AUnitMarchWheelTest")));
+	return true;
+}
+
+IMPLEMENT_CUSTOM_COMPLEX_AUTOMATION_TEST(FS2_PassThrough, FBattleFuncTestBase,
+	"Battle.Func.S2_PassThrough", (EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter))
+
+void FS2_PassThrough::GetTests(TArray<FString>& OutBeautifiedNames, TArray<FString>& OutTestCommands) const
+{
+	OutBeautifiedNames.Add(TEXT("S2_PassThrough"));
+	OutTestCommands.Add(TEXT(""));
+}
+
+bool FS2_PassThrough::RunTest(const FString& Parameters)
+{
+	IFunctionalTestingModule::Get().MarkPendingActivation();
+	ADD_LATENT_AUTOMATION_COMMAND(FOpenBattleFuncMap(this));
+	ADD_LATENT_AUTOMATION_COMMAND(FRunBattleFuncTest(this, TEXT("S2_PassThrough"), TEXT("AUnitPassThroughTest")));
+	return true;
+}
+
+IMPLEMENT_CUSTOM_COMPLEX_AUTOMATION_TEST(FS3_SqueezeMorph, FBattleFuncTestBase,
+	"Battle.Func.S3_SqueezeMorph", (EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter))
+
+void FS3_SqueezeMorph::GetTests(TArray<FString>& OutBeautifiedNames, TArray<FString>& OutTestCommands) const
+{
+	OutBeautifiedNames.Add(TEXT("S3_SqueezeMorph"));
+	OutTestCommands.Add(TEXT(""));
+}
+
+bool FS3_SqueezeMorph::RunTest(const FString& Parameters)
+{
+	IFunctionalTestingModule::Get().MarkPendingActivation();
+	ADD_LATENT_AUTOMATION_COMMAND(FOpenBattleFuncMap(this));
+	ADD_LATENT_AUTOMATION_COMMAND(FRunBattleFuncTest(this, TEXT("S3_SqueezeMorph"), TEXT("AUnitSqueezeMorphTest")));
 	return true;
 }

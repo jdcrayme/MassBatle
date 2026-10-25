@@ -129,10 +129,15 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 		}
 		const FUnitFormationSharedFragment& Formation = *FormationPtr;
 		const int32 NumRanks = FMath::Max(1, FMath::CeilToInt(static_cast<float>(Formation.NumSlots) / Formation.NumFiles));
+		// Body centers on the formation CENTROID (the anchor leads at the
+		// front rank; ranks trail behind the facing).
+		const float RadC = FMath::DegreesToRadians(Formation.FacingYaw);
+		const FVector2D FrontC(FMath::Cos(RadC), FMath::Sin(RadC));
+		const float HalfRanksM = static_cast<float>(NumRanks - 1) * Formation.RankSpacing * 0.5f * 0.01f;
 		FUnitOBB Body;
-		Body.Center = Formation.AnchorPos * 0.01f; // cm -> m
+		Body.Center = Formation.AnchorPos * 0.01f - FrontC * HalfRanksM;
 		Body.YawDeg = Formation.FacingYaw;
-		Body.HalfAlongFacing = (NumRanks * Formation.RankSpacing * 0.5f) * 0.01f;
+		Body.HalfAlongFacing = HalfRanksM + Formation.RankSpacing * 0.5f * 0.01f;
 		Body.HalfAcrossFacing = (Formation.NumFiles * Formation.FileSpacing * 0.5f) * 0.01f;
 		UnitBodies.Add(Body);
 		BodyUnits.Add(Owners[0].Owner);
@@ -211,7 +216,22 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 		auto Velocities = Context.GetMutableFragmentView<FMassVelocityFragment>();
 
 		// Unit speed limit arrives in cm/s (fragment); servo math is m/s.
-		const float MaxSpeedM = Formation.SpeedLimit * 0.01f;
+		// A unit WITHOUT an order (SpeedLimit 0) holds its ground -- but its
+		// entities still re-dress (wake recovery, slot fills): they get the
+		// walk speed as the servo ceiling. Marching units clamp at their
+		// section 8.2 limit.
+		float MaxSpeedM = Formation.SpeedLimit * 0.01f;
+		if (MaxSpeedM <= 0.f)
+		{
+			if (const IConsoleVariable* WalkCvar = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Movement.WalkSpeed")))
+			{
+				MaxSpeedM = WalkCvar->GetFloat();
+			}
+			else
+			{
+				MaxSpeedM = 1.4f;
+			}
+		}
 
 		for (int32 i = 0; i < Context.GetNumEntities(); ++i)
 		{

@@ -7,6 +7,8 @@
 #include "BattlePathFrameLayout.h"
 #include "BattleUnitLocomotion.h"
 #include "BattleUnitContact.h"
+#include "BattlePassGeometry.h"
+#include "BattleCompression.h"
 #include "MassBattleModule.h"
 
 #include "MassExecutionContext.h"
@@ -107,10 +109,13 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 			return;
 		}
 		const int32 NumRanks = FMath::Max(1, FMath::CeilToInt(static_cast<float>(Formation->NumSlots) / Formation->NumFiles));
+		const float RadL = FMath::DegreesToRadians(Formation->FacingYaw);
+		const FVector2D FrontL(FMath::Cos(RadL), FMath::Sin(RadL));
+		const float HalfRanksM = static_cast<float>(NumRanks - 1) * Formation->RankSpacing * 0.5f * 0.01f;
 		FUnitOBB Body;
-		Body.Center = Formation->AnchorPos * 0.01f;
+		Body.Center = Formation->AnchorPos * 0.01f - FrontL * HalfRanksM; // centroid, not front rank
 		Body.YawDeg = Formation->FacingYaw;
-		Body.HalfAlongFacing = (NumRanks * Formation->RankSpacing * 0.5f) * 0.01f;
+		Body.HalfAlongFacing = HalfRanksM + Formation->RankSpacing * 0.5f * 0.01f;
 		Body.HalfAcrossFacing = (Formation->NumFiles * Formation->FileSpacing * 0.5f) * 0.01f;
 		UnitBodies.Add(Body);
 		BodyUnits.Add(Owners[0].Owner);
@@ -242,8 +247,10 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 		CurrentLimit = NewLimitM * 100.f;
 
 		// ---- §8.2 hard rule: no facing change while interpenetrating ----
+		const float RadMy = FMath::DegreesToRadians(Formation.FacingYaw);
+		const FVector2D FrontMy(FMath::Cos(RadMy), FMath::Sin(RadMy));
 		FUnitOBB MyBody;
-		MyBody.Center = Formation.AnchorPos * 0.01f;
+		MyBody.Center = Formation.AnchorPos * 0.01f - FrontMy * HalfDepthM; // centroid
 		MyBody.YawDeg = Formation.FacingYaw;
 		MyBody.HalfAlongFacing = HalfDepthM;
 		MyBody.HalfAcrossFacing = HalfFrontageM;
@@ -259,6 +266,85 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 				bInterpenetrating = true;
 				break;
 			}
+		}
+
+		// ---- Narrow-pass decision (arch §8.6, T1.7): scan the path ahead;
+		//      decide squeeze vs morph once per pass (commit rule = lock). ----
+		if (bHasPath && !Formation.PassLocked && Order->Type == FUnitOrder::EType::Move)
+		{
+			const float ScanAheadM = 15.f;
+			const float FrontM = Formation.PathS * 0.01f;
+			float PassWidthM = FLT_MAX;
+			FVector2D PathPos;
+			FVector2D PathTan;
+			for (float Ahead = 2.f; Ahead <= ScanAheadM; Ahead += 1.5f)
+			{
+				if (FPathFrameLayout::SampleAt(PathM, FrontM + Ahead, PathPos, PathTan))
+				{
+					const float W = FUnitPassGeometry::MeasureClearWidth(
+						CostGrid->GetGrid(), PathPos, FVector2D(-PathTan.Y, PathTan.X), 40.f);
+					PassWidthM = FMath::Min(PassWidthM, W);
+				}
+			}
+			const float FormationWidthM = HalfFrontageM * 2.f; // files across the facing
+			// Decide (and commit) only once a genuine narrowing is within the
+			// scan window -- an all-clear scan must keep scanning, not lock a
+			// no-op decision before the corridor is even visible.
+			if (PassWidthM < FormationWidthM * 0.99f)
+			{
+				const FUnitPassGeometry::FPassDecision Decision = FUnitPassGeometry::DecideSqueezeOrMorph(
+					PassWidthM, FormationWidthM, Formation.FileSpacing * 0.01f);
+				if (Decision.bMorph && Decision.MorphFiles != Formation.NumFiles)
+				{
+					UE_LOG(LogMassBattle, Display,
+						TEXT("EXEC_RESULT PassDecision Unit=%u:%u MORPH files %d->%d (pass %.1fm)"),
+						Unit.Index, Unit.Serial, Formation.NumFiles, Decision.MorphFiles, PassWidthM);
+					Formation.NumFiles = Decision.MorphFiles;
+					++Formation.Generation; // layout re-parameterization re-slots via the normal reflow
+				}
+				else if (!Decision.bMorph)
+				{
+					UE_LOG(LogMassBattle, Display,
+						TEXT("EXEC_RESULT PassDecision Unit=%u:%u SQUEEZE scale=%.2f (pass %.1fm)"),
+						Unit.Index, Unit.Serial, Decision.SqueezeScale, PassWidthM);
+				}
+				Formation.PassLocked = 1; // commits once the lead rank nears the mouth
+			}
+		}
+
+		// Compression model (§8.2): spacing scale advances toward the pass
+		// demand while squeezing and recovers at ~10%/s afterwards.
+		if (bHasPath)
+		{
+			float TargetScale = 1.f;
+			if (Formation.PassLocked)
+			{
+				// While inside the pass corridor, hold the locked squeeze scale.
+				const float ScanAheadM = 8.f;
+				FVector2D PathPos;
+				FVector2D PathTan;
+				if (FPathFrameLayout::SampleAt(PathM, Formation.PathS * 0.01f + ScanAheadM, PathPos, PathTan))
+				{
+					const float W = FUnitPassGeometry::MeasureClearWidth(
+						CostGrid->GetGrid(), PathPos, FVector2D(-PathTan.Y, PathTan.X), 40.f);
+					const float FormationWidthM = HalfFrontageM * 2.f;
+					if (W < FormationWidthM * FUnitCompression::CompressionFloor * 0.99f)
+					{
+						TargetScale = FUnitPassGeometry::DecideSqueezeOrMorph(
+							W, FormationWidthM, Formation.FileSpacing * 0.01f).SqueezeScale;
+					}
+				}
+			}
+			Formation.SpacingScale = FUnitCompression::AdvanceSpacingScale(
+				Formation.SpacingScale, TargetScale, DT);
+		}
+
+		// §8.6 pass-through: the anchor proceeds at ~55% speed while
+		// interpenetrating another unit (no facing change -- the §8.2 lock
+		// above already holds during contact).
+		if (bInterpenetrating && LimitIn.CommandedSpeed > 0.f)
+		{
+			LimitIn.CommandedSpeed *= FUnitContact::PassThroughSpeedFactor;
 		}
 
 		// ---- Anchor progression + facing cap ----

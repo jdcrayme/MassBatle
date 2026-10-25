@@ -159,6 +159,66 @@ private:
 };
 
 // ---------------------------------------------------------------------------
+// S2_PassThrough (T1.6): unit A marches THROUGH standing unit B. Asserts
+// (B.3 S2): no pairwise stalls (zero unstuck escalations as the stall proxy +
+// pass completes); pass time bounded (tick cap); B's wake re-dresses within a
+// bounded settle after the pass (coherence + separation).
+// ---------------------------------------------------------------------------
+UCLASS()
+class MASSBATTLE_API AUnitPassThroughTest : public AFunctionalTest
+{
+	GENERATED_BODY()
+
+public:
+	AUnitPassThroughTest();
+
+	void BeginTest();
+	void CompleteTest(EFunctionalTestResult TestResult, const FString& Message);
+	virtual void StartTest() override;
+	virtual void Tick(float DeltaSeconds) override;
+	virtual bool IsReady_Implementation() override { return true; }
+
+private:
+	enum class EPhase : int32 { Spawn, March, Settle, Assert, Done };
+	EPhase Phase = EPhase::Spawn;
+	int32 TicksInPhase = 0;
+	int32 EscalationsAtPassEnd = 0;
+
+	UPROPERTY() TObjectPtr<AUnitActor> Mover;
+	UPROPERTY() TObjectPtr<AUnitActor> Standee;
+};
+
+// ---------------------------------------------------------------------------
+// S3_SqueezeMorph (T1.7): two units cross a stamped wall -- one through an
+// 8 m gap (morph to column), one through a 16 m gap (squeeze). Asserts:
+// threshold decision correct both sides; the decision locks (PassLocked,
+// commits once -- no re-decision thrash); clean re-deploy past the exit.
+// ---------------------------------------------------------------------------
+UCLASS()
+class MASSBATTLE_API AUnitSqueezeMorphTest : public AFunctionalTest
+{
+	GENERATED_BODY()
+
+public:
+	AUnitSqueezeMorphTest();
+
+	void BeginTest();
+	void CompleteTest(EFunctionalTestResult TestResult, const FString& Message);
+	virtual void StartTest() override;
+	virtual void Tick(float DeltaSeconds) override;
+	virtual bool IsReady_Implementation() override { return true; }
+
+private:
+	enum class EPhase : int32 { Spawn, March, Settle, Assert, Done };
+	EPhase Phase = EPhase::Spawn;
+	int32 TicksInPhase = 0;
+
+	UPROPERTY() TObjectPtr<AUnitActor> Narrow;  // 8 m gap -> morph
+	UPROPERTY() TObjectPtr<AUnitActor> Wide;    // 16 m gap -> squeeze
+	int32 NarrowFilesAtSpawn = 0;
+};
+
+// ---------------------------------------------------------------------------
 // S-scenario actor factory registry -- deterministic, reflection-free class
 // lookup for the automation harness (FindObject with /Script/ paths and
 // TObjectIterator both failed to resolve fresh C++ classes in -game processes

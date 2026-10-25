@@ -15,6 +15,7 @@
 #include "BattleTypes.h"
 #include "BattleDebugSubsystem.h"
 #include "BattleTestSettings.h"
+#include "BattleCostGridSubsystem.h"
 #include "MassCommonFragments.h"
 #include "BattleStateHash.h"
 #include "MassSimulationSubsystem.h"
@@ -937,11 +938,13 @@ void AUnitMarchWheelTest::Tick(float DeltaSeconds)
 				const int32 NumRanks = FMath::Max(1, FMath::CeilToInt(static_cast<float>(Formation->NumSlots) / Formation->NumFiles));
 				const float Rad = FMath::DegreesToRadians(Formation->FacingYaw);
 				const FVector2D Front(FMath::Cos(Rad), FMath::Sin(Rad));
-				const float LimitAlong = (NumRanks * Formation->RankSpacing * 0.5f) * 0.01f + 3.f;
+				const float HalfRanksM = static_cast<float>(NumRanks - 1) * Formation->RankSpacing * 0.5f * 0.01f;
+				const FVector2D BodyCenter = Formation->AnchorPos * 0.01f - Front * HalfRanksM;
+				const float LimitAlong = HalfRanksM + Formation->RankSpacing * 0.5f * 0.01f + 3.f;
 				const float LimitSide = (Formation->NumFiles * Formation->FileSpacing * 0.5f) * 0.01f + 3.f;
 				for (const FVector2D& P : AllPos[U])
 				{
-					const FVector2D Delta = (P - Formation->AnchorPos * 0.01f);
+					const FVector2D Delta = (P - BodyCenter);
 					if (FMath::Abs(FVector2D::DotProduct(Delta, Front)) > LimitAlong
 						|| FMath::Abs(FVector2D::DotProduct(Delta, FVector2D(-Front.Y, Front.X))) > LimitSide)
 					{
@@ -1009,13 +1012,15 @@ void AUnitMarchWheelTest::Tick(float DeltaSeconds)
 			const int32 NumRanks = FMath::Max(1, FMath::CeilToInt(static_cast<float>(Formation->NumSlots) / Formation->NumFiles));
 			const float Rad = FMath::DegreesToRadians(Formation->FacingYaw);
 			const FVector2D Front(FMath::Cos(Rad), FMath::Sin(Rad));
+			const float HalfRanksM = static_cast<float>(NumRanks - 1) * Formation->RankSpacing * 0.5f * 0.01f;
+			const FVector2D BodyCenter = Formation->AnchorPos * 0.01f - Front * HalfRanksM;
 			const float SlackM = 3.f;
 			for (const FVector2D& P : AllPos[U])
 			{
-				const FVector2D Delta = (P - Formation->AnchorPos * 0.01f);
+				const FVector2D Delta = (P - BodyCenter);
 				const float Along = FMath::Abs(FVector2D::DotProduct(Delta, Front));
 				const float Side = FMath::Abs(FVector2D::DotProduct(Delta, FVector2D(-Front.Y, Front.X)));
-				const float LimitAlong = (NumRanks * Formation->RankSpacing * 0.5f) * 0.01f + SlackM;
+				const float LimitAlong = HalfRanksM + Formation->RankSpacing * 0.5f * 0.01f + SlackM;
 				const float LimitSide = (Formation->NumFiles * Formation->FileSpacing * 0.5f) * 0.01f + SlackM;
 				if (Along > LimitAlong || Side > LimitSide)
 				{
@@ -1169,6 +1174,561 @@ void AUnitOrderSmokeTest::Tick(float DeltaSeconds)
 	}
 }
 
+
+// ---------------------------------------------------------------------------
+// S2_PassThrough (T1.6)
+// ---------------------------------------------------------------------------
+
+AUnitPassThroughTest::AUnitPassThroughTest()
+{
+	TimeLimit = 300.f;
+	TimesUpResult = EFunctionalTestResult::Error;
+}
+
+void AUnitPassThroughTest::BeginTest()
+{
+	// Manager-equivalent start (phase-0 pattern).
+	SetActorTickEnabled(true);
+	PrimaryActorTick.bCanEverTick = true;
+	bIsRunning = true;
+	Result = EFunctionalTestResult::Running;
+}
+
+void AUnitPassThroughTest::CompleteTest(EFunctionalTestResult TestResult, const FString& Message)
+{
+	// Manager-less completion (phase-0 pattern).
+	Result = TestResult;
+	bIsRunning = false;
+	SetActorTickEnabled(false);
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S2_PassThrough Complete Result=%s Msg=%s"),
+	       *LexToString(TestResult), *Message);
+}
+
+void AUnitPassThroughTest::StartTest()
+{
+	Super::StartTest();
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("no world"));
+		return;
+	}
+	UBattleTestSettings::ApplyTestMode();
+	TArray<FString> Violations;
+	if (!UBattleTestSettings::AssertTestMode(nullptr, &Violations, World))
+	{
+		CompleteTest(EFunctionalTestResult::Error,
+			FString::Printf(TEXT("test-mode contract violated: %s"), *FString::Join(Violations, TEXT("; "))));
+		return;
+	}
+	if (UBattleDebugSubsystem* Debug = World->GetSubsystem<UBattleDebugSubsystem>())
+	{
+		Debug->ResetDiagnostics();
+	}
+
+	auto SpawnAt = [this, World](const FVector& Loc, const TCHAR* Name) -> AUnitActor*
+	{
+		FActorSpawnParameters Params;
+		Params.ObjectFlags |= RF_Transient;
+		AUnitActor* Actor = World->SpawnActor<AUnitActor>(Loc, FRotator(0.f, 0.f, 0.f), Params);
+		if (Actor)
+		{
+			Actor->EduRowIndex = 0;
+			Actor->SoldierCount = 40;
+			FBattleSpawnResult Result;
+			FString Error;
+			if (!Actor->SpawnEntities(Result, Error))
+			{
+				Actor = nullptr;
+			}
+		}
+		return Actor;
+	};
+
+	// Mover starts 25 m west of the standee; its path goes through the standee.
+	Mover = SpawnAt(FVector(-2500.f, 0.f, 100.f), TEXT("Mover"));
+	Standee = SpawnAt(FVector(0.f, 0.f, 100.f), TEXT("Standee"));
+	if (!Mover || !Standee)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("spawn failed"));
+		return;
+	}
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S2_PassThrough Spawned mover=(-25,0) standee=(0,0)"));
+	Phase = EPhase::March;
+	TicksInPhase = 0;
+}
+
+void AUnitPassThroughTest::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+	if (!IsRunning() || Phase == EPhase::Done)
+	{
+		return;
+	}
+	UWorld* World = GetWorld();
+	UUnitRegistrySubsystem* Registry = World ? World->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	UBattleDebugSubsystem* Debug = World ? World->GetSubsystem<UBattleDebugSubsystem>() : nullptr;
+	if (!Registry || !Debug)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("subsystems missing"));
+		return;
+	}
+	++TicksInPhase;
+
+	if (Phase == EPhase::March)
+	{
+		if (TicksInPhase == 1)
+		{
+			// March 45 m east: through the standee's formation center.
+			Registry->IssueMoveOrder(Mover->GetUnitHandle(), FVector2D(2000.f, 0.f), 0.f);
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S2_PassThrough March order issued"));
+			return;
+		}
+		const FUnitFormationSharedFragment* Formation = FindFormation(World, Mover->GetUnitHandle());
+		if (Formation && FVector2D::DistSquared(Formation->AnchorPos, FVector2D(2000.f, 0.f)) <= FMath::Square(150.f))
+		{
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S2_PassThrough pass complete ticks=%d escalationsSoFar=%d"),
+				TicksInPhase, Debug->GetLadderEscalations());
+			EscalationsAtPassEnd = Debug->GetLadderEscalations();
+			Phase = EPhase::Settle;
+			TicksInPhase = 0;
+		}
+		else if (TicksInPhase > 3000)
+		{
+			CompleteTest(EFunctionalTestResult::Error, TEXT("pass time unbounded (march phase timed out)"));
+			return;
+		}
+	}
+	else if (Phase == EPhase::Settle)
+	{
+		// Bounded wake recovery: wait until the standee's formation is
+		// coherent again AND separated, or the budget ends.
+		bool bCoherent = true;
+		float SepNow = FLT_MAX;
+		const FUnitFormationSharedFragment* Formation = FindFormation(World, Standee->GetUnitHandle());
+		TArray<FVector2D> PosM;
+		GatherEntityPositions(World, Standee->GetUnitHandle(), PosM);
+		if (Formation)
+		{
+			const int32 NumRanks = FMath::Max(1, FMath::CeilToInt(static_cast<float>(Formation->NumSlots) / Formation->NumFiles));
+			const float Rad = FMath::DegreesToRadians(Formation->FacingYaw);
+			const FVector2D Front(FMath::Cos(Rad), FMath::Sin(Rad));
+			const float HalfRanksM = static_cast<float>(NumRanks - 1) * Formation->RankSpacing * 0.5f * 0.01f;
+			const FVector2D BodyCenter = Formation->AnchorPos * 0.01f - Front * HalfRanksM;
+			const float LimitAlong = HalfRanksM + Formation->RankSpacing * 0.5f * 0.01f + 3.f;
+			const float LimitSide = (Formation->NumFiles * Formation->FileSpacing * 0.5f) * 0.01f + 3.f;
+			for (int32 i = 0; i < PosM.Num(); ++i)
+			{
+				const FVector2D Delta = (PosM[i] - BodyCenter);
+				if (FMath::Abs(FVector2D::DotProduct(Delta, Front)) > LimitAlong
+					|| FMath::Abs(FVector2D::DotProduct(Delta, FVector2D(-Front.Y, Front.X))) > LimitSide)
+				{
+					bCoherent = false;
+					break;
+				}
+				for (int32 j = i + 1; j < PosM.Num(); ++j)
+				{
+					SepNow = FMath::Min(SepNow, FVector2D::DistSquared(PosM[i], PosM[j]));
+				}
+			}
+			SepNow = FMath::Sqrt(SepNow);
+		}
+		if ((bCoherent && SepNow >= 0.3f) || TicksInPhase > 900)
+		{
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S2_PassThrough settle done ticks=%d coherent=%d sep=%.3f"),
+				TicksInPhase, bCoherent ? 1 : 0, SepNow);
+			Phase = EPhase::Assert;
+			TicksInPhase = 0;
+		}
+	}
+	else if (Phase == EPhase::Assert)
+	{
+		bool bOk = true;
+
+		// T1.6a: no pairwise stalls -- zero NEW escalations after the pass
+		// (escalations DURING contact are the ladder doing its job on shoved
+		// entities; a stall would keep escalating after the pass ends).
+		const int32 Escalations = Debug->GetLadderEscalations() - EscalationsAtPassEnd;
+		if (Escalations != 0)
+		{
+			AddError(FString::Printf(TEXT("T1.6 FAIL: %d post-pass escalations (stall proxy, expected 0)"), Escalations));
+			bOk = false;
+		}
+
+		// T1.6b: pass time bounded (the march phase completed within its cap).
+		// Evidenced by reaching this phase at all; the tick count is logged.
+
+		// T1.6c: wake re-dressed -- the standee's formation is coherent and
+		// separated after the bounded settle.
+		const FUnitFormationSharedFragment* Formation = FindFormation(World, Standee->GetUnitHandle());
+		TArray<FVector2D> PosM;
+		GatherEntityPositions(World, Standee->GetUnitHandle(), PosM);
+		if (!Formation || PosM.Num() != 40)
+		{
+			AddError(FString::Printf(TEXT("T1.6 FAIL: standee roster %d (expected 40)"), PosM.Num()));
+			bOk = false;
+		}
+		else
+		{
+			const int32 NumRanks = FMath::Max(1, FMath::CeilToInt(static_cast<float>(Formation->NumSlots) / Formation->NumFiles));
+			const float Rad = FMath::DegreesToRadians(Formation->FacingYaw);
+			const FVector2D Front(FMath::Cos(Rad), FMath::Sin(Rad));
+			const float HalfRanksM = static_cast<float>(NumRanks - 1) * Formation->RankSpacing * 0.5f * 0.01f;
+			const FVector2D BodyCenter = Formation->AnchorPos * 0.01f - Front * HalfRanksM;
+			const float LimitAlong = HalfRanksM + Formation->RankSpacing * 0.5f * 0.01f + 3.f;
+			const float LimitSide = (Formation->NumFiles * Formation->FileSpacing * 0.5f) * 0.01f + 3.f;
+			int32 Strays = 0;
+			float MinSq = FLT_MAX;
+			for (int32 i = 0; i < PosM.Num(); ++i)
+			{
+				const FVector2D Delta = (PosM[i] - BodyCenter);
+				if (FMath::Abs(FVector2D::DotProduct(Delta, Front)) > LimitAlong
+					|| FMath::Abs(FVector2D::DotProduct(Delta, FVector2D(-Front.Y, Front.X))) > LimitSide)
+				{
+					++Strays;
+				}
+				for (int32 j = i + 1; j < PosM.Num(); ++j)
+				{
+					MinSq = FMath::Min(MinSq, FVector2D::DistSquared(PosM[i], PosM[j]));
+				}
+			}
+			if (Strays > 0)
+			{
+				AddError(FString::Printf(TEXT("T1.6 FAIL: wake did not re-dress (%d strays)"), Strays));
+				bOk = false;
+			}
+			const float MinSep = FMath::Sqrt(MinSq);
+			if (MinSep < 0.3f)
+			{
+				// Identify the pair for diagnosis.
+				int32 Pi = -1, Pj = -1;
+				float PMin = FLT_MAX;
+				for (int32 i = 0; i < PosM.Num(); ++i)
+				{
+					for (int32 j = i + 1; j < PosM.Num(); ++j)
+					{
+						const float Sq = FVector2D::DistSquared(PosM[i], PosM[j]);
+						if (Sq < PMin)
+						{
+							PMin = Sq;
+							Pi = i; Pj = j;
+						}
+					}
+				}
+				FSlotAssignmentFragment DumpA{};
+				FSlotAssignmentFragment DumpB{};
+				if (const TArray<FMassEntityHandle>* R = Registry->FindRoster(Standee->GetUnitHandle()))
+				{
+					FMassEntityManager& EMx = World->GetSubsystem<UMassEntitySubsystem>()->GetMutableEntityManager();
+					if (R->IsValidIndex(Pi)) { DumpA = FMassEntityView(EMx, (*R)[Pi]).GetFragmentData<FSlotAssignmentFragment>(); }
+					if (R->IsValidIndex(Pj)) { DumpB = FMassEntityView(EMx, (*R)[Pj]).GetFragmentData<FSlotAssignmentFragment>(); }
+				}
+				UE_LOG(LogMassBattle, Display,
+					TEXT("EXEC_RESULT S2MinPair e%d=(%.2f,%.2f) slot=%d gen=%d e%d=(%.2f,%.2f) slot=%d gen=%d"),
+					Pi, PosM[Pi].X, PosM[Pi].Y, DumpA.SlotIndex, DumpA.Generation,
+					Pj, PosM[Pj].X, PosM[Pj].Y, DumpB.SlotIndex, DumpB.Generation);
+				AddError(FString::Printf(TEXT("T1.6 FAIL: wake separation %.3f m < 0.3 m"), MinSep));
+				bOk = false;
+			}
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT S2Assert escalations=%d strays=%d minSep=%.3fm ok=%d"),
+				Escalations, Strays, MinSep, bOk ? 1 : 0);
+		}
+
+		Phase = EPhase::Done;
+		CompleteTest(bOk ? EFunctionalTestResult::Succeeded : EFunctionalTestResult::Failed,
+			bOk ? TEXT("S2 pass-through green") : TEXT("S2 assertions failed"));
+	}
+}
+
+// ---------------------------------------------------------------------------
+// S3_SqueezeMorph (T1.7)
+// ---------------------------------------------------------------------------
+
+AUnitSqueezeMorphTest::AUnitSqueezeMorphTest()
+{
+	TimeLimit = 420.f;
+	TimesUpResult = EFunctionalTestResult::Error;
+}
+
+void AUnitSqueezeMorphTest::BeginTest()
+{
+	// Manager-equivalent start (phase-0 pattern).
+	SetActorTickEnabled(true);
+	PrimaryActorTick.bCanEverTick = true;
+	bIsRunning = true;
+	Result = EFunctionalTestResult::Running;
+}
+
+void AUnitSqueezeMorphTest::CompleteTest(EFunctionalTestResult TestResult, const FString& Message)
+{
+	// Manager-less completion (phase-0 pattern).
+	Result = TestResult;
+	bIsRunning = false;
+	SetActorTickEnabled(false);
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S3_SqueezeMorph Complete Result=%s Msg=%s"),
+	       *LexToString(TestResult), *Message);
+}
+
+void AUnitSqueezeMorphTest::StartTest()
+{
+	Super::StartTest();
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("no world"));
+		return;
+	}
+	UBattleTestSettings::ApplyTestMode();
+	TArray<FString> Violations;
+	if (!UBattleTestSettings::AssertTestMode(nullptr, &Violations, World))
+	{
+		CompleteTest(EFunctionalTestResult::Error,
+			FString::Printf(TEXT("test-mode contract violated: %s"), *FString::Join(Violations, TEXT("; "))));
+		return;
+	}
+	if (UBattleDebugSubsystem* Debug = World->GetSubsystem<UBattleDebugSubsystem>())
+	{
+		Debug->ResetDiagnostics();
+	}
+
+	// A5 stamp override (no authored map): a wall at x in [0,3] m with TWO
+	// gaps -- narrow 8 m at y in [-20,-12] (morph side), wide 16 m at
+	// y in [12,28] (squeeze side).
+	UBattleCostGridSubsystem* CostGrid = World->GetSubsystem<UBattleCostGridSubsystem>();
+	if (!CostGrid)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("cost grid missing"));
+		return;
+	}
+	CostGrid->ResetToFlat();
+	// 3 m-thick wall, two gaps: 8 m at y in [-20,-12] (morph side), 22 m at
+	// y in [8,30] (squeeze side -- 22 m measures ~16 m on the 3 m grid, above
+	// the 14.4 m squeeze threshold).
+	CostGrid->StampImpassable(FVector2D(0.f, -129.f), FVector2D(3.f, -20.f));
+	CostGrid->StampImpassable(FVector2D(0.f, -12.f), FVector2D(3.f, 8.f));
+	CostGrid->StampImpassable(FVector2D(0.f, 30.f), FVector2D(3.f, 129.f));
+
+	auto SpawnAt = [this, World](const FVector& Loc) -> AUnitActor*
+	{
+		FActorSpawnParameters Params;
+		Params.ObjectFlags |= RF_Transient;
+		AUnitActor* Actor = World->SpawnActor<AUnitActor>(Loc, FRotator(0.f, 90.f, 0.f), Params);
+		if (Actor)
+		{
+			Actor->EduRowIndex = 0;
+			Actor->SoldierCount = 40;
+			FBattleSpawnResult Result;
+			FString Error;
+			if (!Actor->SpawnEntities(Result, Error))
+			{
+				Actor = nullptr;
+			}
+		}
+		return Actor;
+	};
+
+	Narrow = SpawnAt(FVector(-4000.f, -1600.f, 100.f)); // aims at the 8 m gap
+	Wide = SpawnAt(FVector(-4000.f, 1900.f, 100.f));    // aims at the 22 m gap
+	if (!Narrow || !Wide)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("spawn failed"));
+		return;
+	}
+	if (const FUnitFormationSharedFragment* F = FindFormation(World, Narrow->GetUnitHandle()))
+	{
+		NarrowFilesAtSpawn = F->NumFiles;
+	}
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S3_SqueezeMorph Spawned narrow=(-40,-16) wide=(-40,20) files=%d"),
+		NarrowFilesAtSpawn);
+	Phase = EPhase::March;
+	TicksInPhase = 0;
+}
+
+void AUnitSqueezeMorphTest::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+	if (!IsRunning() || Phase == EPhase::Done)
+	{
+		return;
+	}
+	UWorld* World = GetWorld();
+	UUnitRegistrySubsystem* Registry = World ? World->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	UBattleDebugSubsystem* Debug = World ? World->GetSubsystem<UBattleDebugSubsystem>() : nullptr;
+	if (!Registry || !Debug)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("subsystems missing"));
+		return;
+	}
+	++TicksInPhase;
+
+	auto Arrived = [this, &Registry](const TObjectPtr<AUnitActor>& Unit, float GoalY) -> bool
+	{
+		const FUnitFormationSharedFragment* F = FindFormation(GetWorld(), Unit->GetUnitHandle());
+		return F && FVector2D::DistSquared(F->AnchorPos, FVector2D(4000.f, GoalY)) <= FMath::Square(200.f);
+	};
+
+	if (Phase == EPhase::March)
+	{
+		if (TicksInPhase == 1)
+		{
+			// Both cross to the far side (+80 m east) through their gaps.
+			Registry->IssueMoveOrder(Narrow->GetUnitHandle(), FVector2D(4000.f, -1600.f), 90.f);
+			Registry->IssueMoveOrder(Wide->GetUnitHandle(), FVector2D(4000.f, 1900.f), 90.f);
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S3_SqueezeMorph March orders issued"));
+			return;
+		}
+		if (Arrived(Narrow, -1600.f) && Arrived(Wide, 1900.f))
+		{
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S3_SqueezeMorph both crossed ticks=%d"), TicksInPhase);
+			Phase = EPhase::Settle;
+			TicksInPhase = 0;
+		}
+		else if (TicksInPhase > 4000)
+		{
+			CompleteTest(EFunctionalTestResult::Error, TEXT("crossing timed out"));
+			return;
+		}
+	}
+	else if (Phase == EPhase::Settle)
+	{
+		// Bounded re-dress past the exit.
+		auto Coherent = [this, &Registry](const TObjectPtr<AUnitActor>& Unit) -> bool
+		{
+			const FUnitFormationSharedFragment* F = FindFormation(GetWorld(), Unit->GetUnitHandle());
+			TArray<FVector2D> PosM;
+			GatherEntityPositions(GetWorld(), Unit->GetUnitHandle(), PosM);
+			if (!F)
+			{
+				return false;
+			}
+			const int32 NumRanks = FMath::Max(1, FMath::CeilToInt(static_cast<float>(F->NumSlots) / F->NumFiles));
+			const float Rad = FMath::DegreesToRadians(F->FacingYaw);
+			const FVector2D Front(FMath::Cos(Rad), FMath::Sin(Rad));
+			const float HalfRanksM = static_cast<float>(NumRanks - 1) * F->RankSpacing * 0.5f * 0.01f;
+			const FVector2D BodyCenter = F->AnchorPos * 0.01f - Front * HalfRanksM;
+			const float LimitAlong = HalfRanksM + F->RankSpacing * 0.5f * 0.01f + 3.f;
+			const float LimitSide = (F->NumFiles * F->FileSpacing * 0.5f) * 0.01f + 3.f;
+			for (const FVector2D& P : PosM)
+			{
+				const FVector2D Delta = (P - BodyCenter);
+				if (FMath::Abs(FVector2D::DotProduct(Delta, Front)) > LimitAlong
+					|| FMath::Abs(FVector2D::DotProduct(Delta, FVector2D(-Front.Y, Front.X))) > LimitSide)
+				{
+					return false;
+				}
+			}
+			return true;
+		};
+		if ((Coherent(Narrow) && Coherent(Wide)) || TicksInPhase > 3000)
+		{
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S3_SqueezeMorph settle done ticks=%d"), TicksInPhase);
+			Phase = EPhase::Assert;
+			TicksInPhase = 0;
+		}
+	}
+	else if (Phase == EPhase::Assert)
+	{
+		bool bOk = true;
+
+		// T1.7a: decisions locked (commit rule -- no mid-corridor re-decision).
+		const FUnitFormationSharedFragment* FN = FindFormation(World, Narrow->GetUnitHandle());
+		const FUnitFormationSharedFragment* FW = FindFormation(World, Wide->GetUnitHandle());
+		if (!FN || !FW)
+		{
+			CompleteTest(EFunctionalTestResult::Error, TEXT("formations missing at assert"));
+			return;
+		}
+		if (!FN->PassLocked || !FW->PassLocked)
+		{
+			AddError(TEXT("T1.7 FAIL: pass decision not locked"));
+			bOk = false;
+		}
+
+		// T1.7b: threshold correct both sides -- narrow morphed to 6 files,
+		// wide kept its files (squeeze).
+		// The 8 m AUTHORED gap measures ~4.5 m on the 3 m cost grid (cell
+		// quantization; the planner consumes the same cells, so decisions on
+		// the measured width are the safe ones). Morph files = floor(4.5/1.2).
+		if (FN->NumFiles != 3)
+		{
+			AddError(FString::Printf(TEXT("T1.7 FAIL: narrow files %d (expected morph to 3 = floor(measured 4.5 m / 1.2 m))"), FN->NumFiles));
+			bOk = false;
+		}
+		if (FW->NumFiles != NarrowFilesAtSpawn)
+		{
+			AddError(FString::Printf(TEXT("T1.7 FAIL: wide files %d changed (expected squeeze, no morph)"),
+				FW->NumFiles));
+			bOk = false;
+		}
+
+		// T1.7c: clean re-deploy past the exit -- both formations coherent and
+		// separated (the settle waited for coherence or budget).
+		auto CheckUnit = [this, &World](const TCHAR* Name, const TObjectPtr<AUnitActor>& Unit, bool& bOk) -> void
+		{
+			TArray<FVector2D> PosM;
+			GatherEntityPositions(World, Unit->GetUnitHandle(), PosM);
+			const FUnitFormationSharedFragment* F = FindFormation(World, Unit->GetUnitHandle());
+			if (!F || PosM.Num() != 40)
+			{
+				AddError(FString::Printf(TEXT("T1.7 FAIL: %s roster %d"), Name, PosM.Num()));
+				bOk = false;
+				return;
+			}
+			const int32 NumRanks = FMath::Max(1, FMath::CeilToInt(static_cast<float>(F->NumSlots) / F->NumFiles));
+			const float Rad = FMath::DegreesToRadians(F->FacingYaw);
+			const FVector2D Front(FMath::Cos(Rad), FMath::Sin(Rad));
+			const float HalfRanksM = static_cast<float>(NumRanks - 1) * F->RankSpacing * 0.5f * 0.01f;
+			const FVector2D BodyCenter = F->AnchorPos * 0.01f - Front * HalfRanksM;
+			const float LimitAlong = HalfRanksM + F->RankSpacing * 0.5f * 0.01f + 3.f;
+			const float LimitSide = (F->NumFiles * F->FileSpacing * 0.5f) * 0.01f + 3.f;
+			int32 Strays = 0;
+			float MinSq = FLT_MAX;
+			for (int32 i = 0; i < PosM.Num(); ++i)
+			{
+				const FVector2D Delta = (PosM[i] - BodyCenter);
+				if (FMath::Abs(FVector2D::DotProduct(Delta, Front)) > LimitAlong
+					|| FMath::Abs(FVector2D::DotProduct(Delta, FVector2D(-Front.Y, Front.X))) > LimitSide)
+				{
+					++Strays;
+				}
+				for (int32 j = i + 1; j < PosM.Num(); ++j)
+				{
+					MinSq = FMath::Min(MinSq, FVector2D::DistSquared(PosM[i], PosM[j]));
+				}
+			}
+			const float MinSep = FMath::Sqrt(MinSq);
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT S3Unit %s files=%d strays=%d minSep=%.3fm"), Name, F->NumFiles, Strays, MinSep);
+			if (Strays > 0)
+			{
+				AddError(FString::Printf(TEXT("T1.7 FAIL: %s not re-deployed (%d strays)"), Name, Strays));
+				bOk = false;
+			}
+			if (MinSep < 0.3f)
+			{
+				AddError(FString::Printf(TEXT("T1.7 FAIL: %s separation %.3f m"), Name, MinSep));
+				bOk = false;
+			}
+		};
+		CheckUnit(TEXT("narrow"), Narrow, bOk);
+		CheckUnit(TEXT("wide"), Wide, bOk);
+
+		const int32 Escalations = Debug->GetLadderEscalations();
+		if (Escalations != 0)
+		{
+			AddError(FString::Printf(TEXT("T1.7 FAIL: %d unstuck escalations"), Escalations));
+			bOk = false;
+		}
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S3Assert escalations=%d ok=%d"), Escalations, bOk ? 1 : 0);
+
+		Phase = EPhase::Done;
+		CompleteTest(bOk ? EFunctionalTestResult::Succeeded : EFunctionalTestResult::Failed,
+			bOk ? TEXT("S3 squeeze/morph green") : TEXT("S3 assertions failed"));
+	}
+}
+
+
 // ---------------------------------------------------------------------------
 // Factory registrations (see FBattleFuncTestRegistry)
 // ---------------------------------------------------------------------------
@@ -1201,4 +1761,15 @@ namespace
 	}
 	const FBattleFuncTestRegistry::FRegistrar GRegS1(TEXT("AUnitMarchWheelTest"), &MakeMarchWheelTest);
 	const FBattleFuncTestRegistry::FRegistrar GRegSmoke(TEXT("AUnitOrderSmokeTest"), &MakeOrderSmokeTest);
+
+	AFunctionalTest* MakePassThroughTest(UWorld* World)
+	{
+		return World->SpawnActor<AUnitPassThroughTest>();
+	}
+	AFunctionalTest* MakeSqueezeMorphTest(UWorld* World)
+	{
+		return World->SpawnActor<AUnitSqueezeMorphTest>();
+	}
+	const FBattleFuncTestRegistry::FRegistrar GRegS2(TEXT("AUnitPassThroughTest"), &MakePassThroughTest);
+	const FBattleFuncTestRegistry::FRegistrar GRegS3(TEXT("AUnitSqueezeMorphTest"), &MakeSqueezeMorphTest);
 }

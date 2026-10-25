@@ -112,7 +112,7 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 			if (bHasPath)
 			{
 				(void)FPathFrameLayout::Project(PathM, PathM.TotalLength, Rank, File, Formation.NumFiles,
-					RankSpacingM, FileSpacingM, Pos, YawDeg);
+					RankSpacingM, FileSpacingM * Formation.SpacingScale, Pos, YawDeg);
 			}
 			else
 			{

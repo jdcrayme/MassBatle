@@ -114,6 +114,10 @@ struct FUnitFormationSharedFragment : public FMassSharedFragment
 	 *  registry OrderSerial is the source of truth). */
 	UPROPERTY() uint32 PlannedOrderSerial = 0;
 
+	/** T1.7 commit rule: the squeeze/morph decision locks once made for the
+	 *  current pass -- no re-decision mid-corridor (no thrash). */
+	UPROPERTY() uint8 PassLocked = 0;
+
 	/** Planner path; empty (NumPoints<2) until UnitLocomotion plans one. */
 	UPROPERTY() FBattlePathPolyline Path;
 };
