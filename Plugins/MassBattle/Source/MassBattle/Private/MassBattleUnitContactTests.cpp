@@ -16,8 +16,8 @@ bool FContact_OBBOverlapGolden::RunTest(const FString& Parameters)
 {
 	FUnitOBB A;
 	A.Center = FVector2D::ZeroVector;
-	A.HalfFrontage = 5.f;
-	A.HalfDepth = 1.f;
+	A.HalfAlongFacing = 1.f;
+	A.HalfAcrossFacing = 5.f;
 	A.YawDeg = 0.f;
 
 	// Separated along X: no overlap.
@@ -40,8 +40,8 @@ bool FContact_OBBOverlapGolden::RunTest(const FString& Parameters)
 	// Rotated crossing at right angles: depth on the tight axes.
 	FUnitOBB C;
 	C.Center = FVector2D(2.f, 0.f);
-	C.HalfFrontage = 5.f;
-	C.HalfDepth = 1.f;
+	C.HalfAlongFacing = 1.f;
+	C.HalfAcrossFacing = 5.f;
 	C.YawDeg = 90.f;
 	TestTrue(TEXT("T-crossing overlaps"), FUnitContact::OverlapDepth(A, C) > 0.f);
 
@@ -52,7 +52,7 @@ bool FContact_OBBOverlapGolden::RunTest(const FString& Parameters)
 
 	// §8.2 hard rule key: interpenetrating predicate matches the depth test.
 	TestTrue(TEXT("interpenetrating true"), FUnitContact::Interpenetrating(A, C));
-	TestFalse(TEXT("interpenetrating false"), FUnitContact::Interpenetrating(A, FUnitOBB{ FVector2D(50.f, 50.f), 5.f, 1.f, 0.f }));
+	TestFalse(TEXT("interpenetrating false"), FUnitContact::Interpenetrating(A, FUnitOBB{ FVector2D(50.f, 50.f), 1.f, 5.f, 0.f }));
 
 	return true;
 }
@@ -98,8 +98,8 @@ bool FContact_WakeRecoveryScripted::RunTest(const FString& Parameters)
 	// once the cavalry passes, the servo alone re-dresses the wake to the
 	// slot within T ticks (T1.6's "wake re-dresses within T", in miniature).
 	FUnitOBB Cavalry;
-	Cavalry.HalfFrontage = 3.f;
-	Cavalry.HalfDepth = 1.f;
+	Cavalry.HalfAlongFacing = 1.f;
+	Cavalry.HalfAcrossFacing = 3.f;
 	Cavalry.YawDeg = 0.f;
 	const FVector2D InfantrySlot(0.f, 0.f);
 	FVector2D InfantryPos = InfantrySlot;
@@ -133,7 +133,7 @@ bool FContact_WakeRecoveryScripted::RunTest(const FString& Parameters)
 		}
 		InfantryPos += NewVel * DT;
 
-		if (bWasShoved && Cavalry.Center.X > InfantryPos.X + Cavalry.HalfFrontage + 1.f)
+		if (bWasShoved && Cavalry.Center.X > InfantryPos.X + Cavalry.HalfAcrossFacing + 1.f)
 		{
 			break; // cavalry has passed
 		}

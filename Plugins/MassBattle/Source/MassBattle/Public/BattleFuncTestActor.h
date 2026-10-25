@@ -108,6 +108,57 @@ private:
 };
 
 // ---------------------------------------------------------------------------
+// S1_MarchWheel (T1.5) + OrderSmoke (A2): phase-1 movement scenarios.
+// S1: 8 units march 30 m, then wheel 90 degrees onto a lateral anchor.
+// Asserts (B.3 S1 / T1.5 verbatim): zero unstuck escalations; separation
+// above threshold; no flank shedding; arrival at the ordered anchors.
+// ---------------------------------------------------------------------------
+UCLASS()
+class MASSBATTLE_API AUnitMarchWheelTest : public AFunctionalTest
+{
+	GENERATED_BODY()
+
+public:
+	AUnitMarchWheelTest();
+
+	void BeginTest();
+	void CompleteTest(EFunctionalTestResult TestResult, const FString& Message);
+	virtual void StartTest() override;
+	virtual void Tick(float DeltaSeconds) override;
+	virtual bool IsReady_Implementation() override { return true; }
+
+private:
+	enum class EPhase : int32 { Spawn, March, Wheel, Assert, Done };
+	EPhase Phase = EPhase::Spawn;
+	int32 TicksInPhase = 0;
+
+	UPROPERTY() TArray<TObjectPtr<AUnitActor>> Units;
+};
+
+// ---------------------------------------------------------------------------
+// A2 smoke: issue one Move order through the registry API; the unit must
+// reach the ordered anchor (brief Task 10 item 2).
+// ---------------------------------------------------------------------------
+UCLASS()
+class MASSBATTLE_API AUnitOrderSmokeTest : public AFunctionalTest
+{
+	GENERATED_BODY()
+
+public:
+	AUnitOrderSmokeTest();
+
+	void BeginTest();
+	void CompleteTest(EFunctionalTestResult TestResult, const FString& Message);
+	virtual void StartTest() override;
+	virtual void Tick(float DeltaSeconds) override;
+	virtual bool IsReady_Implementation() override { return true; }
+
+private:
+	UPROPERTY() TObjectPtr<AUnitActor> Unit;
+	int32 TicksInPhase = 0;
+};
+
+// ---------------------------------------------------------------------------
 // S-scenario actor factory registry -- deterministic, reflection-free class
 // lookup for the automation harness (FindObject with /Script/ paths and
 // TObjectIterator both failed to resolve fresh C++ classes in -game processes

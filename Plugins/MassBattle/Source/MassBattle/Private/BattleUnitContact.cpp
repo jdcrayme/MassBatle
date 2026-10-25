@@ -8,8 +8,8 @@ namespace
 		const float Rad = FMath::DegreesToRadians(O.YawDeg);
 		const FVector2D Front(FMath::Cos(Rad), FMath::Sin(Rad));
 		const FVector2D Side(-Front.Y, Front.X);
-		return O.HalfFrontage * FMath::Abs(FVector2D::DotProduct(Front, Axis))
-			+ O.HalfDepth * FMath::Abs(FVector2D::DotProduct(Side, Axis));
+		return O.HalfAlongFacing * FMath::Abs(FVector2D::DotProduct(Front, Axis))
+			+ O.HalfAcrossFacing * FMath::Abs(FVector2D::DotProduct(Side, Axis));
 	}
 }
 
@@ -21,7 +21,7 @@ namespace FUnitContact
 		if (Delta.SizeSquared() < KINDA_SMALL_NUMBER)
 		{
 			// Coincident centers: treat as maximal overlap along the tight axis.
-			return FMath::Min(A.HalfFrontage + B.HalfFrontage, A.HalfDepth + B.HalfDepth);
+			return FMath::Min(A.HalfAcrossFacing + B.HalfAcrossFacing, A.HalfAlongFacing + B.HalfAlongFacing);
 		}
 		const FVector2D Axis1 = Delta.GetSafeNormal();
 		const FVector2D Axis2(-Axis1.Y, Axis1.X);
@@ -42,8 +42,8 @@ namespace FUnitContact
 		const float Rad = FMath::DegreesToRadians(O.YawDeg);
 		const FVector2D Front(FMath::Cos(Rad), FMath::Sin(Rad));
 		const FVector2D Side(-Front.Y, Front.X);
-		return FMath::Abs(FVector2D::DotProduct(Delta, Front)) <= O.HalfFrontage
-			&& FMath::Abs(FVector2D::DotProduct(Delta, Side)) <= O.HalfDepth;
+		return FMath::Abs(FVector2D::DotProduct(Delta, Front)) <= O.HalfAlongFacing
+			&& FMath::Abs(FVector2D::DotProduct(Delta, Side)) <= O.HalfAcrossFacing;
 	}
 
 	bool Interpenetrating(const FUnitOBB& A, const FUnitOBB& B)

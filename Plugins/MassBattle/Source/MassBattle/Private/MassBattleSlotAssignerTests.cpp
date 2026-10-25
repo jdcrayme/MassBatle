@@ -172,7 +172,7 @@ bool FSlots_PredictiveSwapTerminates::RunTest(const FString& Parameters)
 	TArray<int32> Assignment = { 0, 1 };
 
 	TArray<FIntPoint> Pairs;
-	FSlotAssigner::FindCrossingPairs(Positions, Velocities, Assignment, 1.0f, 0.5f, Pairs);
+	FSlotAssigner::FindCrossingPairs(Positions, Velocities, Assignment, { FVector2D(0.f, 0.f), FVector2D(5.f, 0.f) }, 1.0f, 0.5f, Pairs);
 	TestEqual(TEXT("converging pair detected"), Pairs.Num(), 1);
 
 	FSlotAssigner::ApplyPredictiveSwaps(Assignment, Pairs);
@@ -183,7 +183,7 @@ bool FSlots_PredictiveSwapTerminates::RunTest(const FString& Parameters)
 		TArray<FVector2D> Apart = { FVector2D(0.f, 0.f), FVector2D(5.f, 0.f) };
 		TArray<FVector2D> Away = { FVector2D(-3.f, 0.f), FVector2D(3.f, 0.f) };
 		TArray<FIntPoint> NoPairs;
-		FSlotAssigner::FindCrossingPairs(Apart, Away, Assignment, 1.0f, 0.5f, NoPairs);
+		FSlotAssigner::FindCrossingPairs(Apart, Away, Assignment, { FVector2D(0.f, 0.f), FVector2D(5.f, 0.f) }, 1.0f, 0.5f, NoPairs);
 		TestEqual(TEXT("diverging pair not detected"), NoPairs.Num(), 0);
 
 		// Termination: 300 entities, random crossings, one pass -- runs and
@@ -195,16 +195,17 @@ bool FSlots_PredictiveSwapTerminates::RunTest(const FString& Parameters)
 			Rng->Seed(20261027);
 			FRandomStream& Stream = Rng->GetStream(TEXT("Slots.Gate"));
 			const int32 N = 300;
-			TArray<FVector2D> P, V;
+			TArray<FVector2D> P, V, S;
 			TArray<int32> A;
 			for (int32 i = 0; i < N; ++i)
 			{
 				P.Add(FVector2D(Stream.FRandRange(-50.f, 50.f), Stream.FRandRange(-50.f, 50.f)));
 				V.Add(FVector2D(Stream.FRandRange(-2.f, 2.f), Stream.FRandRange(-2.f, 2.f)));
+				S.Add(FVector2D(Stream.FRandRange(-50.f, 50.f), Stream.FRandRange(-50.f, 50.f)));
 				A.Add(i);
 			}
 			TArray<FIntPoint> ManyPairs;
-			FSlotAssigner::FindCrossingPairs(P, V, A, 1.0f, 0.5f, ManyPairs);
+			FSlotAssigner::FindCrossingPairs(P, V, A, S, 1.0f, 0.5f, ManyPairs);
 			FSlotAssigner::ApplyPredictiveSwaps(A, ManyPairs);
 			TSet<int32> Used;
 			for (int32 Slot : A)

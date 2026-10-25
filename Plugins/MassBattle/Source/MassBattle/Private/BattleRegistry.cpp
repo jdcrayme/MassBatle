@@ -182,6 +182,60 @@ bool UUnitRegistrySubsystem::IsStatsDirty(FUnitHandle Handle) const
 	return DirtyStats.Contains(Handle);
 }
 
+// -- A2 thin order API (decision A2) --
+
+bool UUnitRegistrySubsystem::IssueMoveOrder(FUnitHandle Handle, const FVector2D& AnchorPosCm, float FacingYawDeg, float CommandedSpeedMps)
+{
+	if (!IsHandleValid(Handle))
+	{
+		return false;
+	}
+	FUnitRuntimeState* State = Units.Find(Handle);
+	if (!State)
+	{
+		return false;
+	}
+	FUnitOrder& Order = State->CurrentOrder;
+	Order.Type = FUnitOrder::EType::Move;
+	Order.AnchorPos = AnchorPosCm;
+	Order.FacingYaw = FacingYawDeg;
+	Order.CommandedSpeed = CommandedSpeedMps;
+	++State->OrderSerial;
+	return true;
+}
+
+bool UUnitRegistrySubsystem::IssueStopOrder(FUnitHandle Handle)
+{
+	if (!IsHandleValid(Handle))
+	{
+		return false;
+	}
+	FUnitRuntimeState* State = Units.Find(Handle);
+	if (!State)
+	{
+		return false;
+	}
+	FUnitOrder& Order = State->CurrentOrder;
+	Order.Type = FUnitOrder::EType::Stop;
+	Order.AnchorPos = FVector2D::ZeroVector;
+	Order.FacingYaw = 0.f;
+	Order.CommandedSpeed = 0.f;
+	++State->OrderSerial;
+	return true;
+}
+
+const FUnitOrder* UUnitRegistrySubsystem::FindOrder(FUnitHandle Handle) const
+{
+	const FUnitRuntimeState* State = Units.Find(Handle);
+	return State ? &State->CurrentOrder : nullptr;
+}
+
+uint32 UUnitRegistrySubsystem::GetOrderSerial(FUnitHandle Handle) const
+{
+	const FUnitRuntimeState* State = Units.Find(Handle);
+	return State ? State->OrderSerial : 0;
+}
+
 int32 UUnitRegistrySubsystem::GetUnitCount() const
 {
 	UE_MT_SCOPED_READ_ACCESS(AccessDetector);

@@ -32,4 +32,8 @@ namespace BattleExec
 
 	// -- Phase 1 Task 3 (A5 cost-grid stamp override; meters) --
 	void StampImpassable(const TArray<FString>& Args, UWorld* World);
+
+	// -- Phase 1 Task 10 (A2 command surface) --
+	void OrderMove(const TArray<FString>& Args, UWorld* World);
+	void OrderStop(const TArray<FString>& Args, UWorld* World);
 }

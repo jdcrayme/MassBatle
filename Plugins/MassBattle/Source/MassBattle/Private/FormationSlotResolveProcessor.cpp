@@ -181,7 +181,7 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 					VelM.Add(FVector2D(Vel.X, Vel.Y) * 0.01f);
 				}
 				TArray<FIntPoint> Pairs;
-				FSlotAssigner::FindCrossingPairs(EntityPosM, VelM, NewAssignment, 1.0f, 0.5f, Pairs);
+				FSlotAssigner::FindCrossingPairs(EntityPosM, VelM, NewAssignment, SlotPosM, 1.0f, 0.5f, Pairs);
 				FSlotAssigner::ApplyPredictiveSwaps(NewAssignment, Pairs);
 			}
 

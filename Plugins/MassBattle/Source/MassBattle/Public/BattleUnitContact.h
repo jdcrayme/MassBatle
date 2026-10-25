@@ -8,9 +8,13 @@
 
 struct FUnitOBB
 {
-	FVector2D Center = FVector2D::ZeroVector; // m (formation anchor)
-	float HalfFrontage = 0.f;                 // m, along the facing (files * fileSpacing / 2)
-	float HalfDepth = 0.f;                    // m, across it (ranks * rankSpacing / 2)
+	FVector2D Center = FVector2D::ZeroVector;  // m (formation anchor)
+	/** Extent ALONG the facing: rank depth (ranks * rankSpacing / 2). */
+	float HalfAlongFacing = 0.f;
+	/** Extent ACROSS the facing: frontage (files * fileSpacing / 2) -- the
+	 *  formation's long axis is perpendicular to the facing (arch §8.6: ranks
+	 *  stack behind the anchor, files spread lateral). */
+	float HalfAcrossFacing = 0.f;
 	float YawDeg = 0.f;
 };
 

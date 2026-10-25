@@ -144,6 +144,14 @@ namespace
 				{
 					Exit->BeginTest();
 				}
+				else if (AUnitMarchWheelTest* S1 = Cast<AUnitMarchWheelTest>(TestActor))
+				{
+					S1->BeginTest();
+				}
+				else if (AUnitOrderSmokeTest* Smoke = Cast<AUnitOrderSmokeTest>(TestActor))
+				{
+					Smoke->BeginTest();
+				}
 				// T0.9: apply + assert the test-mode contract at scenario start
 				// (roadmap B.0: assert ACTIVE engine settings, not CVars being
 				// set; the -game process does not seed the contract on its own).
@@ -251,5 +259,43 @@ bool FS0_ExitCriteria::RunTest(const FString& Parameters)
 	IFunctionalTestingModule::Get().MarkPendingActivation();
 	ADD_LATENT_AUTOMATION_COMMAND(FOpenBattleFuncMap(this));
 	ADD_LATENT_AUTOMATION_COMMAND(FRunBattleFuncTest(this, TEXT("S0_ExitCriteria"), TEXT("AUnitExitCriteriaTest")));
+	return true;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 1 movement scenarios (brief §5 Tasks 10-11).
+// ---------------------------------------------------------------------------
+
+IMPLEMENT_CUSTOM_COMPLEX_AUTOMATION_TEST(FOrderSmoke, FBattleFuncTestBase,
+	"Battle.Func.OrderSmoke", (EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter))
+
+void FOrderSmoke::GetTests(TArray<FString>& OutBeautifiedNames, TArray<FString>& OutTestCommands) const
+{
+	OutBeautifiedNames.Add(TEXT("OrderSmoke"));
+	OutTestCommands.Add(TEXT(""));
+}
+
+bool FOrderSmoke::RunTest(const FString& Parameters)
+{
+	IFunctionalTestingModule::Get().MarkPendingActivation();
+	ADD_LATENT_AUTOMATION_COMMAND(FOpenBattleFuncMap(this));
+	ADD_LATENT_AUTOMATION_COMMAND(FRunBattleFuncTest(this, TEXT("OrderSmoke"), TEXT("AUnitOrderSmokeTest")));
+	return true;
+}
+
+IMPLEMENT_CUSTOM_COMPLEX_AUTOMATION_TEST(FS1_MarchWheel, FBattleFuncTestBase,
+	"Battle.Func.S1_MarchWheel", (EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter))
+
+void FS1_MarchWheel::GetTests(TArray<FString>& OutBeautifiedNames, TArray<FString>& OutTestCommands) const
+{
+	OutBeautifiedNames.Add(TEXT("S1_MarchWheel"));
+	OutTestCommands.Add(TEXT(""));
+}
+
+bool FS1_MarchWheel::RunTest(const FString& Parameters)
+{
+	IFunctionalTestingModule::Get().MarkPendingActivation();
+	ADD_LATENT_AUTOMATION_COMMAND(FOpenBattleFuncMap(this));
+	ADD_LATENT_AUTOMATION_COMMAND(FRunBattleFuncTest(this, TEXT("S1_MarchWheel"), TEXT("AUnitMarchWheelTest")));
 	return true;
 }

@@ -74,7 +74,8 @@ namespace FSlotAssigner
 	}
 
 	void FindCrossingPairs(const TArray<FVector2D>& Positions, const TArray<FVector2D>& Velocities,
-		const TArray<int32>& Assignment, float HorizonSeconds, float ThresholdMeters, TArray<FIntPoint>& OutPairs)
+		const TArray<int32>& Assignment, const TArray<FVector2D>& SlotPositions,
+		float HorizonSeconds, float ThresholdMeters, TArray<FIntPoint>& OutPairs)
 	{
 		OutPairs.Reset();
 		const float ThresholdSq = ThresholdMeters * ThresholdMeters;
@@ -87,6 +88,20 @@ namespace FSlotAssigner
 					Assignment[I] == Assignment[J])
 				{
 					continue;
+				}
+				// 2-opt guard: swap only if each entity is strictly nearer the
+				// other's slot -- prevents swap/reswap thrash at meeting points.
+				if (Assignment[I] >= 0 && Assignment[J] >= 0 &&
+					SlotPositions.IsValidIndex(Assignment[I]) && SlotPositions.IsValidIndex(Assignment[J]))
+				{
+					const float OwnI = FVector2D::DistSquared(Positions[I], SlotPositions[Assignment[I]]);
+					const float OwnJ = FVector2D::DistSquared(Positions[J], SlotPositions[Assignment[J]]);
+					const float SwapI = FVector2D::DistSquared(Positions[I], SlotPositions[Assignment[J]]);
+					const float SwapJ = FVector2D::DistSquared(Positions[J], SlotPositions[Assignment[I]]);
+					if (!(SwapI < OwnI && SwapJ < OwnJ))
+					{
+						continue;
+					}
 				}
 				const FVector2D A0 = Positions[I];
 				const FVector2D A1 = A0 + Velocities[I] * HorizonSeconds;

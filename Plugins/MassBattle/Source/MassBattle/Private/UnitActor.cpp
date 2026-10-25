@@ -8,12 +8,18 @@
 #include "MassEntityManager.h"
 #include "MassCommandBuffer.h"
 #include "Components/ShapeComponent.h"
+#include "Components/SceneComponent.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 
 AUnitActor::AUnitActor()
 {
 	PrimaryActorTick.bCanEverTick = false;
+
+	// Phase 1: a root scene component so the spawn transform is real --
+	// without a root, GetActorLocation() reads (0,0,0) and every unit
+	// formation anchored to the actor stacked at the origin.
+	SetRootComponent(CreateDefaultSubobject<USceneComponent>(TEXT("Root")));
 
 	AbilitySystem = CreateDefaultSubobject<UAbilitySystemComponent>(TEXT("AbilitySystem"));
 	AttributeSet = CreateDefaultSubobject<UUnitAttributeSet>(TEXT("AttributeSet"));
@@ -178,6 +184,12 @@ bool AUnitActor::SpawnEntities(FBattleSpawnResult& OutResult, FString& OutError)
 		Spec.EduRowIndex = EduRowIndex;
 		Spec.SoldierCount = SoldierCount;
 		Spec.UnitName = GetName();
+		// Phase 1: the formation anchor spawns at the actor's transform (cm;
+		// facing from the actor yaw) -- units no longer stack at the origin.
+		Spec.SpawnPos = FVector2D(GetActorLocation().X, GetActorLocation().Y);
+		Spec.SpawnYaw = GetActorRotation().Yaw;
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SpawnSpec Actor=%s Loc=(%.1f,%.1f)cm SpawnPos=(%.1f,%.1f)cm"),
+			*GetName(), GetActorLocation().X, GetActorLocation().Y, Spec.SpawnPos.X, Spec.SpawnPos.Y);
 
 		// Row stats: fixture path (editor-time import path, Phase 0; cook-time
 		// commandlet integration is Phase 2 per A2).

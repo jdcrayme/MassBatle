@@ -191,9 +191,24 @@ FBattleSpawnResult UBattleSpawnLibrary::SpawnUnit(UWorld* World, const FUnitSpaw
 		Health.QueuedDamage = 0.f;
 
 		// Movement spine init (phase-1 Task 2): spawn transform, zeroed
-		// velocity, initial slot layout, HoldSlot state.
+		// velocity, initial slot layout, HoldSlot state. Entities spawn at
+		// their FORMED slot positions (rank-major around the anchor) -- a
+		// co-located spawn makes the avoidance term push the whole blob
+		// coherently instead of spreading it (S1 evidence: 320 entities fled
+		// as one mass).
 		FTransformFragment& Transform = View.GetFragmentData<FTransformFragment>();
-		Transform.GetMutableTransform().SetTranslation(FVector(Spec.SpawnPos.X, Spec.SpawnPos.Y, 0.f));
+		{
+			const int32 Rank = i / FormationPayload.NumFiles;
+			const int32 File = i % FormationPayload.NumFiles;
+			const FVector2D Offset(
+				-static_cast<float>(Rank) * FormationPayload.RankSpacing,
+				(static_cast<float>(File) - (FormationPayload.NumFiles - 1) * 0.5f) * FormationPayload.FileSpacing);
+			const float Rad = FMath::DegreesToRadians(Spec.SpawnYaw);
+			const float Cos = FMath::Cos(Rad);
+			const float Sin = FMath::Sin(Rad);
+			const FVector2D World = Spec.SpawnPos + FVector2D(Offset.X * Cos - Offset.Y * Sin, Offset.X * Sin + Offset.Y * Cos);
+			Transform.GetMutableTransform().SetTranslation(FVector(World.X, World.Y, 0.f));
+		}
 		Transform.GetMutableTransform().SetRotation(FQuat(FRotator(0.f, Spec.SpawnYaw, 0.f)));
 
 		FMassVelocityFragment& Velocity = View.GetFragmentData<FMassVelocityFragment>();

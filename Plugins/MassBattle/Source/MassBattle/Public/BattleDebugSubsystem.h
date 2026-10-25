@@ -6,6 +6,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include <atomic>
 #include "Subsystems/WorldSubsystem.h"
 #include "BattleDebugSubsystem.generated.h"
 
@@ -58,8 +59,19 @@ public:
 
 	const FBattleFrameMetrics& GetLastMetrics() const { return LastMetrics; }
 
+	/** Unstuck-ladder escalations since the last reset (T1.5 asserts zero).
+	 *  Thread-safe: the servo increments from workers. */
+	void RecordLadderEscalation() { LadderEscalations++; }
+	int32 GetLadderEscalations() const { return LadderEscalations; }
+
+	/** Test hook: zero the diagnostic counters (scenario start). */
+	void ResetDiagnostics();
+
 private:
 	FBattleFrameMetrics LastMetrics;
+
+	/** T1.5/T1.8 diagnostics; relaxed atomicity is fine (diagnostic only). */
+	std::atomic<int32> LadderEscalations{0};
 
 	FCriticalSection OverlayMutex;
 	TArray<FBattleOverlayLine> PendingOverlayLines;

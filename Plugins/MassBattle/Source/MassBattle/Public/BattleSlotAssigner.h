@@ -27,9 +27,13 @@ namespace FSlotAssigner
 	/** Pairs (i, j), i < j, whose constant-velocity projections over
 	 *  HorizonSeconds come within ThresholdMeters of each other (covers both
 	 *  angled crossings and head-on/parallel convergence, which a pure
-	 *  intersection test cannot see). Deterministic order. */
+	 *  intersection test cannot see) AND whose swap is a strict 2-opt
+	 *  improvement -- each entity is nearer the other's slot than its own.
+	 *  The 2-opt guard is what makes swap-then-reswap thrash impossible.
+	 *  Deterministic order. */
 	void FindCrossingPairs(const TArray<FVector2D>& Positions, const TArray<FVector2D>& Velocities,
-		const TArray<int32>& Assignment, float HorizonSeconds, float ThresholdMeters, TArray<FIntPoint>& OutPairs);
+		const TArray<int32>& Assignment, const TArray<FVector2D>& SlotPositions,
+		float HorizonSeconds, float ThresholdMeters, TArray<FIntPoint>& OutPairs);
 
 	/** Swap slot indices for every reported pair (each slot used once per
 	 *  pass; pairs processed in the given order -- single pass terminates). */

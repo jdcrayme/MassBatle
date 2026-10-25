@@ -42,10 +42,22 @@ namespace FUnitServo
 			const float DistSq = RelPos.SizeSquared();
 			const float Combined = MyRadius + N.Radius;
 
-			// Already overlapping: push directly apart.
+			// Already overlapping: push directly apart. For degenerate
+			// co-located pairs (no geometry to pick a side) split along the
+			// desired-direction perpendicular by handle parity so the pair
+			// separates instead of fleeing as one blob.
 			if (DistSq < Combined * Combined)
 			{
-				const FVector2D Away = DistSq > KINDA_SMALL_NUMBER ? RelPos.GetSafeNormal() : -MyDesiredVel.GetSafeNormal();
+				FVector2D Away;
+				if (DistSq > KINDA_SMALL_NUMBER)
+				{
+					Away = RelPos.GetSafeNormal();
+				}
+				else
+				{
+					Away = FVector2D(-MyDesiredVel.Y, MyDesiredVel.X).GetSafeNormal()
+						* ((MyHandleIndex & 1) ? 1.f : -1.f);
+				}
 				Deflection += Away * Combined;
 				continue;
 			}

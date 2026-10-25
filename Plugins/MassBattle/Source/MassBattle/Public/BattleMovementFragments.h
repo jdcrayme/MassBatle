@@ -107,6 +107,13 @@ struct FUnitFormationSharedFragment : public FMassSharedFragment
 	 *  worker-written). */
 	UPROPERTY() float ReflowCooldown = 0.f;
 
+	/** Arc-length position of the anchor along Path (cm; UnitLocomotion-owned). */
+	UPROPERTY() float PathS = 0.f;
+
+	/** Order serial the locomotion stage last planned for (change detector;
+	 *  registry OrderSerial is the source of truth). */
+	UPROPERTY() uint32 PlannedOrderSerial = 0;
+
 	/** Planner path; empty (NumPoints<2) until UnitLocomotion plans one. */
 	UPROPERTY() FBattlePathPolyline Path;
 };

@@ -11,6 +11,11 @@
 #include "MassBattleModule.h"
 #include "BattleDeathPath.h"
 #include "BattleExecCommands.h"
+#include "BattleMovementFragments.h"
+#include "BattleTypes.h"
+#include "BattleDebugSubsystem.h"
+#include "BattleTestSettings.h"
+#include "MassCommonFragments.h"
 #include "BattleStateHash.h"
 #include "MassSimulationSubsystem.h"
 #include "MassSimulationSettings.h"
@@ -639,6 +644,531 @@ void AUnitExitCriteriaTest::Tick(float DeltaSeconds)
 	}
 }
 
+
+// ---------------------------------------------------------------------------
+// S1_MarchWheel (T1.5)
+// ---------------------------------------------------------------------------
+namespace
+{
+	// Helpers shared by the movement scenarios.
+	void GatherEntityPositions(UWorld* World, const FUnitHandle& Handle, TArray<FVector2D>& OutPosM)
+	{
+		OutPosM.Reset();
+		UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>();
+		UMassEntitySubsystem* ES = World->GetSubsystem<UMassEntitySubsystem>();
+		if (!Registry || !ES)
+		{
+			return;
+		}
+		const TArray<FMassEntityHandle>* Roster = Registry->FindRoster(Handle);
+		if (!Roster)
+		{
+			return;
+		}
+		FMassEntityManager& EM = ES->GetMutableEntityManager();
+		for (const FMassEntityHandle& E : *Roster)
+		{
+			const FTransformFragment* T = FMassEntityView(EM, E).GetFragmentDataPtr<FTransformFragment>();
+			if (T)
+			{
+				const FVector P = T->GetTransform().GetTranslation();
+				OutPosM.Add(FVector2D(P.X, P.Y) * 0.01f);
+			}
+		}
+	}
+
+	FUnitFormationSharedFragment* FindFormation(UWorld* World, const FUnitHandle& Handle)
+	{
+		UMassEntitySubsystem* ES = World->GetSubsystem<UMassEntitySubsystem>();
+		UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>();
+		if (!ES || !Registry)
+		{
+			return nullptr;
+		}
+		const TArray<FMassEntityHandle>* Roster = Registry->FindRoster(Handle);
+		if (!Roster || Roster->Num() == 0)
+		{
+			return nullptr;
+		}
+		return ES->GetMutableEntityManager().GetSharedFragmentDataPtr<FUnitFormationSharedFragment>((*Roster)[0]);
+	}
+}
+
+AUnitMarchWheelTest::AUnitMarchWheelTest()
+{
+	TimeLimit = 300.f;
+	TimesUpResult = EFunctionalTestResult::Error;
+}
+
+void AUnitMarchWheelTest::BeginTest()
+{
+	// Manager-equivalent start (phase-0 pattern): enable ticking, mark
+	// running; the base Tick calls StartTest once IsReady().
+	SetActorTickEnabled(true);
+	PrimaryActorTick.bCanEverTick = true;
+	bIsRunning = true;
+	Result = EFunctionalTestResult::Running;
+}
+
+void AUnitMarchWheelTest::CompleteTest(EFunctionalTestResult TestResult, const FString& Message)
+{
+	// Manager-less completion (phase-0 pattern): record directly; FinishTest
+	// would error against the absent FunctionalTestingManager.
+	Result = TestResult;
+	bIsRunning = false;
+	SetActorTickEnabled(false);
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S1_MarchWheel Complete Result=%s Msg=%s"),
+	       *LexToString(TestResult), *Message);
+}
+
+void AUnitMarchWheelTest::StartTest()
+{
+	Super::StartTest();
+
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("no world"));
+		return;
+	}
+
+	// Test-mode contract (fact 1.5): applied + asserted at scenario start.
+	UBattleTestSettings::ApplyTestMode();
+	TArray<FString> Violations;
+	if (!UBattleTestSettings::AssertTestMode(nullptr, &Violations, World))
+	{
+		CompleteTest(EFunctionalTestResult::Error,
+			FString::Printf(TEXT("test-mode contract violated: %s"), *FString::Join(Violations, TEXT("; "))));
+		return;
+	}
+	if (UBattleDebugSubsystem* Debug = World->GetSubsystem<UBattleDebugSubsystem>())
+	{
+		Debug->ResetDiagnostics();
+	}
+
+	// 8 units, two ranks of four, 12 m apart, facing north (+Y at yaw 90).
+	const int32 Rows[2] = { 0, 1 };
+	Units.Reset();
+	for (int32 i = 0; i < 8; ++i)
+	{
+		const int32 Col = i % 4;
+		const int32 Row = i / 4;
+		FActorSpawnParameters Params;
+		Params.ObjectFlags |= RF_Transient;
+		AUnitActor* Actor = World->SpawnActor<AUnitActor>(
+			FVector(-4500.f + Col * 3000.f, Row * 3000.f, 100.f), FRotator(0.f, 90.f, 0.f), Params);
+		if (!Actor)
+		{
+			CompleteTest(EFunctionalTestResult::Error, TEXT("failed to spawn unit actor"));
+			return;
+		}
+		Actor->EduRowIndex = Rows[i % 2];
+		Actor->SoldierCount = 40;
+		FBattleSpawnResult SpawnResult;
+		FString Error;
+		if (!Actor->SpawnEntities(SpawnResult, Error))
+		{
+			CompleteTest(EFunctionalTestResult::Error, FString::Printf(TEXT("spawn failed: %s"), *Error));
+			return;
+		}
+		Units.Add(Actor);
+	}
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S1_MarchWheel Spawned Units=8 Entities=320"));
+	for (int32 i = 0; i < Units.Num(); ++i)
+	{
+		if (const FUnitFormationSharedFragment* F = FindFormation(World, Units[i]->GetUnitHandle()))
+		{
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT S1SpawnCheck U%d handle=%u:%u anchor=(%.1f,%.1f)m files=%d slots=%d rankSp=%.1f"),
+				i, Units[i]->GetUnitHandle().Index, Units[i]->GetUnitHandle().Serial,
+				F->AnchorPos.X * 0.01f, F->AnchorPos.Y * 0.01f, F->NumFiles, F->NumSlots, F->RankSpacing * 0.01f);
+		}
+	}
+	Phase = EPhase::March;
+	TicksInPhase = 0;
+}
+
+void AUnitMarchWheelTest::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+	if (!IsRunning() || Phase == EPhase::Done)
+	{
+		return;
+	}
+	UWorld* World = GetWorld();
+	UUnitRegistrySubsystem* Registry = World ? World->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	UBattleDebugSubsystem* Debug = World ? World->GetSubsystem<UBattleDebugSubsystem>() : nullptr;
+	if (!Registry || !Debug)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("subsystems missing"));
+		return;
+	}
+
+	++TicksInPhase;
+	const int32 PhaseCap = 2000; // ~66 s at 30 Hz -- generous vs the ~22 s march
+
+	auto AllAnchorsArrived = [this, &Registry]() -> bool
+	{
+		for (const TObjectPtr<AUnitActor>& Actor : Units)
+		{
+			const FUnitFormationSharedFragment* Formation = FindFormation(GetWorld(), Actor->GetUnitHandle());
+			const FUnitOrder* Order = Registry->FindOrder(Actor->GetUnitHandle());
+			if (!Formation || !Order ||
+				FVector2D::DistSquared(Formation->AnchorPos, Order->AnchorPos) > FMath::Square(150.f))
+			{
+				return false;
+			}
+		}
+		return true;
+	};
+
+	if (Phase == EPhase::March)
+	{
+		if (TicksInPhase == 1)
+		{
+			for (const TObjectPtr<AUnitActor>& Actor : Units)
+			{
+				const FUnitFormationSharedFragment* Formation = FindFormation(GetWorld(), Actor->GetUnitHandle());
+				if (!Formation)
+				{
+					CompleteTest(EFunctionalTestResult::Error, TEXT("formation fragment missing at march"));
+					return;
+				}
+				// March 30 m north; final facing north (+Y, yaw 90).
+				Registry->IssueMoveOrder(Actor->GetUnitHandle(),
+					Formation->AnchorPos + FVector2D(0.f, 3000.f), 90.f);
+			}
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S1_MarchWheel Phase=March orders issued"));
+			return;
+		}
+
+		if (AllAnchorsArrived())
+		{
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S1_MarchWheel Phase=March done ticks=%d"), TicksInPhase);
+			Phase = EPhase::Wheel;
+			TicksInPhase = 0;
+		}
+		else if (TicksInPhase > PhaseCap)
+		{
+			CompleteTest(EFunctionalTestResult::Error, TEXT("march phase timed out"));
+			return;
+		}
+	}
+	else if (Phase == EPhase::Wheel)
+	{
+		if (TicksInPhase == 1)
+		{
+			// 90-degree wheel: anchor moves 24 m east, final facing east (+X).
+			for (const TObjectPtr<AUnitActor>& Actor : Units)
+			{
+				const FUnitFormationSharedFragment* Formation = FindFormation(GetWorld(), Actor->GetUnitHandle());
+				if (!Formation)
+				{
+					continue;
+				}
+				Registry->IssueMoveOrder(Actor->GetUnitHandle(),
+					Formation->AnchorPos + FVector2D(2400.f, 0.f), 0.f);
+			}
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S1_MarchWheel Phase=Wheel orders issued"));
+			return;
+		}
+
+		if (AllAnchorsArrived())
+		{
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S1_MarchWheel Phase=Wheel done ticks=%d"), TicksInPhase);
+			Phase = EPhase::Assert;
+			TicksInPhase = 0;
+		}
+		else if (TicksInPhase > PhaseCap)
+		{
+			CompleteTest(EFunctionalTestResult::Error, TEXT("wheel phase timed out"));
+			return;
+		}
+	}
+	else if (Phase == EPhase::Assert)
+	{
+		// Bounded settle: entities re-dress after the anchor arrives; wait
+		// until the wake recovers (min separation >= threshold) or the budget
+		// expires -- the assert judges the FORMED state, reached within T.
+		TArray<TArray<FVector2D>> AllPos;
+		AllPos.SetNum(Units.Num());
+		auto ComputeMinSeparation = [this, &AllPos, World](float& OutMin, int32& OutNearOrigin) -> void
+		{
+			OutMin = FLT_MAX;
+			OutNearOrigin = 0;
+			for (int32 U = 0; U < Units.Num(); ++U)
+			{
+				GatherEntityPositions(World, Units[U]->GetUnitHandle(), AllPos[U]);
+			}
+			for (int32 U = 0; U < AllPos.Num(); ++U)
+			{
+				for (int32 i = 0; i < AllPos[U].Num(); ++i)
+				{
+					if (AllPos[U][i].SizeSquared() < 0.0001f)
+					{
+						++OutNearOrigin;
+					}
+					for (int32 V = U; V < AllPos.Num(); ++V)
+					{
+						const int32 JStart = (V == U) ? i + 1 : 0;
+						for (int32 j = JStart; j < AllPos[V].Num(); ++j)
+						{
+							OutMin = FMath::Min(OutMin, FVector2D::DistSquared(AllPos[U][i], AllPos[V][j]));
+						}
+					}
+				}
+			}
+			OutMin = FMath::Sqrt(OutMin);
+		};
+		float SepNow = 0.f;
+		int32 NearOriginNow = 0;
+		ComputeMinSeparation(SepNow, NearOriginNow);
+		// Formation coherence: count entities outside their unit body + 3 m.
+		auto CountFlankViolations = [this, &AllPos, World]() -> int32
+		{
+			int32 Violations = 0;
+			for (int32 U = 0; U < Units.Num(); ++U)
+			{
+				const FUnitFormationSharedFragment* Formation = FindFormation(World, Units[U]->GetUnitHandle());
+				if (!Formation || !AllPos[U].Num())
+				{
+					continue;
+				}
+				const int32 NumRanks = FMath::Max(1, FMath::CeilToInt(static_cast<float>(Formation->NumSlots) / Formation->NumFiles));
+				const float Rad = FMath::DegreesToRadians(Formation->FacingYaw);
+				const FVector2D Front(FMath::Cos(Rad), FMath::Sin(Rad));
+				const float LimitAlong = (NumRanks * Formation->RankSpacing * 0.5f) * 0.01f + 3.f;
+				const float LimitSide = (Formation->NumFiles * Formation->FileSpacing * 0.5f) * 0.01f + 3.f;
+				for (const FVector2D& P : AllPos[U])
+				{
+					const FVector2D Delta = (P - Formation->AnchorPos * 0.01f);
+					if (FMath::Abs(FVector2D::DotProduct(Delta, Front)) > LimitAlong
+						|| FMath::Abs(FVector2D::DotProduct(Delta, FVector2D(-Front.Y, Front.X))) > LimitSide)
+					{
+						++Violations;
+					}
+				}
+			}
+			return Violations;
+		};
+		const int32 ViolationsNow = CountFlankViolations();
+		if ((SepNow < 0.3f || ViolationsNow > 0) && TicksInPhase < 900)
+		{
+			return; // still re-dressing; bounded wait
+		}
+
+		bool bOk = true;
+
+		// T1.5a: zero unstuck escalations across the whole scenario.
+		const int32 Escalations = Debug->GetLadderEscalations();
+		if (Escalations != 0)
+		{
+			AddError(FString::Printf(TEXT("T1.5 FAIL: %d unstuck escalations (expected 0)"), Escalations));
+			bOk = false;
+		}
+
+		// T1.5b: separation -- min pairwise distance across all entities
+		// (recomputed on the settled state; AllPos filled above).
+		int32 TotalEntities = 0;
+		for (int32 U = 0; U < AllPos.Num(); ++U)
+		{
+			TotalEntities += AllPos[U].Num();
+		}
+		float MinDistM = 0.f;
+		int32 NearOriginCount = 0;
+		ComputeMinSeparation(MinDistM, NearOriginCount);
+		if (TotalEntities != 320)
+		{
+			AddError(FString::Printf(TEXT("T1.5 FAIL: expected 320 live entities, got %d"), TotalEntities));
+			bOk = false;
+		}
+		UE_LOG(LogMassBattle, Display,
+			TEXT("EXEC_RESULT S1Settle ticks=%d minSep=%.4fm nearOrigin=%d"),
+			TicksInPhase, MinDistM, NearOriginCount);
+		if (MinDistM < 0.3f)
+		{
+			AddError(FString::Printf(TEXT("T1.5 FAIL: separation %.3f m < 0.3 m threshold"), MinDistM));
+			bOk = false;
+		}
+
+		// T1.5c: no flank shedding -- every entity within its unit body
+		// inflated by 3 m, and the unit actually wheeled (facing ~ east).
+		for (int32 U = 0; U < Units.Num(); ++U)
+		{
+			const FUnitFormationSharedFragment* Formation = FindFormation(World, Units[U]->GetUnitHandle());
+			if (!Formation)
+			{
+				continue;
+			}
+			if (FMath::Abs(FMath::FindDeltaAngleDegrees(0.f, Formation->FacingYaw)) > 15.f)
+			{
+				AddError(FString::Printf(TEXT("T1.5 FAIL: unit %d facing %.1f (expected ~0 after east wheel)"),
+					U, Formation->FacingYaw));
+				bOk = false;
+			}
+			const int32 NumRanks = FMath::Max(1, FMath::CeilToInt(static_cast<float>(Formation->NumSlots) / Formation->NumFiles));
+			const float Rad = FMath::DegreesToRadians(Formation->FacingYaw);
+			const FVector2D Front(FMath::Cos(Rad), FMath::Sin(Rad));
+			const float SlackM = 3.f;
+			for (const FVector2D& P : AllPos[U])
+			{
+				const FVector2D Delta = (P - Formation->AnchorPos * 0.01f);
+				const float Along = FMath::Abs(FVector2D::DotProduct(Delta, Front));
+				const float Side = FMath::Abs(FVector2D::DotProduct(Delta, FVector2D(-Front.Y, Front.X)));
+				const float LimitAlong = (NumRanks * Formation->RankSpacing * 0.5f) * 0.01f + SlackM;
+				const float LimitSide = (Formation->NumFiles * Formation->FileSpacing * 0.5f) * 0.01f + SlackM;
+				if (Along > LimitAlong || Side > LimitSide)
+				{
+					AddError(FString::Printf(TEXT("T1.5 FAIL: flank shed (entity %.1f m along / %.1f m side of anchor)"),
+						Along, Side));
+					bOk = false;
+					break;
+				}
+			}
+		}
+
+		// Position evidence: unit 0's anchor + first entities (diagnose drift).
+		if (const FUnitFormationSharedFragment* F0 = FindFormation(World, Units[0]->GetUnitHandle()))
+		{
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT S1Dump U0 anchor=(%.1f,%.1f)m facing=%.1f entities0-3=(%s)"),
+				F0->AnchorPos.X * 0.01f, F0->AnchorPos.Y * 0.01f, F0->FacingYaw,
+				*FString::Printf(TEXT("%.1f,%.1f %.1f,%.1f %.1f,%.1f %.1f,%.1f"),
+					AllPos[0].Num() > 0 ? AllPos[0][0].X : -1.f, AllPos[0].Num() > 0 ? AllPos[0][0].Y : -1.f,
+					AllPos[0].Num() > 1 ? AllPos[0][1].X : -1.f, AllPos[0].Num() > 1 ? AllPos[0][1].Y : -1.f,
+					AllPos[0].Num() > 2 ? AllPos[0][2].X : -1.f, AllPos[0].Num() > 2 ? AllPos[0][2].Y : -1.f,
+					AllPos[0].Num() > 3 ? AllPos[0][3].X : -1.f, AllPos[0].Num() > 3 ? AllPos[0][3].Y : -1.f));
+		}
+		UE_LOG(LogMassBattle, Display,
+			TEXT("EXEC_RESULT S1_MarchWheel Assert escalations=%d minSeparation=%.3fm ok=%d"),
+			Escalations, MinDistM, bOk ? 1 : 0);
+		Phase = EPhase::Done;
+		CompleteTest(bOk ? EFunctionalTestResult::Succeeded : EFunctionalTestResult::Failed,
+			bOk ? TEXT("S1 march+wheel green") : TEXT("S1 assertions failed"));
+	}
+}
+
+// ---------------------------------------------------------------------------
+// OrderSmoke (A2)
+// ---------------------------------------------------------------------------
+
+AUnitOrderSmokeTest::AUnitOrderSmokeTest()
+{
+	TimeLimit = 120.f;
+	TimesUpResult = EFunctionalTestResult::Error;
+}
+
+void AUnitOrderSmokeTest::BeginTest()
+{
+	// Manager-equivalent start (phase-0 pattern).
+	SetActorTickEnabled(true);
+	PrimaryActorTick.bCanEverTick = true;
+	bIsRunning = true;
+	Result = EFunctionalTestResult::Running;
+}
+
+void AUnitOrderSmokeTest::CompleteTest(EFunctionalTestResult TestResult, const FString& Message)
+{
+	// Manager-less completion (phase-0 pattern).
+	Result = TestResult;
+	bIsRunning = false;
+	SetActorTickEnabled(false);
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT OrderSmoke Complete Result=%s Msg=%s"),
+	       *LexToString(TestResult), *Message);
+}
+
+void AUnitOrderSmokeTest::StartTest()
+{
+	Super::StartTest();
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("no world"));
+		return;
+	}
+	UBattleTestSettings::ApplyTestMode();
+	TArray<FString> Violations;
+	if (!UBattleTestSettings::AssertTestMode(nullptr, &Violations, World))
+	{
+		CompleteTest(EFunctionalTestResult::Error,
+			FString::Printf(TEXT("test-mode contract violated: %s"), *FString::Join(Violations, TEXT("; "))));
+		return;
+	}
+
+	FActorSpawnParameters Params;
+	Params.ObjectFlags |= RF_Transient;
+	Unit = World->SpawnActor<AUnitActor>(FVector(0, 0, 100.f), FRotator::ZeroRotator, Params);
+	if (!Unit)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("failed to spawn unit actor"));
+		return;
+	}
+	Unit->EduRowIndex = 0;
+	Unit->SoldierCount = 40;
+	FBattleSpawnResult SpawnResult;
+	FString Error;
+	if (!Unit->SpawnEntities(SpawnResult, Error))
+	{
+		CompleteTest(EFunctionalTestResult::Error, FString::Printf(TEXT("spawn failed: %s"), *Error));
+		return;
+	}
+
+	// A2 surface: registry-owned order API (the ExecBridge command wraps the
+	// same entry point; the API is the thing under test).
+	UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>();
+	const FUnitFormationSharedFragment* Formation = FindFormation(World, Unit->GetUnitHandle());
+	if (!Registry || !Formation)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("registry/formation missing"));
+		return;
+	}
+	const FVector2D Goal(Formation->AnchorPos.X + 2000.f, Formation->AnchorPos.Y);
+	if (!Registry->IssueMoveOrder(Unit->GetUnitHandle(), Goal, 0.f))
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("IssueMoveOrder rejected"));
+		return;
+	}
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT OrderSmoke Move issued Anchor=(%.1f,%.1f)m"),
+	       Goal.X * 0.01f, Goal.Y * 0.01f);
+	TicksInPhase = 0;
+}
+
+void AUnitOrderSmokeTest::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+	if (!IsRunning())
+	{
+		return;
+	}
+	UWorld* World = GetWorld();
+	UUnitRegistrySubsystem* Registry = World ? World->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	if (!Registry)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("registry missing"));
+		return;
+	}
+	++TicksInPhase;
+
+	const FUnitFormationSharedFragment* Formation = FindFormation(World, Unit->GetUnitHandle());
+	const FUnitOrder* Order = Registry->FindOrder(Unit->GetUnitHandle());
+	if (!Formation || !Order)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("order/formation missing"));
+		return;
+	}
+
+	if (FVector2D::DistSquared(Formation->AnchorPos, Order->AnchorPos) <= FMath::Square(100.f))
+	{
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT OrderSmoke Arrived ticks=%d"), TicksInPhase);
+		CompleteTest(EFunctionalTestResult::Succeeded, TEXT("unit reached the ordered anchor"));
+		return;
+	}
+	if (TicksInPhase > 1500)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("order smoke timed out before arrival"));
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Factory registrations (see FBattleFuncTestRegistry)
 // ---------------------------------------------------------------------------
@@ -660,4 +1190,15 @@ namespace
 	const FBattleFuncTestRegistry::FRegistrar GRegSync(TEXT("AUnitSyncLatencyTest"), &MakeSyncLatencyTest);
 	const FBattleFuncTestRegistry::FRegistrar GRegDeath(TEXT("AUnitDeathPathTest"), &MakeDeathPathTest);
 	const FBattleFuncTestRegistry::FRegistrar GRegExit(TEXT("AUnitExitCriteriaTest"), &MakeExitCriteriaTest);
+
+	AFunctionalTest* MakeMarchWheelTest(UWorld* World)
+	{
+		return World->SpawnActor<AUnitMarchWheelTest>();
+	}
+	AFunctionalTest* MakeOrderSmokeTest(UWorld* World)
+	{
+		return World->SpawnActor<AUnitOrderSmokeTest>();
+	}
+	const FBattleFuncTestRegistry::FRegistrar GRegS1(TEXT("AUnitMarchWheelTest"), &MakeMarchWheelTest);
+	const FBattleFuncTestRegistry::FRegistrar GRegSmoke(TEXT("AUnitOrderSmokeTest"), &MakeOrderSmokeTest);
 }

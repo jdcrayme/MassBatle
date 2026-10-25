@@ -46,6 +46,23 @@ struct FBattleAttributeSnapshot
 	float AmmoPool = 0.f;
 };
 
+/** A2 thin order API payload (decision A2): Move to an anchor with a facing,
+ *  or Stop. Positions in centimeters (fragment boundary convention), speeds in
+ *  m/s (project math convention) -- converted by the consumers. Selection /
+ *  picking / UI / camera stay out of scope v1 (Phase 5 territory). */
+struct FUnitOrder
+{
+	enum class EType : uint8 { None, Move, Stop };
+
+	EType Type = EType::None;
+	/** Move-order anchor (centimeters, engine space). */
+	FVector2D AnchorPos = FVector2D::ZeroVector;
+	/** Move-order final facing (degrees). */
+	float FacingYaw = 0.f;
+	/** Commanded march speed (m/s); 0 -> the default walk speed. */
+	float CommandedSpeed = 0.f;
+};
+
 /** Registry-side per-unit state (arch §2.3). Game-thread written, plain so
  *  Phase 1 workers can read through the access detector. */
 struct FUnitRuntimeState
@@ -59,6 +76,11 @@ struct FUnitRuntimeState
 	/** Per-slot generation counter; ++ on every (re)allocation so stale
 	 *  FUnitHandles die. */
 	int32 Generation = 0;
+
+	/** Current order (A2 thin command API; UnitLocomotion consumes). */
+	FUnitOrder CurrentOrder;
+	/** Bumped on every issued order -- UnitLocomotion's change detector. */
+	uint32 OrderSerial = 0;
 
 	// Phase 0: engagement-record stub intentionally empty (arch §2.3) --
 	// engagement records arrive with the Phase 2 engagement solver.

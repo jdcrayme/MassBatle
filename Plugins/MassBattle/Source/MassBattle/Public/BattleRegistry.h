@@ -72,6 +72,16 @@ public:
 	void ClearStatsDirty(FUnitHandle Handle);
 	bool IsStatsDirty(FUnitHandle Handle) const;
 
+	// -- A2 thin order API (decision A2; game thread) --
+
+	/** Move to the anchor (cm) with final facing (deg); speed m/s, 0 = walk. */
+	bool IssueMoveOrder(FUnitHandle Handle, const FVector2D& AnchorPosCm, float FacingYawDeg, float CommandedSpeedMps = 0.f);
+	/** Halt: clears the path intent; the formation holds where it stands. */
+	bool IssueStopOrder(FUnitHandle Handle);
+	/** Current order + its serial (locomotion change detector). */
+	const FUnitOrder* FindOrder(FUnitHandle Handle) const;
+	uint32 GetOrderSerial(FUnitHandle Handle) const;
+
 	// -- introspection (debug overlay / state hash) --
 
 	int32 GetUnitCount() const;

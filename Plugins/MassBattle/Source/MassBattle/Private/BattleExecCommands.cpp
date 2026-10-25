@@ -379,6 +379,67 @@ namespace BattleExec
 		       TEXT("EXEC_RESULT StampImpassable OK Box=(%.2f,%.2f)-(%.2f,%.2f)m Cells=%d"),
 		       BoxMin.X, BoxMin.Y, BoxMax.X, BoxMax.Y, Stamped);
 	}
+	// -- Phase 1 Task 10: A2 command surface --
+	void OrderMove(const TArray<FString>& Args, UWorld* World)
+	{
+		UUnitRegistrySubsystem* Registry = World ? World->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+		if (!Registry || Args.Num() < 3)
+		{
+			UE_LOG(LogMassBattle, Display,
+			       TEXT("EXEC_RESULT OrderMove FAIL BadArgs (need: UnitIndex anchorX_m anchorY_m [facingDeg] [speedMps])"));
+			return;
+		}
+		const int32 UnitIndex = FCString::Atoi(*Args[0]);
+		FUnitHandle Matched;
+		for (const FUnitHandle& Handle : Registry->GetSortedHandles())
+		{
+			if (Handle.Index == static_cast<uint32>(UnitIndex))
+			{
+				Matched = Handle;
+				break;
+			}
+		}
+		if (!Matched.IsValid())
+		{
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT OrderMove FAIL NoSuchUnit Index=%d"), UnitIndex);
+			return;
+		}
+		const FVector2D AnchorCm(FCString::Atof(*Args[1]) * 100.f, FCString::Atof(*Args[2]) * 100.f);
+		const float Facing = Args.Num() > 3 ? FCString::Atof(*Args[3]) : 0.f;
+		const float Speed = Args.Num() > 4 ? FCString::Atof(*Args[4]) : 0.f;
+		const bool bOk = Registry->IssueMoveOrder(Matched, AnchorCm, Facing, Speed);
+		UE_LOG(LogMassBattle, Display,
+		       TEXT("EXEC_RESULT OrderMove %s Unit=%u:%u Anchor=(%.1f,%.1f)m Facing=%.1f Speed=%.2f"),
+		       bOk ? TEXT("OK") : TEXT("FAIL"), Matched.Index, Matched.Serial, AnchorCm.X * 0.01f, AnchorCm.Y * 0.01f, Facing, Speed);
+	}
+
+	void OrderStop(const TArray<FString>& Args, UWorld* World)
+	{
+		UUnitRegistrySubsystem* Registry = World ? World->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+		if (!Registry || Args.Num() < 1)
+		{
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT OrderStop FAIL BadArgs (need: UnitIndex)"));
+			return;
+		}
+		const int32 UnitIndex = FCString::Atoi(*Args[0]);
+		FUnitHandle Matched;
+		for (const FUnitHandle& Handle : Registry->GetSortedHandles())
+		{
+			if (Handle.Index == static_cast<uint32>(UnitIndex))
+			{
+				Matched = Handle;
+				break;
+			}
+		}
+		if (!Matched.IsValid())
+		{
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT OrderStop FAIL NoSuchUnit Index=%d"), UnitIndex);
+			return;
+		}
+		const bool bOk = Registry->IssueStopOrder(Matched);
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT OrderStop %s Unit=%u:%u"),
+		       bOk ? TEXT("OK") : TEXT("FAIL"), Matched.Index, Matched.Serial);
+	}
 }
 
 // ---- Command registration (Task 4 portion) ----
@@ -427,3 +488,13 @@ static FAutoConsoleCommandWithWorldAndArgs GBattleStampImpassable(
 	TEXT("Battle.Test.StampImpassable"),
 	TEXT("<minX> <minY> <maxX> <maxY> -- A5: stamps impassable cost-grid cells overlapping the box (meters, world space); EXEC_RESULT StampImpassable"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BattleExec::StampImpassable));
+
+static FAutoConsoleCommandWithWorldAndArgs GBattleOrderMove(
+	TEXT("Battle.Order.Move"),
+	TEXT("<UnitIndex> <anchorX_m> <anchorY_m> [facingDeg] [speedMps] -- A2: issue a move order; EXEC_RESULT OrderMove"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BattleExec::OrderMove));
+
+static FAutoConsoleCommandWithWorldAndArgs GBattleOrderStop(
+	TEXT("Battle.Order.Stop"),
+	TEXT("<UnitIndex> -- A2: halt the unit; EXEC_RESULT OrderStop"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BattleExec::OrderStop));

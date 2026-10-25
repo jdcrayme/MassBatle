@@ -24,4 +24,6 @@ protected:
 
 private:
 	FMassEntityQuery LocomotionQuery;
+	/** Unit bodies for the §8.2 interpenetration facing lock. */
+	FMassEntityQuery UnitBodyQuery;
 };

@@ -118,7 +118,8 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 	UnitBodies.Reserve(16);
 	TArray<FUnitHandle> BodyUnits;
 	BodyUnits.Reserve(16);
-	UnitBodyQuery.ForEachEntityChunk(Context, [&UnitBodies, &BodyUnits](FMassExecutionContext& Context)
+	TArray<bool> BodyMoving; // §8.6: only a moving unit has right-of-way to shove
+	UnitBodyQuery.ForEachEntityChunk(Context, [&UnitBodies, &BodyUnits, &BodyMoving](FMassExecutionContext& Context)
 	{
 		const FUnitFormationSharedFragment* FormationPtr = Context.GetSharedFragmentPtr<FUnitFormationSharedFragment>();
 		const auto Owners = Context.GetFragmentView<FOwnerUnitFragment>();
@@ -131,10 +132,11 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 		FUnitOBB Body;
 		Body.Center = Formation.AnchorPos * 0.01f; // cm -> m
 		Body.YawDeg = Formation.FacingYaw;
-		Body.HalfFrontage = (Formation.NumFiles * Formation.FileSpacing * 0.5f) * 0.01f;
-		Body.HalfDepth = (NumRanks * Formation.RankSpacing * 0.5f) * 0.01f;
+		Body.HalfAlongFacing = (NumRanks * Formation.RankSpacing * 0.5f) * 0.01f;
+		Body.HalfAcrossFacing = (Formation.NumFiles * Formation.FileSpacing * 0.5f) * 0.01f;
 		UnitBodies.Add(Body);
 		BodyUnits.Add(Owners[0].Owner);
+		BodyMoving.Add(Formation.SpeedLimit > 10.f);
 	});
 
 	// Per-snapshot-entity shove displacement (m/s) + blend weight.
@@ -144,8 +146,16 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 	ShoveW.Init(0.f, Snapshot.Num());
 	for (int32 A = 0; A < UnitBodies.Num(); ++A)
 	{
-		for (int32 B = A + 1; B < UnitBodies.Num(); ++B)
+		if (!BodyMoving[A])
 		{
+			continue; // stationary formations never displace others (HoldSlot crowds via servo+compression)
+		}
+		for (int32 B = 0; B < UnitBodies.Num(); ++B)
+		{
+			if (A == B || BodyUnits[A] == BodyUnits[B])
+			{
+				continue;
+			}
 			const float Depth = FUnitContact::OverlapDepth(UnitBodies[A], UnitBodies[B]);
 			if (Depth <= 0.f)
 			{
@@ -155,9 +165,6 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 			// documented policy at Phase 1 fixtures) shoves the static unit's
 			// entities aside; cavalry-vs-infantry mass ratio 2:1.
 			const FUnitOBB& Mover = UnitBodies[A];
-			const FUnitOBB& Static = UnitBodies[B];
-			const FVector2D PushDir = (Static.Center - Mover.Center).GetSafeNormal();
-			(void)PushDir;
 			const float Blend = FUnitContact::ShoveBlend(2.0f /* cavalry:infantry mass ratio */, Depth);
 
 			// Infantry of the weaker unit inside the mover's OBB get shoved.
@@ -296,6 +303,10 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 				DT, Timer, FUnitServoConstants::EscalateAfterSeconds);
 			if (NewLevel != ServoStates[i].LadderLevel)
 			{
+				if (Debug)
+				{
+					Debug->RecordLadderEscalation(); // T1.5/T1.8 zero-escalation gate
+				}
 				// Every step logged (§8.5) -- one line per transition, not per frame.
 				UE_LOG(LogMassBattle, Display,
 					TEXT("EXEC_RESULT UnstuckLadder Entity=%u:%u Unit=%u:%u Level=%d DistToSlot=%.2f"),

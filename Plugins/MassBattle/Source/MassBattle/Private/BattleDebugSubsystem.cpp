@@ -34,6 +34,11 @@ void UBattleDebugSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	LastMetrics = FBattleFrameMetrics();
 }
 
+void UBattleDebugSubsystem::ResetDiagnostics()
+{
+	LadderEscalations = 0;
+}
+
 void UBattleDebugSubsystem::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
