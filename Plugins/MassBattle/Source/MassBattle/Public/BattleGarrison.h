@@ -8,6 +8,7 @@
 #include "BattleGarrisonTypes.h"
 
 struct FBattleCostGrid;
+struct FBattlePathPolyline;
 
 /** Battle.Garrison.* CVAR block (brief task 0; B.8 item 6). Defined in
  *  BattleGarrison.cpp; read through these accessors from any TU. */
@@ -71,7 +72,7 @@ namespace FGarrisonLayout
 	/** Fragment-boundary twin (cm in / cm out): Z interpolation along the
 	 *  fragment polyline at arc position SCm -- filed soldiers' TargetZ while
 	 *  the path carries elevation (spec §6). */
-	MASSBATTLE_API float ZAtSFragment(const struct FBattlePathPolyline& PathCm, float SCm);
+	MASSBATTLE_API float ZAtSFragment(const FBattlePathPolyline& PathCm, float SCm);
 
 	/** Ingress column count clamp (task 3; spec §4.3): clamp(floor(ClearWidth /
 	 *  FileSpacing), 1, NumFilesUpperBound). */

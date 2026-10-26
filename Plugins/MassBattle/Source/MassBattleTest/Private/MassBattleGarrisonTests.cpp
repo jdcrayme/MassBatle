@@ -9,6 +9,9 @@
 #include "BattleGarrisonTypes.h"
 #include "BattleGarrison.h"
 #include "BattleGarrisonSubsystem.h"
+#include "BattleCostGrid.h"
+#include "BattleCostGridSubsystem.h"
+#include "BattlePathPlanner.h"
 #include "BattleMovementFragments.h"
 #include "BattleRegistry.h"
 #include "BattleSpawnLibrary.h"
@@ -68,51 +71,301 @@ namespace
 		}
 		return Rec;
 	}
-
-	bool GarrisonSkeleton(FAutomationTestBase& Test, const TCHAR* Gate)
-	{
-		Test.AddError(FString::Printf(TEXT("skeleton: %s lands with its owning task (brief §5)"), Gate));
-		return false;
-	}
 }
 
 // ---------------------------------------------------------------------------
-// TG.1 Stamping (task 2)
+// TG.1 Stamping (task 2): footprint impassable, corridor clear +
+// high-but-passable, ResetToFlat clears, deterministic stamp counts.
 // ---------------------------------------------------------------------------
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGarrisonSkeleton_Stamping,
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGarrison_Stamping,
 	"Battle.Unit.Garrison.Stamping",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
-bool FGarrisonSkeleton_Stamping::RunTest(const FString& Parameters)
+bool FGarrison_Stamping::RunTest(const FString& Parameters)
 {
-	return GarrisonSkeleton(*this, TEXT("TG.1 Battle.Unit.Garrison.Stamping (task 2)"));
+	UWorld* World = MakeGarrisonTestWorld();
+	UBattleGarrisonSubsystem* Garrison = World->GetSubsystem<UBattleGarrisonSubsystem>();
+	UBattleCostGridSubsystem* CostGrid = World->GetSubsystem<UBattleCostGridSubsystem>();
+	if (!TestNotNull(TEXT("garrison"), Garrison) || !TestNotNull(TEXT("cost grid"), CostGrid))
+	{
+		World->DestroyWorld(false);
+		return false;
+	}
+
+	FGarrisonStructureRecord Rec;
+	TestTrue(TEXT("building fixture builds"), FGarrisonLayout::MakeFixture(EGarrisonStructureType::Building,
+		FVector2D(30.f, 30.f), 0.f, Rec));
+
+	// Footprint impassable at samples across the body.
+	CostGrid->ResetToFlat();
+	const int32 FirstStamp = FGarrisonLayout::StampStructure(Rec, CostGrid->GetMutableGrid());
+	TestTrue(TEXT("stamped some cells"), FirstStamp > 0);
+	const FVector2D BodySamples[] = {
+		FVector2D(30.f, 30.f), FVector2D(12.f, 24.f), FVector2D(48.f, 36.f), FVector2D(30.f, 38.f)
+	};
+	for (const FVector2D& S : BodySamples)
+	{
+		int32 X, Y;
+		CostGrid->GetGrid().WorldToCell(S, X, Y);
+		TestTrue(FString::Printf(TEXT("footprint impassable at (%.0f,%.0f)"), S.X, S.Y),
+			CostGrid->GetGrid().IsImpassable(X, Y));
+	}
+
+	// Entrance corridor: SegmentIsClear QueuePos->DoorPos holds and the
+	// corridor cells carry the high-but-passable cost.
+	const FGarrisonEntrance& E = Rec.Entrances[0];
+	TestTrue(TEXT("corridor segment clear (QueuePos->DoorPos)"),
+		FBattlePathPlanner::SegmentIsClear(CostGrid->GetGrid(), E.QueuePos, E.DoorPos, 0.1f));
+	{
+		int32 X, Y;
+		const FVector2D Mid((E.QueuePos + E.DoorPos) * 0.5f);
+		CostGrid->GetGrid().WorldToCell(Mid, X, Y);
+		TestEqual(TEXT("corridor cost is the garrison mirror"),
+			CostGrid->GetGrid().GetCost(X, Y), GarrisonCorridorCost);
+	}
+
+	// ResetToFlat clears the stamps.
+	CostGrid->ResetToFlat();
+	{
+		int32 X, Y;
+		CostGrid->GetGrid().WorldToCell(FVector2D(30.f, 30.f), X, Y);
+		TestFalse(TEXT("ResetToFlat clears the footprint"), CostGrid->GetGrid().IsImpassable(X, Y));
+	}
+
+	// Determinism + state idempotence: two fresh grids -> identical stamp
+	// counts; restamping leaves the final cell state byte-identical (corridor
+	// boxes stamp last over the footprint, so the final state is stable even
+	// though the overlap cells flip each pass).
+	FBattleCostGrid GridA, GridB;
+	GridA.InitFlat(64, 64, FVector2D::ZeroVector, 3.f);
+	GridB.InitFlat(64, 64, FVector2D::ZeroVector, 3.f);
+	const int32 CountA = FGarrisonLayout::StampStructure(Rec, GridA);
+	const int32 CountB = FGarrisonLayout::StampStructure(Rec, GridB);
+	TestEqual(TEXT("deterministic stamps"), CountA, CountB);
+	const TArray<uint8> StateAfterFirst = GridA.CellCost;
+	FGarrisonLayout::StampStructure(Rec, GridA);
+	TestEqual(TEXT("restamp leaves the grid state identical"), GridA.CellCost == StateAfterFirst, true);
+
+	// Registration-side stamping (the subsystem path) leaves the planner able
+	// to route to the queue point: register the fixture and re-check.
+	CostGrid->ResetToFlat();
+	const uint32 Id = Garrison->RegisterStructure(Rec);
+	TestTrue(TEXT("registered"), Id != 0);
+	TestTrue(TEXT("post-registration corridor clear"),
+		FBattlePathPlanner::SegmentIsClear(CostGrid->GetGrid(), E.QueuePos, E.DoorPos, 0.1f));
+
+	World->DestroyWorld(false);
+	return true;
 }
 
 // ---------------------------------------------------------------------------
-// TG.2 InternalPath (task 3)
+// TG.2 InternalPath (task 3): door passage endpoints, arc-length monotonicity,
+// Z monotone on wall/trench fixtures, egress = reversed walk to the assembly.
 // ---------------------------------------------------------------------------
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGarrisonSkeleton_InternalPath,
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGarrison_InternalPath,
 	"Battle.Unit.Garrison.InternalPath",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
-bool FGarrisonSkeleton_InternalPath::RunTest(const FString& Parameters)
+bool FGarrison_InternalPath::RunTest(const FString& Parameters)
 {
-	return GarrisonSkeleton(*this, TEXT("TG.2 Battle.Unit.Garrison.InternalPath (task 3)"));
+	const EGarrisonStructureType Types[3] = {
+		EGarrisonStructureType::Building, EGarrisonStructureType::Wall, EGarrisonStructureType::Trench
+	};
+	for (const EGarrisonStructureType Type : Types)
+	{
+		FGarrisonStructureRecord Rec;
+		const bool bBuilt = FGarrisonLayout::MakeFixture(Type, FVector2D(0.f, 0.f), 0.f, Rec);
+		AddInfo(FString::Printf(TEXT("type=%d built=%d entrances=%d slots=%d maxunits=%d"),
+			static_cast<int32>(Type), bBuilt ? 1 : 0, Rec.Entrances.Num(), Rec.Slots.Num(), Rec.MaxUnits));
+		if (!TestTrue(TEXT("fixture builds"), bBuilt)
+			|| !TestEqual(TEXT("entrances present"), Rec.Entrances.Num(), 1))
+		{
+			return false;
+		}
+		const FGarrisonEntrance& E = Rec.Entrances[0];
+
+		TArray<FBattlePathPoint3> Entry;
+		if (!TestTrue(TEXT("entry path builds"), FGarrisonLayout::BuildInternalPath(Rec, 0, false, Entry)))
+		{
+			return false;
+		}
+		// Endpoints exact; passes through the door within a sample step.
+		AddInfo(FString::Printf(TEXT("type=%d points=%d length=%.1f"),
+			static_cast<int32>(Type), Entry.Num(), Entry.Last().S));
+		TestEqual(TEXT("entry starts at QueuePos"), Entry[0].Pos.Equals(E.QueuePos, 1e-4f), true);
+		TestEqual(TEXT("entry ends at distribution node"), Entry.Last().Pos.Equals(E.DistributionPos, 1e-4f), true);
+		float MinDoorDist = FLT_MAX;
+		for (const FBattlePathPoint3& P : Entry)
+		{
+			MinDoorDist = FMath::Min(MinDoorDist, FVector2D::Distance(P.Pos, E.DoorPos));
+		}
+		TestTrue(TEXT("entry passes through the door"), MinDoorDist <= 1.01f);
+
+		// Arc-length monotonicity.
+		bool bMonotone = true;
+		for (int32 i = 1; i < Entry.Num(); ++i)
+		{
+			bMonotone = bMonotone && Entry[i].S > Entry[i - 1].S;
+		}
+		TestTrue(TEXT("entry arc-length monotone"), bMonotone);
+
+		// Z monotone in the entry direction: wall climbs, trench sinks,
+		// building stays flat (brief §5 task 3: "Z monotone on stair/ramp
+		// fixtures" -- monotone in the fixture's intended direction).
+		const bool bSinks = Type == EGarrisonStructureType::Trench;
+		bool bZMonotone = true;
+		for (int32 i = 1; i < Entry.Num(); ++i)
+		{
+			bZMonotone = bZMonotone && (bSinks
+				? Entry[i].Z <= Entry[i - 1].Z + KINDA_SMALL_NUMBER
+				: Entry[i].Z >= Entry[i - 1].Z - KINDA_SMALL_NUMBER);
+		}
+		TestTrue(TEXT("entry Z monotone in the fixture direction"), bZMonotone);
+		if (Type == EGarrisonStructureType::Wall)
+		{
+			TestEqual(TEXT("wall entry Z ends at walkway height"), FMath::RoundToInt(Entry.Last().Z * 100.f), 600);
+		}
+		if (Type == EGarrisonStructureType::Trench)
+		{
+			TestEqual(TEXT("trench entry Z ends at channel depth"), FMath::RoundToInt(Entry.Last().Z * 100.f), -75);
+		}
+
+		// Egress: endpoints exact (node -> door -> assembly), Z reverses.
+		TArray<FBattlePathPoint3> Egress;
+		if (!TestTrue(TEXT("egress path builds"), FGarrisonLayout::BuildInternalPath(Rec, 0, true, Egress)))
+		{
+			return false;
+		}
+		TestEqual(TEXT("egress starts at node"), Egress[0].Pos.Equals(E.DistributionPos, 1e-4f), true);
+		TestEqual(TEXT("egress ends at assembly"), Egress.Last().Pos.Equals(E.AssemblyPos, 1e-4f), true);
+		bool bZReversed = true;
+		for (int32 i = 1; i < Egress.Num(); ++i)
+		{
+			// Egress reverses the elevation walk: the wall descends, the
+			// trench climbs back out.
+			bZReversed = bZReversed && (bSinks
+				? Egress[i].Z >= Egress[i - 1].Z - KINDA_SMALL_NUMBER
+				: Egress[i].Z <= Egress[i - 1].Z + KINDA_SMALL_NUMBER);
+		}
+		TestTrue(TEXT("egress Z monotone back toward ground"), bZReversed);
+		bool bEgressMonotone = true;
+		for (int32 i = 1; i < Egress.Num(); ++i)
+		{
+			bEgressMonotone = bEgressMonotone && Egress[i].S > Egress[i - 1].S;
+		}
+		TestTrue(TEXT("egress arc-length monotone"), bEgressMonotone);
+	}
+	return true;
 }
 
 // ---------------------------------------------------------------------------
-// TG.3 SlotAssign (task 3)
+// TG.3 SlotAssign (task 3): bijection, distance bound, determinism, disjoint
+// booking ranges stay separate assignment domains.
 // ---------------------------------------------------------------------------
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGarrisonSkeleton_SlotAssign,
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGarrison_SlotAssign,
 	"Battle.Unit.Garrison.SlotAssign",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
-bool FGarrisonSkeleton_SlotAssign::RunTest(const FString& Parameters)
+bool FGarrison_SlotAssign::RunTest(const FString& Parameters)
 {
-	return GarrisonSkeleton(*this, TEXT("TG.3 Battle.Unit.Garrison.SlotAssign (task 3)"));
+	// 20 slots along a line, 20 soldiers near each slot with a known shuffle.
+	TArray<FVector2D> Slots;
+	for (int32 i = 0; i < 20; ++i)
+	{
+		Slots.Add(FVector2D(1.2f * i, 0.f));
+	}
+	TArray<FVector2D> Soldiers;
+	TArray<int32> Truth;
+	for (int32 i = 0; i < 20; ++i)
+	{
+		const int32 From = (i * 7 + 3) % 20; // a fixed permutation
+		Soldiers.Add(Slots[From] + FVector2D(0.1f, 0.2f));
+		Truth.Add(From);
+	}
+
+	// First dress (no previous): deterministic bijection.
+	TArray<int32> A1, A2;
+	FGarrisonLayout::AssignSlots(Soldiers, Slots, TArray<int32>(), 3.f, A1);
+	FGarrisonLayout::AssignSlots(Soldiers, Slots, TArray<int32>(), 3.f, A2);
+	TSet<int32> Used;
+	bool bBijective = true;
+	for (int32 i = 0; i < 20; ++i)
+	{
+		bBijective = bBijective && A1[i] != INDEX_NONE && !Used.Contains(A1[i]);
+		Used.Add(A1[i]);
+	}
+	TestEqual(TEXT("bijection over the slot set"), Used.Num(), 20);
+	TestTrue(TEXT("every soldier assigned"), bBijective);
+	TestEqual(TEXT("deterministic under repeat"), A1 == A2, true);
+
+	// Each soldier got a NEAR slot (the permutation is recoverable within eps).
+	bool bNear = true;
+	for (int32 i = 0; i < 20; ++i)
+	{
+		bNear = bNear && A1[i] == Truth[i];
+	}
+	TestTrue(TEXT("greedy nearest recovers the permutation"), bNear);
+
+	// Distance bound: previous assignment shuffled far; small bound must hold
+	// on the second dress (bounded pass) wherever a bounded vacancy exists.
+	TArray<int32> Prev;
+	for (int32 i = 0; i < 20; ++i)
+	{
+		Prev.Add((i + 10) % 20); // every soldier 10 slots away from its old post
+	}
+	TArray<FVector2D> ShiftedSoldiers; // soldiers stand at their PREVIOUS posts
+	for (int32 i = 0; i < 20; ++i)
+	{
+		ShiftedSoldiers.Add(Slots[Prev[i]]);
+	}
+	TArray<int32> Bounded;
+	FGarrisonLayout::AssignSlots(ShiftedSoldiers, Slots, Prev, 0.5f, Bounded);
+	bool bBoundRespectedOrFallback = true;
+	for (int32 i = 0; i < 20; ++i)
+	{
+		const float FromPrev = FVector2D::Distance(Slots[Bounded[i]], Slots[Prev[i]]);
+		// Bound respected OR the unbounded fallback fired (soldier kept a
+		// nearest vacancy because the bounded pass found none).
+		bBoundRespectedOrFallback = bBoundRespectedOrFallback && (FromPrev <= 0.5f || Bounded[i] == INDEX_NONE);
+	}
+	TSet<int32> UsedB;
+	for (int32 i = 0; i < 20; ++i)
+	{
+		UsedB.Add(Bounded[i]);
+	}
+	TestEqual(TEXT("bounded second dress still bijective"), UsedB.Num(), 20);
+	TestTrue(TEXT("bound respected or fallback"), bBoundRespectedOrFallback);
+
+	// Disjoint booking ranges: assignments computed over one range never land
+	// in the other (two units, one structure).
+	FGarrisonStructureRecord Rec;
+	if (!TestTrue(TEXT("ledger fixture"), FGarrisonLayout::MakeFixture(EGarrisonStructureType::Building, FVector2D::ZeroVector, 0.f, Rec))
+		|| !TestEqual(TEXT("ledger fixture slots"), Rec.Slots.Num(), 80))
+	{
+		return false;
+	}
+	TArray<FVector2D> RangeA, RangeB;
+	for (int32 i = 0; i < 40; ++i)
+	{
+		(RangeA.Add(Rec.Slots[i].Pos));
+	}
+	for (int32 i = 40; i < 80; ++i)
+	{
+		(RangeB.Add(Rec.Slots[i].Pos));
+	}
+	TArray<int32> AssignA, AssignB;
+	FGarrisonLayout::AssignSlots(RangeA, RangeA, TArray<int32>(), 3.f, AssignA);
+	FGarrisonLayout::AssignSlots(RangeB, RangeB, TArray<int32>(), 3.f, AssignB);
+	bool bDisjoint = true;
+	for (int32 i = 0; i < 40; ++i)
+	{
+		bDisjoint = bDisjoint && AssignA[i] >= 0 && AssignA[i] < 40 && AssignB[i] >= 0 && AssignB[i] < 40;
+	}
+	TestTrue(TEXT("disjoint ranges across two booking sets"), bDisjoint);
+	return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -285,16 +538,78 @@ bool FGarrison_Booking::RunTest(const FString& Parameters)
 }
 
 // ---------------------------------------------------------------------------
-// TG.5 ZModel (task 3)
+// TG.5 ZModel (task 3): Z interpolation monotone + slot-Z fixtures
+// (wall 6 m / trench -0.75 m / building floor 0), fragment-boundary twin.
 // ---------------------------------------------------------------------------
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGarrisonSkeleton_ZModel,
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGarrison_ZModel,
 	"Battle.Unit.Garrison.ZModel",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
-bool FGarrisonSkeleton_ZModel::RunTest(const FString& Parameters)
+bool FGarrison_ZModel::RunTest(const FString& Parameters)
 {
-	return GarrisonSkeleton(*this, TEXT("TG.5 Battle.Unit.Garrison.ZModel (task 3)"));
+	FGarrisonStructureRecord Wall;
+	TestTrue(TEXT("wall fixture"), FGarrisonLayout::MakeFixture(EGarrisonStructureType::Wall, FVector2D::ZeroVector, 0.f, Wall));
+	TArray<FBattlePathPoint3> Path;
+	TestTrue(TEXT("wall entry path"), FGarrisonLayout::BuildInternalPath(Wall, 0, false, Path));
+
+	// Z interpolation monotone across the whole climb.
+	bool bMonotone = true;
+	for (int32 i = 1; i < Path.Num(); ++i)
+	{
+		const float S = (Path[i].S + Path[i - 1].S) * 0.5f;
+		bMonotone = bMonotone && FGarrisonLayout::ZAtS(Path, S) >= FGarrisonLayout::ZAtS(Path, Path[i - 1].S) - 1e-4f;
+	}
+	TestTrue(TEXT("ZAtS monotone along the stair fixture"), bMonotone);
+	TestEqual(TEXT("ZAtS(0) is ground"), FMath::RoundToInt(FGarrisonLayout::ZAtS(Path, 0.f) * 100.f), 0);
+	TestEqual(TEXT("ZAtS(total) is walkway"), FMath::RoundToInt(FGarrisonLayout::ZAtS(Path, Path.Last().S) * 100.f), 600);
+	// Stair midpoint: door sits at the stair base; halfway along the path the
+	// interpolation is between 0 and 6 (linear per segment).
+	const float HalfZ = FGarrisonLayout::ZAtS(Path, Path.Last().S * 0.5f);
+	TestTrue(TEXT("midpath Z between ground and walkway"), HalfZ > 0.5f && HalfZ < 5.5f);
+
+	// Slot-Z fixtures.
+	FGarrisonStructureRecord Trench;
+	FGarrisonStructureRecord Building;
+	TestTrue(TEXT("trench fixture"), FGarrisonLayout::MakeFixture(EGarrisonStructureType::Trench, FVector2D::ZeroVector, 0.f, Trench));
+	TestTrue(TEXT("building fixture"), FGarrisonLayout::MakeFixture(EGarrisonStructureType::Building, FVector2D::ZeroVector, 0.f, Building));
+	bool bWallZ = true, bTrenchZ = true, bBuildingZ = true;
+	for (const FGarrisonSlot& S : Wall.Slots)
+	{
+		bWallZ = bWallZ && FMath::IsNearlyEqual(S.Z, 6.f);
+	}
+	for (const FGarrisonSlot& S : Trench.Slots)
+	{
+		bTrenchZ = bTrenchZ && FMath::IsNearlyEqual(S.Z, -0.75f);
+	}
+	for (const FGarrisonSlot& S : Building.Slots)
+	{
+		bBuildingZ = bBuildingZ && FMath::IsNearlyEqual(S.Z, 0.f);
+	}
+	TestTrue(TEXT("wall slots at walkway Z"), bWallZ);
+	TestTrue(TEXT("trench slots at channel Z"), bTrenchZ);
+	TestTrue(TEXT("building slots at floor Z"), bBuildingZ);
+
+	// Fragment-boundary twin (cm): two-point climb 0 -> 600 cm.
+	FBattlePathPolyline Frag;
+	Frag.NumPoints = 2;
+	Frag.Points[0].Pos = FVector2D::ZeroVector;
+	Frag.Points[0].S = 0.f;
+	Frag.Points[0].Z = 0.f;
+	Frag.Points[1].Pos = FVector2D(600.f, 0.f);
+	Frag.Points[1].S = 600.f;
+	Frag.Points[1].Z = 600.f;
+	Frag.TotalLength = 600.f;
+	TestEqual(TEXT("fragment Z interpolation at 300 cm"),
+		FMath::RoundToInt(FGarrisonLayout::ZAtSFragment(Frag, 300.f)), 300);
+	TestEqual(TEXT("fragment Z clamps past the end"),
+		FMath::RoundToInt(FGarrisonLayout::ZAtSFragment(Frag, 1000.f)), 600);
+
+	// Column clamp (spec §4.3): 4 m declared width / 1.2 m spacing -> 3 files.
+	TestEqual(TEXT("ColumnFilesFor(4, 1.2) = 3"), FGarrisonLayout::ColumnFilesFor(4.f, 1.2f, 40), 3);
+	TestEqual(TEXT("ColumnFilesFor clamps to 1"), FGarrisonLayout::ColumnFilesFor(0.5f, 1.2f, 40), 1);
+	TestEqual(TEXT("ColumnFilesFor clamps to files"), FGarrisonLayout::ColumnFilesFor(99.f, 1.2f, 6), 6);
+	return true;
 }
 
 #endif // WITH_DEV_AUTOMATION_TESTS

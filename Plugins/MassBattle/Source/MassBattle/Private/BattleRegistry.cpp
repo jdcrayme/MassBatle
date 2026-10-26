@@ -1,8 +1,14 @@
 #include "BattleRegistry.h"
 #include "BattleExternalSubsystemTraits.h"
+#include "BattleFragments.h"
+#include "BattleGarrisonSubsystem.h"
 #include "MassBattleModule.h"
 #include "BattleExecCommands.h"
 #include "HAL/IConsoleManager.h"
+
+#include "Engine/World.h"
+#include "MassEntitySubsystem.h"
+#include "MassEntityView.h"
 
 void UUnitRegistrySubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
@@ -85,6 +91,10 @@ bool UUnitRegistrySubsystem::UnregisterUnit(FUnitHandle Handle)
 	State.Roster.Reset();
 	SpecsByIndex.Remove(Handle.Index);
 	DirtyStats.Remove(Handle);
+	if (UBattleGarrisonSubsystem* Garrison = GetWorld() ? GetWorld()->GetSubsystem<UBattleGarrisonSubsystem>() : nullptr)
+	{
+		Garrison->ReleaseUnit(Handle);
+	}
 	FreeIndices.Push(Handle.Index);
 	return true;
 }
@@ -134,6 +144,15 @@ void UUnitRegistrySubsystem::HandleUnitDeath(FUnitHandle Unit, FMassEntityHandle
 		const int32 Removed = State->Roster.RemoveSingle(Entity);
 		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT RosterDeath Unit=%u:%u Entity=%u:%u RosterIndex=%d Removed=%d Size=%d"),
 		       Unit.Index, Unit.Serial, Entity.Index, Entity.SerialNumber, RosterIndex, Removed, State->Roster.Num());
+		// F14: a unit dying out mid-occupation releases its garrison booking +
+		// queue hold here (the single correct place per the brief's fact).
+		if (State->Roster.Num() == 0)
+		{
+			if (UBattleGarrisonSubsystem* Garrison = GetWorld() ? GetWorld()->GetSubsystem<UBattleGarrisonSubsystem>() : nullptr)
+			{
+				Garrison->ReleaseUnit(Unit);
+			}
+		}
 	}
 }
 
@@ -223,6 +242,100 @@ bool UUnitRegistrySubsystem::IssueStopOrder(FUnitHandle Handle)
 	Order.FacingYaw = 0.f;
 	Order.CommandedSpeed = 0.f;
 	Order.CommandedFiles = 0;
+	Order.StructureId = 0;
+	++State->OrderSerial;
+	return true;
+}
+
+// -- Phase garrison order surface (spec §4.1) --
+
+bool UUnitRegistrySubsystem::IssueGarrisonOrder(FUnitHandle Handle, uint32 StructureId)
+{
+	if (!IsHandleValid(Handle) || StructureId == 0)
+	{
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT GarrisonOrder REJECT BadHandleOrStructure Unit=%u:%u Structure=%u"),
+			Handle.Index, Handle.Serial, StructureId);
+		return false;
+	}
+	FUnitRuntimeState* State = Units.Find(Handle);
+	if (!State)
+	{
+		return false;
+	}
+	// A9 cavalry guard clause: the EDU class tag lives on the roster entities
+	// (F11 composition); walls and trenches are infantry-only v1 as well.
+	if (UMassEntitySubsystem* Entities = GetWorld() ? GetWorld()->GetSubsystem<UMassEntitySubsystem>() : nullptr)
+	{
+		if (State->Roster.Num() > 0)
+		{
+			const FMassEntityView View(Entities->GetMutableEntityManager(), State->Roster[0]);
+			if (View.HasTag<FCavalryTag>())
+			{
+				UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT GarrisonOrder REJECT CAVALRY Unit=%u:%u Structure=%u"),
+					Handle.Index, Handle.Serial, StructureId);
+				return false;
+			}
+		}
+	}
+	FUnitOrder& Order = State->CurrentOrder;
+	Order.Type = FUnitOrder::EType::Garrison;
+	Order.AnchorPos = FVector2D::ZeroVector;
+	Order.FacingYaw = 0.f;
+	Order.CommandedSpeed = 0.f;
+	Order.CommandedFiles = 0;
+	Order.StructureId = StructureId;
+	++State->OrderSerial;
+	return true;
+}
+
+bool UUnitRegistrySubsystem::IssueExitGarrisonOrder(FUnitHandle Handle)
+{
+	if (!IsHandleValid(Handle))
+	{
+		return false;
+	}
+	FUnitRuntimeState* State = Units.Find(Handle);
+	if (!State)
+	{
+		return false;
+	}
+	FUnitOrder& Order = State->CurrentOrder;
+	Order.Type = FUnitOrder::EType::ExitGarrison;
+	Order.AnchorPos = FVector2D::ZeroVector;
+	Order.FacingYaw = 0.f;
+	Order.CommandedSpeed = 0.f;
+	Order.CommandedFiles = 0;
+	Order.StructureId = 0;
+	++State->OrderSerial;
+	return true;
+}
+
+void UUnitRegistrySubsystem::ParkPendingAfterEgress(FUnitHandle Handle, const FUnitOrder& Order)
+{
+	if (!IsHandleValid(Handle))
+	{
+		return;
+	}
+	if (FUnitRuntimeState* State = Units.Find(Handle))
+	{
+		State->PendingAfterEgress = Order;
+	}
+}
+
+bool UUnitRegistrySubsystem::ConsumePendingAfterEgress(FUnitHandle Handle, FUnitOrder& OutParked)
+{
+	if (!IsHandleValid(Handle))
+	{
+		return false;
+	}
+	FUnitRuntimeState* State = Units.Find(Handle);
+	if (!State || State->PendingAfterEgress.Type == FUnitOrder::EType::None)
+	{
+		return false;
+	}
+	OutParked = State->PendingAfterEgress;
+	State->PendingAfterEgress = FUnitOrder();
+	State->CurrentOrder = OutParked;
 	++State->OrderSerial;
 	return true;
 }

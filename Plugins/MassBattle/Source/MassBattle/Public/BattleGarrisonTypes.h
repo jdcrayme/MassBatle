@@ -81,6 +81,10 @@ struct FGarrisonEntrance
 	FVector2D DoorPos = FVector2D::ZeroVector;   // m -- the choke point
 	FVector2D QueuePos = FVector2D::ZeroVector;  // m -- exterior approach point (planner goal)
 	FVector2D AssemblyPos = FVector2D::ZeroVector; // m -- exterior re-form point after egress
+	/** Distribution node (spec §3.1/§4.3): interior point soldiers spread out
+	 *  from; Z here is the interior elevation (wall walk / channel floor). */
+	FVector2D DistributionPos = FVector2D::ZeroVector;
+	float DistributionZ = 0.f;
 	float ClearWidthM = 4.f;                     // declared choke width (drives column morph)
 };
 

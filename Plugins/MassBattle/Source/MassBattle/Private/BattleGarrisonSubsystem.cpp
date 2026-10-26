@@ -153,6 +153,19 @@ bool UBattleGarrisonSubsystem::ReleaseBooking(FUnitHandle Unit)
 	return Bookings.Remove(Unit) > 0;
 }
 
+void UBattleGarrisonSubsystem::ReleaseUnit(FUnitHandle Unit)
+{
+	Bookings.Remove(Unit);
+	for (TMap<uint64, FUnitHandle>::TIterator It(EntryLeaseHolders); It; ++It)
+	{
+		if (It.Value() == Unit)
+		{
+			It.RemoveCurrent();
+		}
+	}
+	QueueWaits.Remove(Unit);
+}
+
 const FGarrisonBooking* UBattleGarrisonSubsystem::FindBooking(FUnitHandle Unit) const
 {
 	return Bookings.Find(Unit);

@@ -39,7 +39,9 @@ namespace BattleExec
 
 	// -- Phase garrison (tasks 1/2/4: probes, fixtures, orders) --
 	MASSBATTLE_API void GarrisonDumpStructures(const TArray<FString>& Args, UWorld* World);
-	MASSBATTLE_API void GarrisonSpawnFixture(const TArray<FString>& Args, UWorld* World);
+	MASSBATTLE_API void GarrisonSpawnBuilding(const TArray<FString>& Args, UWorld* World);
+	MASSBATTLE_API void GarrisonSpawnTrench(const TArray<FString>& Args, UWorld* World);
+	MASSBATTLE_API void GarrisonSpawnWall(const TArray<FString>& Args, UWorld* World);
 	MASSBATTLE_API void OrderGarrison(const TArray<FString>& Args, UWorld* World);
 	MASSBATTLE_API void OrderExitGarrison(const TArray<FString>& Args, UWorld* World);
 }

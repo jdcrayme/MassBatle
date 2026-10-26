@@ -52,6 +52,9 @@ public:
 	bool TryBook(FUnitHandle Unit, uint32 StructureId, uint8 EntranceIndex, int32 SlotCount, FGarrisonBooking& OutBooking);
 	/** Releases the unit's booking (egress completion, death, unregister). */
 	bool ReleaseBooking(FUnitHandle Unit);
+	/** Death/unregister cleanup (F14): drops the booking, any entry lease the
+	 *  unit holds, and its queue wait in one deterministic pass. */
+	void ReleaseUnit(FUnitHandle Unit);
 	const FGarrisonBooking* FindBooking(FUnitHandle Unit) const;
 	/** Units currently holding a booking on the structure. */
 	int32 GetBookedCount(uint32 StructureId) const;

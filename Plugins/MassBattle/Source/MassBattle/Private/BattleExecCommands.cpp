@@ -455,6 +455,109 @@ namespace BattleExec
 		}
 		Garrison->DumpStructures();
 	}
+
+	bool SpawnGarrisonFixtureImpl(EGarrisonStructureType Type, const TCHAR* CommandName,
+		const TArray<FString>& Args, UWorld* World)
+	{
+		UBattleGarrisonSubsystem* Garrison = World ? World->GetSubsystem<UBattleGarrisonSubsystem>() : nullptr;
+		if (!Garrison || Args.Num() < 2)
+		{
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT %s FAIL BadArgs (need: x_m y_m [rotDeg])"), CommandName);
+			return false;
+		}
+		const FVector2D PosM(FCString::Atof(*Args[0]), FCString::Atof(*Args[1]));
+		const float YawDeg = Args.Num() > 2 ? FCString::Atof(*Args[2]) : 0.f;
+		FGarrisonStructureRecord Record;
+		if (!FGarrisonLayout::MakeFixture(Type, PosM, YawDeg, Record))
+		{
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT %s FAIL BadType"), CommandName);
+			return false;
+		}
+		const uint32 Id = Garrison->RegisterStructure(Record);
+		if (Id == 0)
+		{
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT %s FAIL RegisterRejected"), CommandName);
+			return false;
+		}
+		UE_LOG(LogMassBattle, Display,
+			TEXT("EXEC_RESULT %s OK Structure=%u Pos=(%.1f,%.1f)m Rot=%.0f MaxUnits=%d Slots=%d"),
+			CommandName, Id, PosM.X, PosM.Y, YawDeg, Record.MaxUnits, Record.Slots.Num());
+		return true;
+	}
+
+	void GarrisonSpawnBuilding(const TArray<FString>& Args, UWorld* World)
+	{
+		SpawnGarrisonFixtureImpl(EGarrisonStructureType::Building, TEXT("Garrison.SpawnBuilding"), Args, World);
+	}
+
+	void GarrisonSpawnTrench(const TArray<FString>& Args, UWorld* World)
+	{
+		SpawnGarrisonFixtureImpl(EGarrisonStructureType::Trench, TEXT("Garrison.SpawnTrench"), Args, World);
+	}
+
+	void GarrisonSpawnWall(const TArray<FString>& Args, UWorld* World)
+	{
+		SpawnGarrisonFixtureImpl(EGarrisonStructureType::Wall, TEXT("Garrison.SpawnWall"), Args, World);
+	}
+
+	void OrderGarrison(const TArray<FString>& Args, UWorld* World)
+	{
+		UUnitRegistrySubsystem* Registry = World ? World->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+		if (!Registry || Args.Num() < 2)
+		{
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT OrderGarrison FAIL BadArgs (need: UnitIndex StructureId)"));
+			return;
+		}
+		const int32 UnitIndex = FCString::Atoi(*Args[0]);
+		const uint32 StructureId = static_cast<uint32>(FCString::Atoi(*Args[1]));
+		FUnitHandle Matched;
+		for (const FUnitHandle& Handle : Registry->GetSortedHandles())
+		{
+			if (Handle.Index == static_cast<uint32>(UnitIndex))
+			{
+				Matched = Handle;
+				break;
+			}
+		}
+		if (!Matched.IsValid())
+		{
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT OrderGarrison FAIL NoSuchUnit Index=%d"), UnitIndex);
+			return;
+		}
+		const bool bOk = Registry->IssueGarrisonOrder(Matched, StructureId);
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT OrderGarrison %s Unit=%u:%u Structure=%u"),
+			bOk ? TEXT("OK") : TEXT("FAIL"), Matched.Index, Matched.Serial, StructureId);
+	}
+
+	void OrderExitGarrison(const TArray<FString>& Args, UWorld* World)
+	{
+		UUnitRegistrySubsystem* Registry = World ? World->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+		if (!Registry || Args.Num() < 1)
+		{
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT OrderExitGarrison FAIL BadArgs (need: UnitIndex)"));
+			return;
+		}
+		const int32 UnitIndex = FCString::Atoi(*Args[0]);
+		FUnitHandle Matched;
+		for (const FUnitHandle& Handle : Registry->GetSortedHandles())
+		{
+			if (Handle.Index == static_cast<uint32>(UnitIndex))
+			{
+				Matched = Handle;
+				break;
+			}
+		}
+		if (!Matched.IsValid())
+		{
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT OrderExitGarrison FAIL NoSuchUnit Index=%d"), UnitIndex);
+			return;
+		}
+		const bool bOk = Registry->IssueExitGarrisonOrder(Matched);
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT OrderExitGarrison %s Unit=%u:%u"),
+			bOk ? TEXT("OK") : TEXT("FAIL"), Matched.Index, Matched.Serial);
+	}
 }
 
 // ---- Command registration (Task 4 portion) ----
@@ -518,3 +621,28 @@ static FAutoConsoleCommandWithWorldAndArgs GBattleGarrisonDumpStructures(
 	TEXT("Battle.Garrison.DumpStructures"),
 	TEXT("Dumps garrison structure records + booking state; EXEC_RESULT Garrison.Structure / Garrison.Booking lines"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BattleExec::GarrisonDumpStructures));
+
+static FAutoConsoleCommandWithWorldAndArgs GBattleGarrisonSpawnBuilding(
+	TEXT("Battle.Garrison.SpawnBuilding"),
+	TEXT("<x_m> <y_m> [rotDeg] -- task 2 gray-box building fixture (24x20 m, 2 units, 80 posts); EXEC_RESULT Garrison.SpawnBuilding"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BattleExec::GarrisonSpawnBuilding));
+
+static FAutoConsoleCommandWithWorldAndArgs GBattleGarrisonSpawnTrench(
+	TEXT("Battle.Garrison.SpawnTrench"),
+	TEXT("<x_m> <y_m> [rotDeg] -- task 2 gray-box trench fixture (64 m channel, Z -0.75, 48 posts); EXEC_RESULT Garrison.SpawnTrench"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BattleExec::GarrisonSpawnTrench));
+
+static FAutoConsoleCommandWithWorldAndArgs GBattleGarrisonSpawnWall(
+	TEXT("Battle.Garrison.SpawnWall"),
+	TEXT("<x_m> <y_m> [rotDeg] -- task 2 gray-box wall fixture (64 m, walkway Z 6, 48 posts); EXEC_RESULT Garrison.SpawnWall"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BattleExec::GarrisonSpawnWall));
+
+static FAutoConsoleCommandWithWorldAndArgs GBattleOrderGarrison(
+	TEXT("Battle.Order.Garrison"),
+	TEXT("<UnitIndex> <StructureId> -- task 4 garrison order; EXEC_RESULT OrderGarrison"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BattleExec::OrderGarrison));
+
+static FAutoConsoleCommandWithWorldAndArgs GBattleOrderExitGarrison(
+	TEXT("Battle.Order.ExitGarrison"),
+	TEXT("<UnitIndex> -- task 4 egress order; EXEC_RESULT OrderExitGarrison"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BattleExec::OrderExitGarrison));

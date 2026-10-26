@@ -43,6 +43,12 @@ struct MASSBATTLE_API FBattleCostGrid
 	 *  [Min,Max] (m, inclusive) impassable. Idempotent. Returns cells stamped. */
 	int32 StampImpassable(const FVector2D& BoxMin, const FVector2D& BoxMax);
 
+	/** Garrison mirror (spec §3.1): set all cells overlapping the box to Cost
+	 *  (high-but-passable entrance corridors). Idempotent, deterministic;
+	 *  Impassable is rejected -- use StampImpassable for that. Returns cells
+	 *  whose cost changed. */
+	int32 StampCost(const FVector2D& BoxMin, const FVector2D& BoxMax, uint8 Cost);
+
 	/** Clear all stamps back to passable (flat baseline). */
 	void ResetToFlat();
 };

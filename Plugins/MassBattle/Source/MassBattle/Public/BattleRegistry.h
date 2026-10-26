@@ -81,6 +81,19 @@ public:
 		float CommandedSpeedMps = 0.f, int32 CommandedFiles = 0);
 	/** Halt: clears the path intent; the formation holds where it stands. */
 	bool IssueStopOrder(FUnitHandle Handle);
+	// -- Phase garrison order surface (spec §4.1, task 4; game thread) --
+
+	/** Garrison into a structure. Infantry-only at issue (A9 guard clause:
+	 *  FCavalryTag roster -> reject + EXEC_RESULT line). */
+	bool IssueGarrisonOrder(FUnitHandle Handle, uint32 StructureId);
+	/** Begin egress (FSM consumes; no-op at the FSM when not garrisoned). */
+	bool IssueExitGarrisonOrder(FUnitHandle Handle);
+	/** A7 parking: a Move / re-Garrison received while garrisoned waits here
+	 *  and resumes at the egress assembly point. */
+	void ParkPendingAfterEgress(FUnitHandle Handle, const FUnitOrder& Order);
+	/** A7 resume: pops the parked order into CurrentOrder (serial bump).
+	 *  Returns false when nothing is parked. */
+	bool ConsumePendingAfterEgress(FUnitHandle Handle, FUnitOrder& OutParked);
 	/** Current order + its serial (locomotion change detector). */
 	const FUnitOrder* FindOrder(FUnitHandle Handle) const;
 	uint32 GetOrderSerial(FUnitHandle Handle) const;

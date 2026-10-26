@@ -24,6 +24,11 @@ void FBattleCostGrid::WorldToCell(const FVector2D& WorldPos, int32& OutX, int32&
 
 int32 FBattleCostGrid::StampImpassable(const FVector2D& BoxMin, const FVector2D& BoxMax)
 {
+	return StampCost(BoxMin, BoxMax, Impassable);
+}
+
+int32 FBattleCostGrid::StampCost(const FVector2D& BoxMin, const FVector2D& BoxMax, uint8 Cost)
+{
 	int32 MinX, MinY, MaxX, MaxY;
 	WorldToCell(BoxMin, MinX, MinY);
 	WorldToCell(BoxMax, MaxX, MaxY);
@@ -32,10 +37,10 @@ int32 FBattleCostGrid::StampImpassable(const FVector2D& BoxMin, const FVector2D&
 	{
 		for (int32 X = FMath::Max(0, MinX); X <= FMath::Min(DimX - 1, MaxX); ++X)
 		{
-			uint8& Cost = CellCost[IndexOf(X, Y)];
-			if (Cost != Impassable)
+			uint8& Cell = CellCost[IndexOf(X, Y)];
+			if (Cell != Cost)
 			{
-				Cost = Impassable;
+				Cell = Cost;
 				++Stamped;
 			}
 		}
