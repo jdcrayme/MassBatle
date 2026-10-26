@@ -330,9 +330,9 @@ void UBattleMovementSoakController::OnTick(float TimeDelta)
 		// ~15 s of fixed-step settle: all units halted, ladders unwind on
 		// slot arrival, shoves stop (only moving units shove). The garrison
 		// variant needs a longer unwind: a garrison order issued at the last
-		// cadence tick still has to approach + file + occupy (~70 s).
+		// cadence tick still has to approach (up to ~90 m) + file + occupy.
 		SettleTicks += 1;
-		const int32 SettleBudget = FGarrisonCVars::SoakOrders() != 0 ? 5000 : 900;
+		const int32 SettleBudget = FGarrisonCVars::SoakOrders() != 0 ? 12000 : 900;
 		if (SettleTicks > SettleBudget)
 		{
 			Phase = EPhase::Assert;
@@ -373,7 +373,12 @@ void UBattleMovementSoakController::OnTick(float TimeDelta)
 			if (Formation->GarrisonMode != EGarrisonMode::None)
 			{
 				++GarrisonedNow;
-				if (Formation->GarrisonPhase != EGarrisonPhase::Settled)
+				// A4 semantics: capacity waiters (Queue) and long approaches
+				// are LEGITIMATE end states -- the gate only fails units
+				// caught MID-TRANSITION after the settle budget (a stall).
+				if (Formation->GarrisonPhase == EGarrisonPhase::Ingress
+					|| Formation->GarrisonPhase == EGarrisonPhase::Occupy
+					|| Formation->GarrisonPhase == EGarrisonPhase::Egress)
 				{
 					++GarrisonedUnsettled;
 				}
