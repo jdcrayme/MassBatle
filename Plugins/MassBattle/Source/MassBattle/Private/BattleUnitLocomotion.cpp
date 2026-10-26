@@ -53,4 +53,14 @@ namespace FUnitLocomotion
 		const float Arc = 2.f * LookaheadMeters;
 		return Arc / Angle; // r = s / theta
 	}
+
+	int32 ResolveCommandedFiles(int32 CommandedFiles, int32 NumSlots, int32 CurrentNumFiles)
+	{
+		if (CommandedFiles <= 0 || NumSlots <= 0)
+		{
+			return 0; // keep the current layout
+		}
+		const int32 Clamped = FMath::Clamp(CommandedFiles, 1, NumSlots);
+		return (Clamped != CurrentNumFiles) ? Clamped : 0;
+	}
 }

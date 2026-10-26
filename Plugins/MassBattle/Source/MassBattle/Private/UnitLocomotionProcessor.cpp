@@ -32,9 +32,12 @@ namespace
 		ECVF_Default);
 
 	// Commanded facing-change rate (rad/s) -- the §8.2 separate facing cap.
+	// 0.35 rad/s: an in-place refront rotates the block slowly enough that the
+	// outer files' slot targets sweep at ~walk speed (tracking the arc instead
+	// of cutting chords through the formation -- faster rates jam the re-dress).
 	TAutoConsoleVariable<float> GBattleMovementFacingDeltaRate(
 		TEXT("Battle.Movement.FacingDeltaRate"),
-		1.0f,
+		0.35f,
 		TEXT("Commanded facing-change rate, rad/s (arch §8.2 facing cap)."),
 		ECVF_Default);
 
@@ -177,12 +180,27 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 		{
 			Formation.PlannedOrderSerial = Serial;
 			Formation.PathS = 0.f;
+			Formation.PassLocked = 0; // new order = new pass (T1.7 commit rule is per traversal)
+			// A2 width control: re-front on a commanded file count before the
+			// layout is consumed again. NumSlots is preserved (casualty reflow
+			// semantics); the Generation bump below makes FormationSlotResolve
+			// re-run the slot assigner for the new layout.
+			if (const int32 NewFiles = FUnitLocomotion::ResolveCommandedFiles(
+				Order->CommandedFiles, Formation.NumSlots, Formation.NumFiles);
+				NewFiles > 0)
+			{
+				UE_LOG(LogMassBattle, Display,
+					TEXT("EXEC_RESULT WidthOverride Unit=%u:%u Files %d->%d"),
+					Unit.Index, Unit.Serial, Formation.NumFiles, NewFiles);
+				Formation.NumFiles = NewFiles;
+			}
 			if (Order->Type == FUnitOrder::EType::Move)
 			{
 				FBattlePlannedPath Plan;
 				// Ground rule 2: anchor in cm, planner in meters.
-				if (FBattlePathPlanner::FindPath(CostGrid->GetGrid(), Formation.AnchorPos * 0.01f,
-					Order->AnchorPos * 0.01f, 0.f, Plan))
+				const bool bFound = FBattlePathPlanner::FindPath(CostGrid->GetGrid(), Formation.AnchorPos * 0.01f,
+					Order->AnchorPos * 0.01f, 0.f, Plan);
+				if (bFound && Plan.TotalLength > 1e-4f)
 				{
 					FBattlePathPlanner::Smooth(CostGrid->GetGrid(), 1.0f, Plan);
 					FBattlePlannedPath Resampled;
@@ -191,6 +209,17 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 					UE_LOG(LogMassBattle, Display,
 						TEXT("EXEC_RESULT PlanPath Unit=%u:%u Length=%.1fm Points=%d"),
 						Unit.Index, Unit.Serial, Resampled.TotalLength, Resampled.Points.Num());
+				}
+				else if (bFound)
+				{
+					// Degenerate (zero-length) plan: an in-place reform order.
+					// A 2-point zero-length polyline would pass IsValid() but
+					// degenerates SampleAt/Project -- store no path so the
+					// layout uses the anchor formula and the facing settles.
+					Formation.Path.NumPoints = 0;
+					UE_LOG(LogMassBattle, Display,
+						TEXT("EXEC_RESULT PlanPath Unit=%u:%u IN-PLACE -- reform without motion"),
+						Unit.Index, Unit.Serial);
 				}
 				else
 				{
@@ -338,6 +367,13 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 			Formation.SpacingScale = FUnitCompression::AdvanceSpacingScale(
 				Formation.SpacingScale, TargetScale, DT);
 		}
+		else
+		{
+			// No path (arrived / stopped / in-place reform): no corridor to hold
+			// for -- recover toward open-order spacing.
+			Formation.SpacingScale = FUnitCompression::AdvanceSpacingScale(
+				Formation.SpacingScale, 1.f, DT);
+		}
 
 		// §8.6 pass-through: the anchor proceeds at ~55% speed while
 		// interpenetrating another unit (no facing change -- the §8.2 lock
@@ -347,7 +383,7 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 			LimitIn.CommandedSpeed *= FUnitContact::PassThroughSpeedFactor;
 		}
 
-		// ---- Anchor progression + facing cap ----
+		// ---- Anchor progression + facing cap (A2 refront-at-destination) ----
 		if (bHasPath && CurrentLimit > 0.f)
 		{
 			// PathS is centimeters (fragment convention); advance in cm against
@@ -359,24 +395,40 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 			if (FPathFrameLayout::SampleAt(PathM, Formation.PathS * 0.01f, AnchorM, Tangent))
 			{
 				Formation.AnchorPos = AnchorM * 100.f;
+				// En route the facing rides the path tangent (march normally);
+				// the commanded facing is assumed AFTER arrival through the
+				// no-path Move branch below -- rotating in place from a formed
+				// block (the S6-proven re-dress), not mid-march.
 				const float PathYaw = FMath::RadiansToDegrees(FMath::Atan2(Tangent.Y, Tangent.X));
 				if (!bInterpenetrating)
 				{
 					Formation.FacingYaw = FUnitLocomotion::AdvanceFacing(
 						Formation.FacingYaw, PathYaw, FacingDeltaRate, DT);
 				}
+				// Arrived: drop the path so FormationSlotResolve re-lays the block
+				// in the anchor frame. On a straight final approach the anchor-frame
+				// layout coincides with the path-laid one (continuous); from there
+				// the layout rotates with the settling facing. The Generation bump
+				// triggers the unbounded nearest-slot re-assign.
+				const float RemainingCm = FMath::Max(0.f, PathM.TotalLength * 100.f - Formation.PathS);
+				if (Order->Type == FUnitOrder::EType::Move && RemainingCm <= 1.f)
+				{
+					UE_LOG(LogMassBattle, Display,
+						TEXT("EXEC_RESULT ArriveRefront Unit=%u:%u Facing=%.1f Files=%d"),
+						Unit.Index, Unit.Serial, Formation.FacingYaw, Formation.NumFiles);
+					Formation.Path.NumPoints = 0;
+					Formation.Path.TotalLength = 0.f;
+					Formation.PathS = 0.f;
+					++Formation.Generation;
+				}
 			}
 		}
-		else if (!bHasPath && Order->Type == FUnitOrder::EType::Move &&
-			FVector2D::DistSquared(Formation.AnchorPos, Order->AnchorPos) > 1.f)
+		else if (!bHasPath && !bInterpenetrating && Order->Type == FUnitOrder::EType::Move)
 		{
-			// No path (unreachable): no anchor motion. Facing still tracks the
-			// order intent so the formation presents correctly.
-			if (!bInterpenetrating)
-			{
-				Formation.FacingYaw = FUnitLocomotion::AdvanceFacing(
-					Formation.FacingYaw, Order->FacingYaw, FacingDeltaRate, DT);
-			}
+			// No path: unreachable (hold position) or an in-place reform order --
+			// either way the facing settles to the ordered intent.
+			Formation.FacingYaw = FUnitLocomotion::AdvanceFacing(
+				Formation.FacingYaw, Order->FacingYaw, FacingDeltaRate, DT);
 		}
 		else if (!bHasPath && !bInterpenetrating && Order->Type == FUnitOrder::EType::Stop)
 		{

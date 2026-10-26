@@ -74,8 +74,11 @@ public:
 
 	// -- A2 thin order API (decision A2; game thread) --
 
-	/** Move to the anchor (cm) with final facing (deg); speed m/s, 0 = walk. */
-	bool IssueMoveOrder(FUnitHandle Handle, const FVector2D& AnchorPosCm, float FacingYawDeg, float CommandedSpeedMps = 0.f);
+	/** Move to the anchor (cm) with final facing (deg); speed m/s, 0 = walk.
+	 *  CommandedFiles > 0 re-fronts the unit to that many files on the next
+	 *  plan (Total War-style width control); 0 keeps the current layout. */
+	bool IssueMoveOrder(FUnitHandle Handle, const FVector2D& AnchorPosCm, float FacingYawDeg,
+		float CommandedSpeedMps = 0.f, int32 CommandedFiles = 0);
 	/** Halt: clears the path intent; the formation holds where it stands. */
 	bool IssueStopOrder(FUnitHandle Handle);
 	/** Current order + its serial (locomotion change detector). */

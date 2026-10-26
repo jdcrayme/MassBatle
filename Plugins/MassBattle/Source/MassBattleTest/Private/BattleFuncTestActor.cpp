@@ -1730,6 +1730,786 @@ void AUnitSqueezeMorphTest::Tick(float DeltaSeconds)
 
 
 // ---------------------------------------------------------------------------
+// S4_WidthOverride (A2 width control): commanded file count re-fronts the
+// unit at order consumption, mid-march, twice (narrow then back to spawn).
+// ---------------------------------------------------------------------------
+namespace
+{
+	// Coherence + separation gates shared by both S4 asserts (same gates as
+	// T1.7c): all 40 entities inside the re-laid body bounds, no co-located pair.
+	bool S4UnitCoherent(UWorld* World, AUnitActor* Actor, FString& OutError)
+	{
+		TArray<FVector2D> PosM;
+		GatherEntityPositions(World, Actor->GetUnitHandle(), PosM);
+		const FUnitFormationSharedFragment* F = FindFormation(World, Actor->GetUnitHandle());
+		if (!F)
+		{
+			OutError = TEXT("formation fragment missing");
+			return false;
+		}
+		if (PosM.Num() != 40)
+		{
+			OutError = FString::Printf(TEXT("roster %d (expected 40)"), PosM.Num());
+			return false;
+		}
+		const int32 NumRanks = FMath::Max(1, FMath::CeilToInt(static_cast<float>(F->NumSlots) / F->NumFiles));
+		const float Rad = FMath::DegreesToRadians(F->FacingYaw);
+		const FVector2D Front(FMath::Cos(Rad), FMath::Sin(Rad));
+		const float HalfRanksM = static_cast<float>(NumRanks - 1) * F->RankSpacing * 0.5f * 0.01f;
+		const FVector2D BodyCenter = F->AnchorPos * 0.01f - Front * HalfRanksM;
+		const float LimitAlong = HalfRanksM + F->RankSpacing * 0.5f * 0.01f + 3.f;
+		const float LimitSide = (F->NumFiles * F->FileSpacing * 0.5f) * 0.01f + 3.f;
+		int32 Strays = 0;
+		float MinSq = FLT_MAX;
+		for (int32 i = 0; i < PosM.Num(); ++i)
+		{
+			const FVector2D Delta = (PosM[i] - BodyCenter);
+			if (FMath::Abs(FVector2D::DotProduct(Delta, Front)) > LimitAlong
+				|| FMath::Abs(FVector2D::DotProduct(Delta, FVector2D(-Front.Y, Front.X))) > LimitSide)
+			{
+				++Strays;
+			}
+			for (int32 j = i + 1; j < PosM.Num(); ++j)
+			{
+				MinSq = FMath::Min(MinSq, FVector2D::DistSquared(PosM[i], PosM[j]));
+			}
+		}
+		if (Strays > 0)
+		{
+			OutError = FString::Printf(TEXT("%d strays outside body (files=%d ranks=%d)"), Strays, F->NumFiles, NumRanks);
+			return false;
+		}
+		const float MinSep = FMath::Sqrt(MinSq);
+		if (MinSep < 0.3f)
+		{
+			OutError = FString::Printf(TEXT("separation %.3f m"), MinSep);
+			return false;
+		}
+		return true;
+	}
+}
+
+AUnitWidthOverrideTest::AUnitWidthOverrideTest()
+{
+	TimeLimit = 420.f;
+	TimesUpResult = EFunctionalTestResult::Error;
+}
+
+void AUnitWidthOverrideTest::BeginTest()
+{
+	// Manager-equivalent start (phase-0 pattern).
+	SetActorTickEnabled(true);
+	PrimaryActorTick.bCanEverTick = true;
+	bIsRunning = true;
+	Result = EFunctionalTestResult::Running;
+}
+
+void AUnitWidthOverrideTest::CompleteTest(EFunctionalTestResult TestResult, const FString& Message)
+{
+	// Manager-less completion (phase-0 pattern).
+	Result = TestResult;
+	bIsRunning = false;
+	SetActorTickEnabled(false);
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S4_WidthOverride Complete Result=%s Msg=%s"),
+	       *LexToString(TestResult), *Message);
+}
+
+void AUnitWidthOverrideTest::StartTest()
+{
+	Super::StartTest();
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("no world"));
+		return;
+	}
+	UBattleTestSettings::ApplyTestMode();
+	TArray<FString> Violations;
+	if (!UBattleTestSettings::AssertTestMode(nullptr, &Violations, World))
+	{
+		CompleteTest(EFunctionalTestResult::Error,
+			FString::Printf(TEXT("test-mode contract violated: %s"), *FString::Join(Violations, TEXT("; "))));
+		return;
+	}
+	if (UBattleDebugSubsystem* Debug = World->GetSubsystem<UBattleDebugSubsystem>())
+	{
+		Debug->ResetDiagnostics();
+	}
+	// Flat field: the width change must ride the plain order path with no
+	// narrow-pass interaction (S3 owns the stamped-wall coverage).
+	UBattleCostGridSubsystem* CostGrid = World->GetSubsystem<UBattleCostGridSubsystem>();
+	if (!CostGrid)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("cost grid missing"));
+		return;
+	}
+	CostGrid->ResetToFlat();
+
+	FActorSpawnParameters Params;
+	Params.ObjectFlags |= RF_Transient;
+	Unit = World->SpawnActor<AUnitActor>(FVector(-4000.f, 0.f, 100.f), FRotator(0.f, 90.f, 0.f), Params);
+	if (Unit)
+	{
+		Unit->EduRowIndex = 0;
+		Unit->SoldierCount = 40;
+		FBattleSpawnResult SpawnResult;
+		FString Error;
+		if (!Unit->SpawnEntities(SpawnResult, Error))
+		{
+			Unit = nullptr;
+		}
+	}
+	if (!Unit)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("spawn failed"));
+		return;
+	}
+	if (const FUnitFormationSharedFragment* F = FindFormation(World, Unit->GetUnitHandle()))
+	{
+		FilesAtSpawn = F->NumFiles;
+	}
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S4_WidthOverride Spawned (-40,0) filesAtSpawn=%d"), FilesAtSpawn);
+	Phase = EPhase::March;
+	TicksInPhase = 0;
+}
+
+void AUnitWidthOverrideTest::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+	if (!IsRunning() || Phase == EPhase::Done)
+	{
+		return;
+	}
+	UWorld* World = GetWorld();
+	UUnitRegistrySubsystem* Registry = World ? World->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	UBattleDebugSubsystem* Debug = World ? World->GetSubsystem<UBattleDebugSubsystem>() : nullptr;
+	if (!Registry || !Debug)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("subsystems missing"));
+		return;
+	}
+	++TicksInPhase;
+
+	const FVector2D GoalA(4000.f, 0.f);    // 80 m east of spawn
+	const FVector2D GoalB(4000.f, 4000.f); // re-front leg: 40 m north of GoalA
+	auto Arrived = [this](const FVector2D& Goal) -> bool
+	{
+		const FUnitFormationSharedFragment* F = FindFormation(GetWorld(), Unit->GetUnitHandle());
+		return F && FVector2D::DistSquared(F->AnchorPos, Goal) <= FMath::Square(200.f);
+	};
+
+	if (Phase == EPhase::March)
+	{
+		if (TicksInPhase == 1)
+		{
+			// Re-front to 10 files (ranks 4) on the march: the width applies at
+			// order consumption, before the fresh plan rides out.
+			Registry->IssueMoveOrder(Unit->GetUnitHandle(), GoalA, 90.f, 0.f, 10);
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S4_WidthOverride march order files=10 goal=(40,0)m"));
+			return;
+		}
+		if (Arrived(GoalA))
+		{
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S4_WidthOverride arrived ticks=%d"), TicksInPhase);
+			Phase = EPhase::Settle;
+			TicksInPhase = 0;
+		}
+		else if (TicksInPhase > 4000)
+		{
+			CompleteTest(EFunctionalTestResult::Error, TEXT("march timed out"));
+		}
+	}
+	else if (Phase == EPhase::Settle || Phase == EPhase::Settle2)
+	{
+		// Bounded re-dress into the new layout.
+		FString Err;
+		if (S4UnitCoherent(World, Unit, Err) || TicksInPhase > 3000)
+		{
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S4_WidthOverride settle done phase=%d ticks=%d coherent=%d (%s)"),
+				static_cast<int32>(Phase), TicksInPhase, Err.IsEmpty() ? 1 : 0, *Err);
+			Phase = (Phase == EPhase::Settle) ? EPhase::Assert : EPhase::Assert2;
+			TicksInPhase = 0;
+		}
+	}
+	else if (Phase == EPhase::Assert)
+	{
+		bool bOk = true;
+		const FUnitFormationSharedFragment* F = FindFormation(World, Unit->GetUnitHandle());
+		if (!F)
+		{
+			CompleteTest(EFunctionalTestResult::Error, TEXT("formation missing at assert"));
+			return;
+		}
+		if (F->NumFiles != 10)
+		{
+			AddError(FString::Printf(TEXT("S4 FAIL: files %d (expected commanded 10)"), F->NumFiles));
+			bOk = false;
+		}
+		const int32 DerivedRanks = FMath::Max(1, FMath::CeilToInt(static_cast<float>(F->NumSlots) / F->NumFiles));
+		if (DerivedRanks != 4)
+		{
+			AddError(FString::Printf(TEXT("S4 FAIL: ranks %d (expected 4)"), DerivedRanks));
+			bOk = false;
+		}
+		FString Err;
+		if (!S4UnitCoherent(World, Unit, Err))
+		{
+			AddError(FString::Printf(TEXT("S4 FAIL: %s"), *Err));
+			bOk = false;
+		}
+		if (Debug->GetLadderEscalations() != 0)
+		{
+			AddError(FString::Printf(TEXT("S4 FAIL: %d unstuck escalations"), Debug->GetLadderEscalations()));
+			bOk = false;
+		}
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S4Assert files=%d ranks=%d escalations=%d ok=%d"),
+			F->NumFiles, DerivedRanks, Debug->GetLadderEscalations(), bOk ? 1 : 0);
+		if (!bOk)
+		{
+			Phase = EPhase::Done;
+			CompleteTest(EFunctionalTestResult::Failed, TEXT("S4 width assertions failed"));
+			return;
+		}
+		Phase = EPhase::Refront;
+		TicksInPhase = 0;
+	}
+	else if (Phase == EPhase::Refront)
+	{
+		if (TicksInPhase == 1)
+		{
+			// Back to the spawn layout on a fresh plan (north leg): width restore
+			// must work in both directions and on a second order.
+			Registry->IssueMoveOrder(Unit->GetUnitHandle(), GoalB, 0.f, 0.f, FilesAtSpawn);
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S4_WidthOverride refront order files=%d goal=(40,40)m"), FilesAtSpawn);
+			return;
+		}
+		if (Arrived(GoalB))
+		{
+			Phase = EPhase::Settle2;
+			TicksInPhase = 0;
+		}
+		else if (TicksInPhase > 4000)
+		{
+			CompleteTest(EFunctionalTestResult::Error, TEXT("refront march timed out"));
+		}
+	}
+	else if (Phase == EPhase::Assert2)
+	{
+		bool bOk = true;
+		const FUnitFormationSharedFragment* F = FindFormation(World, Unit->GetUnitHandle());
+		if (!F)
+		{
+			CompleteTest(EFunctionalTestResult::Error, TEXT("formation missing at assert2"));
+			return;
+		}
+		if (F->NumFiles != FilesAtSpawn)
+		{
+			AddError(FString::Printf(TEXT("S4 FAIL: files %d (expected spawn layout %d)"), F->NumFiles, FilesAtSpawn));
+			bOk = false;
+		}
+		FString Err;
+		if (!S4UnitCoherent(World, Unit, Err))
+		{
+			AddError(FString::Printf(TEXT("S4 FAIL: %s"), *Err));
+			bOk = false;
+		}
+		if (Debug->GetLadderEscalations() != 0)
+		{
+			AddError(FString::Printf(TEXT("S4 FAIL: %d unstuck escalations"), Debug->GetLadderEscalations()));
+			bOk = false;
+		}
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S4Assert2 files=%d escalations=%d ok=%d"),
+			F->NumFiles, Debug->GetLadderEscalations(), bOk ? 1 : 0);
+		Phase = EPhase::Done;
+		CompleteTest(bOk ? EFunctionalTestResult::Succeeded : EFunctionalTestResult::Failed,
+			bOk ? TEXT("S4 width override green") : TEXT("S4 refront assertions failed"));
+	}
+}
+
+
+// ---------------------------------------------------------------------------
+// S5_MarchRefront (A2 march-then-refront): commanded facing applies NEAR the
+// destination, not during the march; on arrival the block re-lays in place.
+// ---------------------------------------------------------------------------
+AUnitMarchRefrontTest::AUnitMarchRefrontTest()
+{
+	TimeLimit = 420.f;
+	TimesUpResult = EFunctionalTestResult::Error;
+}
+
+void AUnitMarchRefrontTest::BeginTest()
+{
+	SetActorTickEnabled(true);
+	PrimaryActorTick.bCanEverTick = true;
+	bIsRunning = true;
+	Result = EFunctionalTestResult::Running;
+}
+
+void AUnitMarchRefrontTest::CompleteTest(EFunctionalTestResult TestResult, const FString& Message)
+{
+	Result = TestResult;
+	bIsRunning = false;
+	SetActorTickEnabled(false);
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S5_MarchRefront Complete Result=%s Msg=%s"),
+	       *LexToString(TestResult), *Message);
+}
+
+void AUnitMarchRefrontTest::StartTest()
+{
+	Super::StartTest();
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("no world"));
+		return;
+	}
+	UBattleTestSettings::ApplyTestMode();
+	TArray<FString> Violations;
+	if (!UBattleTestSettings::AssertTestMode(nullptr, &Violations, World))
+	{
+		CompleteTest(EFunctionalTestResult::Error,
+			FString::Printf(TEXT("test-mode contract violated: %s"), *FString::Join(Violations, TEXT("; "))));
+		return;
+	}
+	if (UBattleDebugSubsystem* Debug = World->GetSubsystem<UBattleDebugSubsystem>())
+	{
+		Debug->ResetDiagnostics();
+	}
+	UBattleCostGridSubsystem* CostGrid = World->GetSubsystem<UBattleCostGridSubsystem>();
+	if (!CostGrid)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("cost grid missing"));
+		return;
+	}
+	CostGrid->ResetToFlat();
+
+	// Straight +X path (path yaw 0); commanded facing 135 deg is maximally off
+	// the tangent so "marching on tangent" vs "refronted" cannot alias.
+	FActorSpawnParameters Params;
+	Params.ObjectFlags |= RF_Transient;
+	Unit = World->SpawnActor<AUnitActor>(FVector(-4000.f, 0.f, 100.f), FRotator(0.f, 0.f, 0.f), Params);
+	if (Unit)
+	{
+		Unit->EduRowIndex = 0;
+		Unit->SoldierCount = 40;
+		FBattleSpawnResult SpawnResult;
+		FString Error;
+		if (!Unit->SpawnEntities(SpawnResult, Error))
+		{
+			Unit = nullptr;
+		}
+	}
+	if (!Unit)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("spawn failed"));
+		return;
+	}
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S5_MarchRefront Spawned (-40,0) facing=0"));
+	Phase = EPhase::March;
+	TicksInPhase = 0;
+}
+
+void AUnitMarchRefrontTest::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+	if (!IsRunning() || Phase == EPhase::Done)
+	{
+		return;
+	}
+	UWorld* World = GetWorld();
+	UUnitRegistrySubsystem* Registry = World ? World->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	UBattleDebugSubsystem* Debug = World ? World->GetSubsystem<UBattleDebugSubsystem>() : nullptr;
+	if (!Registry || !Debug)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("subsystems missing"));
+		return;
+	}
+	++TicksInPhase;
+	constexpr float CommandedFacing = 135.f;
+	constexpr float RefrontWindowCm = 3000.f; // probe stays this far from the goal
+
+	if (Phase == EPhase::March)
+	{
+		const FUnitFormationSharedFragment* F = FindFormation(World, Unit->GetUnitHandle());
+		if (!F)
+		{
+			CompleteTest(EFunctionalTestResult::Error, TEXT("formation missing"));
+			return;
+		}
+		if (TicksInPhase == 1)
+		{
+			Registry->IssueMoveOrder(Unit->GetUnitHandle(), FVector2D(4000.f, 0.f), CommandedFacing, 0.f, 10);
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S5_MarchRefront order goal=(40,0)m facing=135 files=10"));
+			return;
+		}
+		// En-route probes: while safely outside the refront window the facing
+		// must ride the path tangent (0 deg) and stay far from the commanded
+		// facing (march normally; no early refront).
+		if (F->Path.IsValid() && F->PathS > 2000.f
+			&& F->PathS < F->Path.TotalLength - RefrontWindowCm)
+		{
+			if (FMath::Abs(FMath::FindDeltaAngleDegrees(F->FacingYaw, 0.f)) > 30.f)
+			{
+				++OffTangentViolations;
+			}
+			if (FMath::Abs(FMath::FindDeltaAngleDegrees(F->FacingYaw, CommandedFacing)) < 45.f)
+			{
+				++EarlyRefrontViolations;
+			}
+			// March coherence (the user-visible gate): the block must travel
+			// together around the anchor -- entities beelining for the
+			// destination slots (the pioneer failure mode) end up far outside
+			// the moving body.
+			TArray<FVector2D> PosM;
+			GatherEntityPositions(World, Unit->GetUnitHandle(), PosM);
+			const int32 NumRanks = FMath::Max(1, FMath::CeilToInt(static_cast<float>(F->NumSlots) / F->NumFiles));
+			const float Rad = FMath::DegreesToRadians(F->FacingYaw);
+			const FVector2D Front(FMath::Cos(Rad), FMath::Sin(Rad));
+			const FVector2D Side(-Front.Y, Front.X);
+			const float HalfRanksM = static_cast<float>(NumRanks - 1) * F->RankSpacing * 0.01f * 0.5f;
+			const FVector2D BodyCenter = F->AnchorPos * 0.01f - Front * HalfRanksM;
+			const float LimitAlong = HalfRanksM + F->RankSpacing * 0.5f * 0.01f + 5.f;
+			const float LimitSide = (F->NumFiles * F->FileSpacing * 0.5f) * 0.01f + 5.f;
+			for (const FVector2D& P : PosM)
+			{
+				const FVector2D Delta = P - BodyCenter;
+				if (FMath::Abs(FVector2D::DotProduct(Delta, Front)) > LimitAlong
+					|| FMath::Abs(FVector2D::DotProduct(Delta, Side)) > LimitSide)
+				{
+					++MarchCoherenceViolations;
+					break;
+				}
+			}
+		}
+		// Arrival = the locomotion stage drops the path (ArriveRefront).
+		if (!F->Path.IsValid() && TicksInPhase > 10)
+		{
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT S5_MarchRefront arrived ticks=%d offTangent=%d earlyRefront=%d marchCoherence=%d facingAtArrival=%.1f"),
+				TicksInPhase, OffTangentViolations, EarlyRefrontViolations, MarchCoherenceViolations, F->FacingYaw);
+			Phase = EPhase::Settle;
+			TicksInPhase = 0;
+		}
+		else if (TicksInPhase > 4000)
+		{
+			CompleteTest(EFunctionalTestResult::Error, TEXT("march timed out"));
+		}
+	}
+	else if (Phase == EPhase::Settle)
+	{
+		const FUnitFormationSharedFragment* F = FindFormation(World, Unit->GetUnitHandle());
+		FString Err;
+		const bool bCoherent = S4UnitCoherent(World, Unit, Err);
+		const bool bFacingSettled = F
+			&& FMath::Abs(FMath::FindDeltaAngleDegrees(F->FacingYaw, CommandedFacing)) <= 5.f;
+		FacingSettledTicks = (bCoherent && bFacingSettled) ? FacingSettledTicks + 1 : 0;
+		if (FacingSettledTicks >= 30 || TicksInPhase > 3000)
+		{
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S5_MarchRefront settle done ticks=%d coherent=%d (%s)"),
+				TicksInPhase, Err.IsEmpty() ? 1 : 0, *Err);
+			Phase = EPhase::Assert;
+		}
+	}
+	else if (Phase == EPhase::Assert)
+	{
+		bool bOk = true;
+		const FUnitFormationSharedFragment* F = FindFormation(World, Unit->GetUnitHandle());
+		if (!F)
+		{
+			CompleteTest(EFunctionalTestResult::Error, TEXT("formation missing at assert"));
+			return;
+		}
+		if (F->NumFiles != 10)
+		{
+			AddError(FString::Printf(TEXT("S5 FAIL: files %d (expected 10)"), F->NumFiles));
+			bOk = false;
+		}
+		const int32 DerivedRanks = FMath::Max(1, FMath::CeilToInt(static_cast<float>(F->NumSlots) / F->NumFiles));
+		if (DerivedRanks != 4)
+		{
+			AddError(FString::Printf(TEXT("S5 FAIL: ranks %d (expected 4)"), DerivedRanks));
+			bOk = false;
+		}
+		const float FacingErr = FMath::Abs(FMath::FindDeltaAngleDegrees(F->FacingYaw, CommandedFacing));
+		if (FacingErr > 5.f)
+		{
+			AddError(FString::Printf(TEXT("S5 FAIL: facing %.1f (expected %.1f, err %.1f)"),
+				F->FacingYaw, CommandedFacing, FacingErr));
+			bOk = false;
+		}
+		// Diagnostic: dump the closest entity pair (states, slots, targets) --
+		// pins whatever pair remains co-located after the re-dress.
+		{
+			TArray<FVector2D> PosM;
+			GatherEntityPositions(World, Unit->GetUnitHandle(), PosM);
+			int32 Bi = INDEX_NONE, Bj = INDEX_NONE;
+			float MinSq = FLT_MAX;
+			for (int32 i = 0; i < PosM.Num(); ++i)
+			{
+				for (int32 j = i + 1; j < PosM.Num(); ++j)
+				{
+					const float D = FVector2D::DistSquared(PosM[i], PosM[j]);
+					if (D < MinSq) { MinSq = D; Bi = i; Bj = j; }
+				}
+			}
+			if (Bi != INDEX_NONE && FMath::Sqrt(MinSq) < 0.3f)
+			{
+				UMassEntitySubsystem* ES = World->GetSubsystem<UMassEntitySubsystem>();
+				const TArray<FMassEntityHandle>* Roster = Registry->FindRoster(Unit->GetUnitHandle());
+				if (ES && Roster)
+				{
+					FMassEntityManager& EM = ES->GetMutableEntityManager();
+					auto Dump = [&EM, &PosM, &Roster](int32 RosterIdx) -> FString
+					{
+						const FMassEntityView V(EM, (*Roster)[RosterIdx]);
+						const FSlotAssignmentFragment* SA = V.GetFragmentDataPtr<FSlotAssignmentFragment>();
+						const FSlotTargetFragment* ST = V.GetFragmentDataPtr<FSlotTargetFragment>();
+						const FMovementStateFragment* MS = V.GetFragmentDataPtr<FMovementStateFragment>();
+						const FServoStateFragment* SV = V.GetFragmentDataPtr<FServoStateFragment>();
+						return FString::Printf(TEXT("idx=%d pos=(%.2f,%.2f) slot=%d target=(%.1f,%.1f) state=%d ladder=%d"),
+							RosterIdx, PosM[RosterIdx].X, PosM[RosterIdx].Y,
+							SA ? SA->SlotIndex : -1,
+							ST ? ST->TargetPos.X * 0.01f : -1.f, ST ? ST->TargetPos.Y * 0.01f : -1.f,
+							MS ? static_cast<int32>(MS->State) : -1, SV ? SV->LadderLevel : -1);
+					};
+					UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT S5ClosestPair dist=%.3f A[%s] B[%s]"),
+						FMath::Sqrt(MinSq), *Dump(Bi), *Dump(Bj));
+				}
+			}
+		}
+		if (FVector2D::DistSquared(F->AnchorPos, FVector2D(4000.f, 0.f)) > FMath::Square(250.f))
+		{
+			AddError(FString::Printf(TEXT("S5 FAIL: anchor (%.0f,%.0f) not at goal"), F->AnchorPos.X, F->AnchorPos.Y));
+			bOk = false;
+		}
+		FString Err;
+		if (!S4UnitCoherent(World, Unit, Err))
+		{
+			AddError(FString::Printf(TEXT("S5 FAIL: %s"), *Err));
+			bOk = false;
+		}
+		if (EarlyRefrontViolations > 0 || OffTangentViolations > 0 || MarchCoherenceViolations > 0)
+		{
+			AddError(FString::Printf(TEXT("S5 FAIL: march probes earlyRefront=%d offTangent=%d marchCoherence=%d"),
+				EarlyRefrontViolations, OffTangentViolations, MarchCoherenceViolations));
+			bOk = false;
+		}
+		if (Debug->GetLadderEscalations() != 0)
+		{
+			AddError(FString::Printf(TEXT("S5 FAIL: %d unstuck escalations"), Debug->GetLadderEscalations()));
+			bOk = false;
+		}
+		UE_LOG(LogMassBattle, Display,
+			TEXT("EXEC_RESULT S5Assert files=%d ranks=%d facing=%.1f escalations=%d ok=%d"),
+			F->NumFiles, DerivedRanks, F->FacingYaw, Debug->GetLadderEscalations(), bOk ? 1 : 0);
+		Phase = EPhase::Done;
+		CompleteTest(bOk ? EFunctionalTestResult::Succeeded : EFunctionalTestResult::Failed,
+			bOk ? TEXT("S5 march-then-refront green") : TEXT("S5 assertions failed"));
+	}
+}
+
+// ---------------------------------------------------------------------------
+// S6_InPlaceReform (A2 in-place reform): standing unit, anchor unchanged,
+// facing +135 deg, files 20 -> 8 -- achieved in bounded time without drift.
+// ---------------------------------------------------------------------------
+AUnitInPlaceReformTest::AUnitInPlaceReformTest()
+{
+	TimeLimit = 300.f;
+	TimesUpResult = EFunctionalTestResult::Error;
+}
+
+void AUnitInPlaceReformTest::BeginTest()
+{
+	SetActorTickEnabled(true);
+	PrimaryActorTick.bCanEverTick = true;
+	bIsRunning = true;
+	Result = EFunctionalTestResult::Running;
+}
+
+void AUnitInPlaceReformTest::CompleteTest(EFunctionalTestResult TestResult, const FString& Message)
+{
+	Result = TestResult;
+	bIsRunning = false;
+	SetActorTickEnabled(false);
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S6_InPlaceReform Complete Result=%s Msg=%s"),
+	       *LexToString(TestResult), *Message);
+}
+
+void AUnitInPlaceReformTest::StartTest()
+{
+	Super::StartTest();
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("no world"));
+		return;
+	}
+	UBattleTestSettings::ApplyTestMode();
+	TArray<FString> Violations;
+	if (!UBattleTestSettings::AssertTestMode(nullptr, &Violations, World))
+	{
+		CompleteTest(EFunctionalTestResult::Error,
+			FString::Printf(TEXT("test-mode contract violated: %s"), *FString::Join(Violations, TEXT("; "))));
+		return;
+	}
+	if (UBattleDebugSubsystem* Debug = World->GetSubsystem<UBattleDebugSubsystem>())
+	{
+		Debug->ResetDiagnostics();
+	}
+	UBattleCostGridSubsystem* CostGrid = World->GetSubsystem<UBattleCostGridSubsystem>();
+	if (!CostGrid)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("cost grid missing"));
+		return;
+	}
+	CostGrid->ResetToFlat();
+
+	FActorSpawnParameters Params;
+	Params.ObjectFlags |= RF_Transient;
+	Unit = World->SpawnActor<AUnitActor>(FVector(-4000.f, 4000.f, 100.f), FRotator(0.f, 90.f, 0.f), Params);
+	if (Unit)
+	{
+		Unit->EduRowIndex = 0;
+		Unit->SoldierCount = 40;
+		FBattleSpawnResult SpawnResult;
+		FString Error;
+		if (!Unit->SpawnEntities(SpawnResult, Error))
+		{
+			Unit = nullptr;
+		}
+	}
+	if (!Unit)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("spawn failed"));
+		return;
+	}
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S6_InPlaceReform Spawned (-40,40) facing=90"));
+	Phase = EPhase::Order;
+	TicksInPhase = 0;
+}
+
+void AUnitInPlaceReformTest::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+	if (!IsRunning() || Phase == EPhase::Done)
+	{
+		return;
+	}
+	UWorld* World = GetWorld();
+	UUnitRegistrySubsystem* Registry = World ? World->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	UBattleDebugSubsystem* Debug = World ? World->GetSubsystem<UBattleDebugSubsystem>() : nullptr;
+	if (!Registry || !Debug)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("subsystems missing"));
+		return;
+	}
+	++TicksInPhase;
+	constexpr float CommandedFacing = 225.f; // spawn 90 + 135
+
+	if (Phase == EPhase::Order)
+	{
+		const FUnitFormationSharedFragment* F = FindFormation(World, Unit->GetUnitHandle());
+		if (!F)
+		{
+			CompleteTest(EFunctionalTestResult::Error, TEXT("formation missing"));
+			return;
+		}
+		// In-place: the order anchor IS the current anchor.
+		AnchorBefore = F->AnchorPos;
+		Registry->IssueMoveOrder(Unit->GetUnitHandle(), AnchorBefore, CommandedFacing, 0.f, 8);
+		UE_LOG(LogMassBattle, Display,
+			TEXT("EXEC_RESULT S6_InPlaceReform order anchor=(%.0f,%.0f) facing=225 files=8"), AnchorBefore.X, AnchorBefore.Y);
+		Phase = EPhase::Reform;
+		TicksInPhase = 0;
+	}
+	else if (Phase == EPhase::Reform)
+	{
+		const FUnitFormationSharedFragment* F = FindFormation(World, Unit->GetUnitHandle());
+		if (!F)
+		{
+			CompleteTest(EFunctionalTestResult::Error, TEXT("formation missing in reform"));
+			return;
+		}
+		// Files apply at order consumption (the layout re-projects every tick;
+		// NumFiles must already be the commanded value by now).
+		if (!bFilesChecked && Registry->GetOrderSerial(Unit->GetUnitHandle()) == F->PlannedOrderSerial)
+		{
+			bFilesChecked = true;
+			if (F->NumFiles != 8)
+			{
+				AddError(FString::Printf(TEXT("S6 FAIL: files at consumption %d (expected 8)"), F->NumFiles));
+				Phase = EPhase::Done;
+				CompleteTest(EFunctionalTestResult::Failed, TEXT("S6 files not applied at consumption"));
+				return;
+			}
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S6_InPlaceReform files=8 applied at consumption"));
+		}
+		FString Err;
+		const bool bCoherent = S4UnitCoherent(World, Unit, Err);
+		const bool bFacingSettled =
+			FMath::Abs(FMath::FindDeltaAngleDegrees(F->FacingYaw, CommandedFacing)) <= 5.f;
+		FacingSettledTicks = (bCoherent && bFacingSettled) ? FacingSettledTicks + 1 : 0;
+		if ((bFilesChecked && FacingSettledTicks >= 30) || TicksInPhase > 1800)
+		{
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S6_InPlaceReform reform done ticks=%d coherent=%d (%s)"),
+				TicksInPhase, Err.IsEmpty() ? 1 : 0, *Err);
+			Phase = EPhase::Assert;
+		}
+	}
+	else if (Phase == EPhase::Assert)
+	{
+		bool bOk = true;
+		const FUnitFormationSharedFragment* F = FindFormation(World, Unit->GetUnitHandle());
+		if (!F)
+		{
+			CompleteTest(EFunctionalTestResult::Error, TEXT("formation missing at assert"));
+			return;
+		}
+		if (F->NumFiles != 8)
+		{
+			AddError(FString::Printf(TEXT("S6 FAIL: files %d (expected 8)"), F->NumFiles));
+			bOk = false;
+		}
+		const int32 DerivedRanks = FMath::Max(1, FMath::CeilToInt(static_cast<float>(F->NumSlots) / F->NumFiles));
+		if (DerivedRanks != 5)
+		{
+			AddError(FString::Printf(TEXT("S6 FAIL: ranks %d (expected 5)"), DerivedRanks));
+			bOk = false;
+		}
+		const float FacingErr = FMath::Abs(FMath::FindDeltaAngleDegrees(F->FacingYaw, CommandedFacing));
+		if (FacingErr > 5.f)
+		{
+			AddError(FString::Printf(TEXT("S6 FAIL: facing %.1f (expected %.1f)"), F->FacingYaw, CommandedFacing));
+			bOk = false;
+		}
+		if (FVector2D::DistSquared(F->AnchorPos, AnchorBefore) > FMath::Square(250.f))
+		{
+			AddError(FString::Printf(TEXT("S6 FAIL: anchor drifted (%.0f,%.0f) -> (%.0f,%.0f)"),
+				AnchorBefore.X, AnchorBefore.Y, F->AnchorPos.X, F->AnchorPos.Y));
+			bOk = false;
+		}
+		FString Err;
+		if (!S4UnitCoherent(World, Unit, Err))
+		{
+			AddError(FString::Printf(TEXT("S6 FAIL: %s"), *Err));
+			bOk = false;
+		}
+		if (Debug->GetLadderEscalations() != 0)
+		{
+			AddError(FString::Printf(TEXT("S6 FAIL: %d unstuck escalations"), Debug->GetLadderEscalations()));
+			bOk = false;
+		}
+		UE_LOG(LogMassBattle, Display,
+			TEXT("EXEC_RESULT S6Assert files=%d ranks=%d facing=%.1f escalations=%d ok=%d"),
+			F->NumFiles, DerivedRanks, F->FacingYaw, Debug->GetLadderEscalations(), bOk ? 1 : 0);
+		Phase = EPhase::Done;
+		CompleteTest(bOk ? EFunctionalTestResult::Succeeded : EFunctionalTestResult::Failed,
+			bOk ? TEXT("S6 in-place reform green") : TEXT("S6 assertions failed"));
+	}
+}
+
+
+// ---------------------------------------------------------------------------
 // Factory registrations (see FBattleFuncTestRegistry)
 // ---------------------------------------------------------------------------
 namespace
@@ -1772,4 +2552,21 @@ namespace
 	}
 	const FBattleFuncTestRegistry::FRegistrar GRegS2(TEXT("AUnitPassThroughTest"), &MakePassThroughTest);
 	const FBattleFuncTestRegistry::FRegistrar GRegS3(TEXT("AUnitSqueezeMorphTest"), &MakeSqueezeMorphTest);
+
+	AFunctionalTest* MakeWidthOverrideTest(UWorld* World)
+	{
+		return World->SpawnActor<AUnitWidthOverrideTest>();
+	}
+	const FBattleFuncTestRegistry::FRegistrar GRegS4(TEXT("AUnitWidthOverrideTest"), &MakeWidthOverrideTest);
+
+	AFunctionalTest* MakeMarchRefrontTest(UWorld* World)
+	{
+		return World->SpawnActor<AUnitMarchRefrontTest>();
+	}
+	AFunctionalTest* MakeInPlaceReformTest(UWorld* World)
+	{
+		return World->SpawnActor<AUnitInPlaceReformTest>();
+	}
+	const FBattleFuncTestRegistry::FRegistrar GRegS5(TEXT("AUnitMarchRefrontTest"), &MakeMarchRefrontTest);
+	const FBattleFuncTestRegistry::FRegistrar GRegS6(TEXT("AUnitInPlaceReformTest"), &MakeInPlaceReformTest);
 }

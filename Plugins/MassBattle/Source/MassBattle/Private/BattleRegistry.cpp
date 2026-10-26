@@ -184,7 +184,8 @@ bool UUnitRegistrySubsystem::IsStatsDirty(FUnitHandle Handle) const
 
 // -- A2 thin order API (decision A2) --
 
-bool UUnitRegistrySubsystem::IssueMoveOrder(FUnitHandle Handle, const FVector2D& AnchorPosCm, float FacingYawDeg, float CommandedSpeedMps)
+bool UUnitRegistrySubsystem::IssueMoveOrder(FUnitHandle Handle, const FVector2D& AnchorPosCm, float FacingYawDeg,
+	float CommandedSpeedMps, int32 CommandedFiles)
 {
 	if (!IsHandleValid(Handle))
 	{
@@ -200,6 +201,7 @@ bool UUnitRegistrySubsystem::IssueMoveOrder(FUnitHandle Handle, const FVector2D&
 	Order.AnchorPos = AnchorPosCm;
 	Order.FacingYaw = FacingYawDeg;
 	Order.CommandedSpeed = CommandedSpeedMps;
+	Order.CommandedFiles = CommandedFiles;
 	++State->OrderSerial;
 	return true;
 }
@@ -220,6 +222,7 @@ bool UUnitRegistrySubsystem::IssueStopOrder(FUnitHandle Handle)
 	Order.AnchorPos = FVector2D::ZeroVector;
 	Order.FacingYaw = 0.f;
 	Order.CommandedSpeed = 0.f;
+	Order.CommandedFiles = 0;
 	++State->OrderSerial;
 	return true;
 }

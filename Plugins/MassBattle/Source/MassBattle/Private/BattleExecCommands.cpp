@@ -386,7 +386,7 @@ namespace BattleExec
 		if (!Registry || Args.Num() < 3)
 		{
 			UE_LOG(LogMassBattle, Display,
-			       TEXT("EXEC_RESULT OrderMove FAIL BadArgs (need: UnitIndex anchorX_m anchorY_m [facingDeg] [speedMps])"));
+			       TEXT("EXEC_RESULT OrderMove FAIL BadArgs (need: UnitIndex anchorX_m anchorY_m [facingDeg] [speedMps] [files])"));
 			return;
 		}
 		const int32 UnitIndex = FCString::Atoi(*Args[0]);
@@ -407,10 +407,11 @@ namespace BattleExec
 		const FVector2D AnchorCm(FCString::Atof(*Args[1]) * 100.f, FCString::Atof(*Args[2]) * 100.f);
 		const float Facing = Args.Num() > 3 ? FCString::Atof(*Args[3]) : 0.f;
 		const float Speed = Args.Num() > 4 ? FCString::Atof(*Args[4]) : 0.f;
-		const bool bOk = Registry->IssueMoveOrder(Matched, AnchorCm, Facing, Speed);
+		const int32 Files = Args.Num() > 5 ? FCString::Atoi(*Args[5]) : 0;
+		const bool bOk = Registry->IssueMoveOrder(Matched, AnchorCm, Facing, Speed, Files);
 		UE_LOG(LogMassBattle, Display,
-		       TEXT("EXEC_RESULT OrderMove %s Unit=%u:%u Anchor=(%.1f,%.1f)m Facing=%.1f Speed=%.2f"),
-		       bOk ? TEXT("OK") : TEXT("FAIL"), Matched.Index, Matched.Serial, AnchorCm.X * 0.01f, AnchorCm.Y * 0.01f, Facing, Speed);
+		       TEXT("EXEC_RESULT OrderMove %s Unit=%u:%u Anchor=(%.1f,%.1f)m Facing=%.1f Speed=%.2f Files=%d"),
+		       bOk ? TEXT("OK") : TEXT("FAIL"), Matched.Index, Matched.Serial, AnchorCm.X * 0.01f, AnchorCm.Y * 0.01f, Facing, Speed, Files);
 	}
 
 	void OrderStop(const TArray<FString>& Args, UWorld* World)
@@ -491,7 +492,7 @@ static FAutoConsoleCommandWithWorldAndArgs GBattleStampImpassable(
 
 static FAutoConsoleCommandWithWorldAndArgs GBattleOrderMove(
 	TEXT("Battle.Order.Move"),
-	TEXT("<UnitIndex> <anchorX_m> <anchorY_m> [facingDeg] [speedMps] -- A2: issue a move order; EXEC_RESULT OrderMove"),
+	TEXT("<UnitIndex> <anchorX_m> <anchorY_m> [facingDeg] [speedMps] [files] -- A2: issue a move order (files > 0 re-fronts); EXEC_RESULT OrderMove"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BattleExec::OrderMove));
 
 static FAutoConsoleCommandWithWorldAndArgs GBattleOrderStop(

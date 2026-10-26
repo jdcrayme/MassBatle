@@ -7,6 +7,7 @@
 #include "BattleRegistry.h"
 #include "BattleExecCommands.h"
 #include "BattleTypes.h"
+#include "BattleUnitLocomotion.h"
 #include "Engine/Engine.h"
 
 namespace
@@ -222,6 +223,74 @@ bool FRegistry_DirtyFlags::RunTest(const FString& Parameters)
 	{
 		TestEqual(TEXT("morale round trip"), ReadBack->Morale, 4.25f);
 	}
+
+	World->DestroyWorld(false);
+	return true;
+}
+
+// A2 width control: CommandedFiles round-trips through the order API and is
+// cleared by Stop; the resolve helper clamps and no-ops (pure seam, T1 gate).
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRegistry_OrderWidthOverride,
+	"Battle.Unit.Registry.OrderWidthOverride",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FRegistry_OrderWidthOverride::RunTest(const FString& Parameters)
+{
+	UWorld* World = MakeRegistryTestWorld();
+	UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>();
+	if (!Registry)
+	{
+		World->DestroyWorld(false);
+		return false;
+	}
+
+	const FUnitHandle Unit = Registry->RegisterUnit(MakeSpec());
+	TestTrue(TEXT("unit registered"), Unit.IsValid());
+
+	// Default: no width intent (0 keeps the layout).
+	TestTrue(TEXT("move ok"), Registry->IssueMoveOrder(Unit, FVector2D(1000.f, 0.f), 90.f));
+	{
+		const FUnitOrder* Order = Registry->FindOrder(Unit);
+		TestNotNull(TEXT("order"), Order);
+		if (Order)
+		{
+			TestEqual(TEXT("default files"), Order->CommandedFiles, 0);
+		}
+	}
+
+	// Width override round trip.
+	TestTrue(TEXT("move with files"), Registry->IssueMoveOrder(Unit, FVector2D(2000.f, 0.f), 45.f, 1.5f, 12));
+	{
+		const FUnitOrder* Order = Registry->FindOrder(Unit);
+		TestNotNull(TEXT("order after width move"), Order);
+		if (Order)
+		{
+			TestEqual(TEXT("commanded files round trip"), Order->CommandedFiles, 12);
+			TestEqual(TEXT("serial bumped"), Registry->GetOrderSerial(Unit) != 0, true);
+		}
+	}
+
+	// Stop clears the width intent (a halt re-fronts nothing).
+	TestTrue(TEXT("stop ok"), Registry->IssueStopOrder(Unit));
+	{
+		const FUnitOrder* Order = Registry->FindOrder(Unit);
+		TestNotNull(TEXT("stop order"), Order);
+		if (Order)
+		{
+			TestEqual(TEXT("stop clears files"), Order->CommandedFiles, 0);
+		}
+	}
+
+	// Pure resolve helper: keep / clamp / no-op semantics.
+	TestEqual(TEXT("0 keeps layout"), FUnitLocomotion::ResolveCommandedFiles(0, 40, 14), 0);
+	TestEqual(TEXT("negative keeps layout"), FUnitLocomotion::ResolveCommandedFiles(-3, 40, 14), 0);
+	TestEqual(TEXT("pass-through"), FUnitLocomotion::ResolveCommandedFiles(20, 40, 14), 20);
+	TestEqual(TEXT("clamp to NumSlots"), FUnitLocomotion::ResolveCommandedFiles(999, 40, 14), 40);
+	TestEqual(TEXT("unchanged no-op"), FUnitLocomotion::ResolveCommandedFiles(14, 40, 14), 0);
+
+	// Stale handle rejected.
+	Registry->UnregisterUnit(Unit);
+	TestFalse(TEXT("stale handle rejected"), Registry->IssueMoveOrder(Unit, FVector2D(0.f, 0.f), 0.f, 0.f, 10));
 
 	World->DestroyWorld(false);
 	return true;

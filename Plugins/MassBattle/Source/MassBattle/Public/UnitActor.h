@@ -95,6 +95,15 @@ public:
 	/** Roster size override; 0 = use the row's own soldier count. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Battle") int32 SoldierCount = 0;
 
+	/** Ranks in the formed layout (files = ceil(SoldierCount / NumRanks));
+	 *  0 = the spec default. Level-authored formation control. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Battle|Formation", meta = (ClampMin = "0", ClampMax = "16"))
+	int32 NumRanks = 0;
+
+	/** File/rank spacing in meters; 0 = the spec default (1.2 m). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Battle|Formation", meta = (ClampMin = "0.0", ClampMax = "10.0"))
+	float FormationSpacing = 0.f;
+
 	UPROPERTY(VisibleAnywhere, Category = "Battle") TObjectPtr<UAbilitySystemComponent> AbilitySystem;
 	UPROPERTY(VisibleAnywhere, Category = "Battle") TObjectPtr<UUnitAttributeSet> AttributeSet;
 

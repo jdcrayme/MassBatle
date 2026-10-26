@@ -161,6 +161,18 @@ namespace
 				{
 					S3->BeginTest();
 				}
+				else if (AUnitWidthOverrideTest* S4 = Cast<AUnitWidthOverrideTest>(TestActor))
+				{
+					S4->BeginTest();
+				}
+				else if (AUnitMarchRefrontTest* S5 = Cast<AUnitMarchRefrontTest>(TestActor))
+				{
+					S5->BeginTest();
+				}
+				else if (AUnitInPlaceReformTest* S6 = Cast<AUnitInPlaceReformTest>(TestActor))
+				{
+					S6->BeginTest();
+				}
 				// T0.9: apply + assert the test-mode contract at scenario start
 				// (roadmap B.0: assert ACTIVE engine settings, not CVars being
 				// set; the -game process does not seed the contract on its own).
@@ -340,6 +352,57 @@ bool FS3_SqueezeMorph::RunTest(const FString& Parameters)
 	IFunctionalTestingModule::Get().MarkPendingActivation();
 	ADD_LATENT_AUTOMATION_COMMAND(FOpenBattleFuncMap(this));
 	ADD_LATENT_AUTOMATION_COMMAND(FRunBattleFuncTest(this, TEXT("S3_SqueezeMorph"), TEXT("AUnitSqueezeMorphTest")));
+	return true;
+}
+
+IMPLEMENT_CUSTOM_COMPLEX_AUTOMATION_TEST(FS4_WidthOverride, FBattleFuncTestBase,
+	"Battle.Func.S4_WidthOverride", (EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter))
+
+void FS4_WidthOverride::GetTests(TArray<FString>& OutBeautifiedNames, TArray<FString>& OutTestCommands) const
+{
+	OutBeautifiedNames.Add(TEXT("S4_WidthOverride"));
+	OutTestCommands.Add(TEXT(""));
+}
+
+bool FS4_WidthOverride::RunTest(const FString& Parameters)
+{
+	IFunctionalTestingModule::Get().MarkPendingActivation();
+	ADD_LATENT_AUTOMATION_COMMAND(FOpenBattleFuncMap(this));
+	ADD_LATENT_AUTOMATION_COMMAND(FRunBattleFuncTest(this, TEXT("S4_WidthOverride"), TEXT("AUnitWidthOverrideTest")));
+	return true;
+}
+
+IMPLEMENT_CUSTOM_COMPLEX_AUTOMATION_TEST(FS5_MarchRefront, FBattleFuncTestBase,
+	"Battle.Func.S5_MarchRefront", (EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter))
+
+void FS5_MarchRefront::GetTests(TArray<FString>& OutBeautifiedNames, TArray<FString>& OutTestCommands) const
+{
+	OutBeautifiedNames.Add(TEXT("S5_MarchRefront"));
+	OutTestCommands.Add(TEXT(""));
+}
+
+bool FS5_MarchRefront::RunTest(const FString& Parameters)
+{
+	IFunctionalTestingModule::Get().MarkPendingActivation();
+	ADD_LATENT_AUTOMATION_COMMAND(FOpenBattleFuncMap(this));
+	ADD_LATENT_AUTOMATION_COMMAND(FRunBattleFuncTest(this, TEXT("S5_MarchRefront"), TEXT("AUnitMarchRefrontTest")));
+	return true;
+}
+
+IMPLEMENT_CUSTOM_COMPLEX_AUTOMATION_TEST(FS6_InPlaceReform, FBattleFuncTestBase,
+	"Battle.Func.S6_InPlaceReform", (EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter))
+
+void FS6_InPlaceReform::GetTests(TArray<FString>& OutBeautifiedNames, TArray<FString>& OutTestCommands) const
+{
+	OutBeautifiedNames.Add(TEXT("S6_InPlaceReform"));
+	OutTestCommands.Add(TEXT(""));
+}
+
+bool FS6_InPlaceReform::RunTest(const FString& Parameters)
+{
+	IFunctionalTestingModule::Get().MarkPendingActivation();
+	ADD_LATENT_AUTOMATION_COMMAND(FOpenBattleFuncMap(this));
+	ADD_LATENT_AUTOMATION_COMMAND(FRunBattleFuncTest(this, TEXT("S6_InPlaceReform"), TEXT("AUnitInPlaceReformTest")));
 	return true;
 }
 

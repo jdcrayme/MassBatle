@@ -219,6 +219,99 @@ private:
 };
 
 // ---------------------------------------------------------------------------
+// S4_WidthOverride (A2 width control): a 40-man unit marches with a commanded
+// file count (10 -> ranks 4), then re-fronts back to the spawn layout. Asserts:
+// NumFiles applied on order consumption; the re-laid formation is coherent
+// (body bounds) and separated; repeatable in both directions.
+// ---------------------------------------------------------------------------
+UCLASS()
+class MASSBATTLETEST_API AUnitWidthOverrideTest : public AFunctionalTest
+{
+	GENERATED_BODY()
+
+public:
+	AUnitWidthOverrideTest();
+
+	void BeginTest();
+	void CompleteTest(EFunctionalTestResult TestResult, const FString& Message);
+	virtual void StartTest() override;
+	virtual void Tick(float DeltaSeconds) override;
+	virtual bool IsReady_Implementation() override { return true; }
+
+private:
+	enum class EPhase : int32 { Spawn, March, Settle, Assert, Refront, Settle2, Assert2, Done };
+	EPhase Phase = EPhase::Spawn;
+	int32 TicksInPhase = 0;
+
+	UPROPERTY() TObjectPtr<AUnitActor> Unit;
+	int32 FilesAtSpawn = 0;
+};
+
+// ---------------------------------------------------------------------------
+// S5_MarchRefront (A2 march-then-refront): a 40-man unit marches 80 m under a
+// commanded frontage (files 10, facing 135 deg -- 135 deg OFF the straight
+// path). Asserts: en-route facing rides the path tangent (no early refront);
+// on arrival the block re-lays (path dropped) and the facing settles to the
+// commanded value; files applied; coherent + separated; zero escalations.
+// ---------------------------------------------------------------------------
+UCLASS()
+class MASSBATTLETEST_API AUnitMarchRefrontTest : public AFunctionalTest
+{
+	GENERATED_BODY()
+
+public:
+	AUnitMarchRefrontTest();
+
+	void BeginTest();
+	void CompleteTest(EFunctionalTestResult TestResult, const FString& Message);
+	virtual void StartTest() override;
+	virtual void Tick(float DeltaSeconds) override;
+	virtual bool IsReady_Implementation() override { return true; }
+
+private:
+	enum class EPhase : int32 { Spawn, March, Settle, Assert, Done };
+	EPhase Phase = EPhase::Spawn;
+	int32 TicksInPhase = 0;
+	int32 EarlyRefrontViolations = 0;
+	int32 OffTangentViolations = 0;
+	int32 MarchCoherenceViolations = 0;
+	int32 FacingSettledTicks = 0;
+
+	UPROPERTY() TObjectPtr<AUnitActor> Unit;
+};
+
+// ---------------------------------------------------------------------------
+// S6_InPlaceReform (A2 in-place reform): a standing unit is re-ordered in
+// place (anchor unchanged, facing +135 deg, files 20 -> 8). Asserts: files
+// apply at order consumption; facing + layout achieve the commanded state in
+// bounded time; the anchor never drifts; coherent; zero escalations.
+// ---------------------------------------------------------------------------
+UCLASS()
+class MASSBATTLETEST_API AUnitInPlaceReformTest : public AFunctionalTest
+{
+	GENERATED_BODY()
+
+public:
+	AUnitInPlaceReformTest();
+
+	void BeginTest();
+	void CompleteTest(EFunctionalTestResult TestResult, const FString& Message);
+	virtual void StartTest() override;
+	virtual void Tick(float DeltaSeconds) override;
+	virtual bool IsReady_Implementation() override { return true; }
+
+private:
+	enum class EPhase : int32 { Spawn, Order, Reform, Assert, Done };
+	EPhase Phase = EPhase::Spawn;
+	int32 TicksInPhase = 0;
+	int32 FacingSettledTicks = 0;
+	bool bFilesChecked = false;
+
+	UPROPERTY() TObjectPtr<AUnitActor> Unit;
+	FVector2D AnchorBefore = FVector2D::ZeroVector;
+};
+
+// ---------------------------------------------------------------------------
 // S-scenario actor factory registry -- deterministic, reflection-free class
 // lookup for the automation harness (FindObject with /Script/ paths and
 // TObjectIterator both failed to resolve fresh C++ classes in -game processes

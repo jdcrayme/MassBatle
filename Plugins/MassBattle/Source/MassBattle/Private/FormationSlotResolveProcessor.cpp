@@ -93,7 +93,11 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 		}
 
 		// Slot world positions (meters): path-frame when a path exists, the
-		// §8.2 anchor-formula degenerate layout otherwise.
+		// §8.2 anchor-formula degenerate layout otherwise. En route the block
+		// projects around the anchor's CURRENT arc position (PathS) -- the
+		// formation travels coherently with the unit (arch §8.1 the unit is
+		// the locomotor); projecting at the path end instead would send every
+		// entity beelining for its final slot (the unit blobs apart mid-march).
 		FBattlePlannedPath PathM;
 		const bool bHasPath = FPathFrameLayout::FromFragment(Formation.Path, PathM);
 		const float FileSpacingM = Formation.FileSpacing * 0.01f;
@@ -103,6 +107,12 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 		TArray<float> SlotYaw;
 		SlotPosM.SetNumUninitialized(Formation.NumSlots);
 		SlotYaw.SetNumUninitialized(Formation.NumSlots);
+		FVector2D StartPosM = FVector2D::ZeroVector;
+		FVector2D StartTan = FVector2D(1.f, 0.f);
+		if (bHasPath)
+		{
+			(void)FPathFrameLayout::SampleAt(PathM, 0.f, StartPosM, StartTan);
+		}
 		for (int32 Slot = 0; Slot < Formation.NumSlots; ++Slot)
 		{
 			const int32 Rank = Slot / Formation.NumFiles;
@@ -111,8 +121,23 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 			float YawDeg;
 			if (bHasPath)
 			{
-				(void)FPathFrameLayout::Project(PathM, PathM.TotalLength, Rank, File, Formation.NumFiles,
-					RankSpacingM, FileSpacingM * Formation.SpacingScale, Pos, YawDeg);
+				const float RankArcM = Formation.PathS * 0.01f - Rank * RankSpacingM;
+				if (RankArcM >= 0.f)
+				{
+					(void)FPathFrameLayout::Project(PathM, Formation.PathS * 0.01f, Rank, File, Formation.NumFiles,
+						RankSpacingM, FileSpacingM * Formation.SpacingScale, Pos, YawDeg);
+				}
+				else
+				{
+					// Rank still behind the path start (early march): extrapolate
+					// along the entry tangent so the block keeps its depth instead
+					// of compressing onto the first path point.
+					const FVector2D StartNormal(-StartTan.Y, StartTan.X);
+					const float Lateral = (static_cast<float>(File) - (Formation.NumFiles - 1) * 0.5f)
+						* FileSpacingM * Formation.SpacingScale;
+					Pos = StartPosM + StartTan * RankArcM + StartNormal * Lateral;
+					YawDeg = FMath::RadiansToDegrees(FMath::Atan2(StartTan.Y, StartTan.X));
+				}
 			}
 			else
 			{
@@ -163,11 +188,19 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 		FReflowScheduler Scheduler;
 		Scheduler.IntervalSeconds = 0.5f;
 		Scheduler.Cooldown = Formation.ReflowCooldown;
-		if (Scheduler.ConsumeIfDue(DT, bRankGap))
+		// Layout re-decision (order consumed / morph / refront arrival bumps
+		// Generation): re-assign immediately and UNBOUNDED -- each entity takes
+		// its nearest slot in the new layout instead of a k-bounded shuffle that
+		// would force treks across a rotated block (arch §8.4 re-decision path).
+		const bool bLayoutRedecision = Formation.Generation != Formation.AssignedGeneration;
+		if (bLayoutRedecision || Scheduler.ConsumeIfDue(DT, bRankGap))
 		{
 			TArray<int32> NewAssignment;
+			const int32 MaxDisplacement = bLayoutRedecision
+				? Formation.NumSlots
+				: GBattleMovementMaxFileDisplacement.GetValueOnAnyThread();
 			FSlotAssigner::Assign(EntityPosM, SlotPosM, Formation.NumFiles, Assignment,
-				GBattleMovementMaxFileDisplacement.GetValueOnAnyThread(), NewAssignment);
+				MaxDisplacement, NewAssignment);
 
 			// Predictive swaps (optional policy, arch §8.4): crossing servo
 			// projections within ~1 s swap slot indices.
@@ -191,6 +224,7 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 				Context.GetMutableFragmentView<FSlotAssignmentFragment>()[i].SlotIndex = NewAssignment[i];
 			}
 			Assignment = MoveTemp(NewAssignment);
+			Formation.AssignedGeneration = Formation.Generation;
 		}
 		Formation.ReflowCooldown = Scheduler.Cooldown;
 

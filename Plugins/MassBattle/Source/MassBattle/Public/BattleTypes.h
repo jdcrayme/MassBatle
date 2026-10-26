@@ -61,6 +61,9 @@ struct FUnitOrder
 	float FacingYaw = 0.f;
 	/** Commanded march speed (m/s); 0 -> the default walk speed. */
 	float CommandedSpeed = 0.f;
+	/** Commanded frontage (entities per rank). 0 = keep the current layout;
+	 *  >0 re-lays slots on the next plan (clamped to NumSlots by UnitLocomotion). */
+	int32 CommandedFiles = 0;
 };
 
 /** Registry-side per-unit state (arch §2.3). Game-thread written, plain so

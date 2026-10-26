@@ -8,7 +8,7 @@ public class MassBattleGame : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 	
-		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput" });
+		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "MassBattle", "MassCore", "MassEntity", "MassCommon", "MassMovement", "GameplayAbilities", "MeshDescription", "StaticMeshDescription" });
 
 		PrivateDependencyModuleNames.AddRange(new string[] {  });
 

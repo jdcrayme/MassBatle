@@ -31,7 +31,7 @@ Invariants for **every** autonomous run on this project, regardless of phase. Ph
 - **Division of labor**: text/file edits → direct file tools; anything needing editor state (levels, assets, automation runs) → MCP; anything needing the editor closed (UBT of new modules) → shell.
 - **Editor restarts are the scarcest resource** — batch all file-side work before each restart (see `Docs/reference/mcp-playbook.md` §3.7). MCP calls are serial (playbook §3.1).
 - **Data files**: ASCII + LF only; em-dashes forbidden (use `--`).
-- **Code conventions**: all game C++ in the plugin module (`Plugins/MassBattle/Source/MassBattle/`), game module stays empty (`Docs/reference/environment.md` §3). Test naming, test-mode contract, and the pure-math seam live in the roadmap B.0 — link, don't restate.
+- **Code conventions**: all game C++ in the plugin module (`Plugins/MassBattle/Source/MassBattle/`); the game module `MassBattleGame` stays empty EXCEPT the editor-authored demo (2026-10-25, owner decision): selection/UI/camera demo code lives in `Source/MassBattleGame/` and consumes the plugin's public API only (A2 orders + registry reads). Test naming, test-mode contract, and the pure-math seam live in the roadmap B.0 — link, don't restate.
 
 ## §4. Corrections & errata flow (replaces ad-hoc "fix the brief in place")
 

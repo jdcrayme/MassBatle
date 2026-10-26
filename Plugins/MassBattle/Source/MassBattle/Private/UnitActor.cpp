@@ -188,6 +188,15 @@ bool AUnitActor::SpawnEntities(FBattleSpawnResult& OutResult, FString& OutError)
 		// facing from the actor yaw) -- units no longer stack at the origin.
 		Spec.SpawnPos = FVector2D(GetActorLocation().X, GetActorLocation().Y);
 		Spec.SpawnYaw = GetActorRotation().Yaw;
+		// Level-authored formation (0 keeps the spec default).
+		if (NumRanks > 0)
+		{
+			Spec.NumRanks = NumRanks;
+		}
+		if (FormationSpacing > 0.f)
+		{
+			Spec.FormationSpacing = FormationSpacing;
+		}
 		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SpawnSpec Actor=%s Loc=(%.1f,%.1f)cm SpawnPos=(%.1f,%.1f)cm"),
 			*GetName(), GetActorLocation().X, GetActorLocation().Y, Spec.SpawnPos.X, Spec.SpawnPos.Y);
 
@@ -221,6 +230,12 @@ bool AUnitActor::SpawnEntities(FBattleSpawnResult& OutResult, FString& OutError)
 				return false;
 			}
 			Cached = &RowStatsCache.Add(EduRowIndex, Mapped);
+		}
+		// SoldierCount 0 = the row's own roster size (level-authored units rely
+		// on this documented default; SpawnUnit asserts on a non-positive count).
+		if (Spec.SoldierCount <= 0)
+		{
+			Spec.SoldierCount = Cached->SoldierCount;
 		}
 
 		const FBattleSpawnResult Result = UBattleSpawnLibrary::SpawnUnit(World, Spec, *Cached);

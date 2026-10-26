@@ -358,10 +358,37 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 			ServoStates[i].LowSpeedTime = Timer;
 			ServoStates[i].LadderLevel = NewLevel;
 
-			// Servo-local transition: ManeuverToSlot closes into HoldSlot.
-			if (State == EBattleMovementState::ManeuverToSlot && bNearSlot)
+			// Servo-local transitions around HoldSlot. Doctrine (§8.3): HoldSlot
+			// runs NO avoidance -- so never enter it while still touching a
+			// teammate (an overlap frozen there can never resolve; rotation
+			// re-dress transients must shed contact under ManeuverToSlot's
+			// teammate avoidance first), and leave it if contact appears.
 			{
-				States[i].State = EBattleMovementState::HoldSlot;
+				bool bTouchingTeammate = false;
+				if (State == EBattleMovementState::ManeuverToSlot || State == EBattleMovementState::HoldSlot)
+				{
+					const float TouchSq = FMath::Square(2.f * 0.4f); // sum of 40 cm body radii (fact 1.9)
+					for (const FSnapshotEntry& Entry : Snapshot)
+					{
+						if (Entry.HandleIndex == MyHandle || Entry.Owner != MyOwner)
+						{
+							continue;
+						}
+						if (FVector2D::DistSquared(PosM, Entry.Pos) < TouchSq)
+						{
+							bTouchingTeammate = true;
+							break;
+						}
+					}
+				}
+				if (State == EBattleMovementState::ManeuverToSlot && bNearSlot && !bTouchingTeammate)
+				{
+					States[i].State = EBattleMovementState::HoldSlot;
+				}
+				else if (State == EBattleMovementState::HoldSlot && bTouchingTeammate)
+				{
+					States[i].State = EBattleMovementState::ManeuverToSlot;
+				}
 			}
 		}
 	});

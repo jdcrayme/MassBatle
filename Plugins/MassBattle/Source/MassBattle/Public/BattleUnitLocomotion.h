@@ -49,4 +49,10 @@ namespace FUnitLocomotion
 	/** Anchor turn radius at arc length S: arc distance over heading change
 	 *  across a symmetric lookahead window (straight path -> very large r). */
 	MASSBATTLE_API float PathRadiusAt(const FBattlePlannedPath& Path, float S, float LookaheadMeters);
+
+	/** Commanded-frontage resolution (A2 width control): returns the new file
+	 *  count for a unit of NumSlots total entities. CommandedFiles <= 0 keeps
+	 *  the current layout; values above NumSlots clamp to NumSlots (1 file of
+	 *  NumSlots ranks). Returns 0 when the layout is unchanged. */
+	MASSBATTLE_API int32 ResolveCommandedFiles(int32 CommandedFiles, int32 NumSlots, int32 CurrentNumFiles);
 }

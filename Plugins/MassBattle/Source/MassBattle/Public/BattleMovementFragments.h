@@ -91,6 +91,12 @@ struct FUnitFormationSharedFragment : public FMassSharedFragment
 	 *  caches compare against it to detect staleness. */
 	UPROPERTY() int32 Generation = 1;
 
+	/** Generation the slot assigner last ran under (FormationSlotResolve).
+	 *  A mismatch = layout re-decision (order/morph/refront) and forces an
+	 *  immediate UNBOUNDED locality re-assign, so refronts remap each entity
+	 *  to its nearest new slot instead of a k-bounded shuffle across the block. */
+	UPROPERTY() int32 AssignedGeneration = 0;
+
 	// -- formed layout parameters (§8.6 path-frame layout) --
 
 	/** Entities per rank (files across). 0 = layout not yet initialized. */
