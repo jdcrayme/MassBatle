@@ -11,6 +11,8 @@
 #include "BattleSpawnLibrary.h"
 #include "BattleStateHash.h"
 #include "BattleUnitTrait.h"
+#include "BattleGarrison.h"
+#include "BattleGarrisonSubsystem.h"
 #include "MassBattleModule.h"
 #include "UnitActor.h"
 #include "BattleDebugSubsystem.h"
@@ -441,6 +443,18 @@ namespace BattleExec
 		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT OrderStop %s Unit=%u:%u"),
 		       bOk ? TEXT("OK") : TEXT("FAIL"), Matched.Index, Matched.Serial);
 	}
+
+	// -- Phase garrison task 1/2/4: garrison probes, gray-box fixtures, orders --
+	void GarrisonDumpStructures(const TArray<FString>& Args, UWorld* World)
+	{
+		UBattleGarrisonSubsystem* Garrison = World ? World->GetSubsystem<UBattleGarrisonSubsystem>() : nullptr;
+		if (!Garrison)
+		{
+			UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT Garrison.DumpStructures FAIL no subsystem"));
+			return;
+		}
+		Garrison->DumpStructures();
+	}
 }
 
 // ---- Command registration (Task 4 portion) ----
@@ -499,3 +513,8 @@ static FAutoConsoleCommandWithWorldAndArgs GBattleOrderStop(
 	TEXT("Battle.Order.Stop"),
 	TEXT("<UnitIndex> -- A2: halt the unit; EXEC_RESULT OrderStop"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BattleExec::OrderStop));
+
+static FAutoConsoleCommandWithWorldAndArgs GBattleGarrisonDumpStructures(
+	TEXT("Battle.Garrison.DumpStructures"),
+	TEXT("Dumps garrison structure records + booking state; EXEC_RESULT Garrison.Structure / Garrison.Booking lines"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BattleExec::GarrisonDumpStructures));

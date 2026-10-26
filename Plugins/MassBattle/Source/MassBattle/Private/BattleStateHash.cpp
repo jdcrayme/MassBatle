@@ -111,6 +111,17 @@ uint64 FBattleStateHash::Compute(UWorld* World)
 			AppendU64(static_cast<uint64>(Quantize2(Formation->SpeedLimit)));
 			AppendU64(static_cast<uint64>(Quantize2(Formation->SpacingScale)));
 			AppendU64(static_cast<uint64>(Formation->Generation));
+			// 6. Garrison terms (spec §3.3, F9/R-G6): appended AFTER the
+			// formation terms, position-stable, same sorted-handle pass. The
+			// booked-range mirror contents are derivable from these terms +
+			// the structure records (deterministic copies at Occupy), so the
+			// identity terms suffice -- hashing 64 fixed slots per unit would
+			// quadruple the hash input for zero drift coverage.
+			AppendU64(static_cast<uint64>(Formation->GarrisonMode));
+			AppendU64(static_cast<uint64>(Formation->GarrisonStructureId));
+			AppendU64(static_cast<uint64>(Formation->GarrisonPhase));
+			AppendU64(static_cast<uint64>(Formation->GarrisonSlotBase));
+			AppendU64(static_cast<uint64>(Formation->GarrisonSlotCount));
 		}
 	}
 

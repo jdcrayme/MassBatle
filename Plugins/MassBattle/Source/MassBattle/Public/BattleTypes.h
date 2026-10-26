@@ -46,13 +46,14 @@ struct MASSBATTLE_API FBattleAttributeSnapshot
 	float AmmoPool = 0.f;
 };
 
-/** A2 thin order API payload (decision A2): Move to an anchor with a facing,
- *  or Stop. Positions in centimeters (fragment boundary convention), speeds in
- *  m/s (project math convention) -- converted by the consumers. Selection /
- *  picking / UI / camera stay out of scope v1 (Phase 5 territory). */
+/** Thin order API payload (decision A2): Move to an anchor with a facing, Stop,
+ *  or Garrison into / ExitGarrison from a structure. Positions in centimeters
+ *  (fragment boundary convention), speeds in m/s (project math convention) --
+ *  converted by the consumers. Selection / picking / UI / camera stay out of
+ *  scope v1 (Phase 5 territory). */
 struct FUnitOrder
 {
-	enum class EType : uint8 { None, Move, Stop };
+	enum class EType : uint8 { None, Move, Stop, Garrison, ExitGarrison };
 
 	EType Type = EType::None;
 	/** Move-order anchor (centimeters, engine space). */
@@ -64,6 +65,8 @@ struct FUnitOrder
 	/** Commanded frontage (entities per rank). 0 = keep the current layout;
 	 *  >0 re-lays slots on the next plan (clamped to NumSlots by UnitLocomotion). */
 	int32 CommandedFiles = 0;
+	/** Garrison-order target structure (registry-assigned id; 0 = none). */
+	uint32 StructureId = 0;
 };
 
 /** Registry-side per-unit state (arch §2.3). Game-thread written, plain so
@@ -84,6 +87,10 @@ struct FUnitRuntimeState
 	FUnitOrder CurrentOrder;
 	/** Bumped on every issued order -- UnitLocomotion's change detector. */
 	uint32 OrderSerial = 0;
+
+	/** Order parked while the unit egresses (A7): a Move (or re-Garrison)
+	 *  received while garrisoned resumes at the assembly point. */
+	FUnitOrder PendingAfterEgress;
 
 	// Phase 0: engagement-record stub intentionally empty (arch §2.3) --
 	// engagement records arrive with the Phase 2 engagement solver.

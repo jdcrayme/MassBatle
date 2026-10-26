@@ -36,4 +36,10 @@ namespace BattleExec
 	// -- Phase 1 Task 10 (A2 command surface) --
 	MASSBATTLE_API void OrderMove(const TArray<FString>& Args, UWorld* World);
 	MASSBATTLE_API void OrderStop(const TArray<FString>& Args, UWorld* World);
+
+	// -- Phase garrison (tasks 1/2/4: probes, fixtures, orders) --
+	MASSBATTLE_API void GarrisonDumpStructures(const TArray<FString>& Args, UWorld* World);
+	MASSBATTLE_API void GarrisonSpawnFixture(const TArray<FString>& Args, UWorld* World);
+	MASSBATTLE_API void OrderGarrison(const TArray<FString>& Args, UWorld* World);
+	MASSBATTLE_API void OrderExitGarrison(const TArray<FString>& Args, UWorld* World);
 }

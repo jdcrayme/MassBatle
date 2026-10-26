@@ -9,6 +9,7 @@
 #include "Mass/EntityElementTypes.h"
 #include "MassMovementFragments.h" // FMassVelocityFragment (adoption per arch §3.1 note, engine-api §14)
 #include "BattleTypes.h"
+#include "BattleGarrisonTypes.h"
 #include "BattleMovementFragments.generated.h"
 
 /** Entity movement states (arch §8.3 state table, all six rows; PressRing /
@@ -27,7 +28,9 @@ enum class EBattleMovementState : uint8
 
 /** Path-polyline sample (arc-length parameterized). Plain reflected struct so
  *  it can live inside a shared fragment and feed the pure-math seam functions
- *  (planner T1.9, path-frame layout T1.2) unchanged. Centimeters. */
+ *  (planner T1.9, path-frame layout T1.2) unchanged. Centimeters. Z carries
+ *  elevation on garrison internal paths (spec §6); field paths keep Z = 0
+ *  bit-for-bit (the Phase 1 straight-path degeneracy is preserved). */
 USTRUCT()
 struct FBattlePathPoint
 {
@@ -41,6 +44,9 @@ struct FBattlePathPoint
 
 	/** Unit tangent at this sample (planar, normalized). */
 	UPROPERTY() FVector2D Tangent = FVector2D(1.f, 0.f);
+
+	/** Elevation at this sample (cm; garrison internal paths only, else 0). */
+	UPROPERTY() float Z = 0.f;
 };
 
 /** Max samples per unit path. A 3 m-grid planner path over the Phase 1 tile
@@ -62,12 +68,23 @@ struct FBattlePathPolyline
 	bool IsValid() const { return NumPoints >= 2; }
 };
 
+/** Garrison post mirror entry (A2): one booked-range slot copied game-thread
+ *  into the shared fragment at Occupy. Centimeters (fragment boundary). */
+USTRUCT()
+struct FGarrisonSlotFragment
+{
+	GENERATED_BODY()
+
+	UPROPERTY() FVector2D Pos = FVector2D::ZeroVector; // cm, planar
+	UPROPERTY() float Z = 0.f;                         // cm (wall top > 0, trench < 0)
+	UPROPERTY() float YawDeg = 0.f;                    // facing at the post
+};
+
 /**
  * Per-unit movement broadcast channel (arch §3.1 row, written by UnitLocomotion).
  * One instance per unit; ADR-14 anchor first -- created through the
  * handle-seeded hash path exactly like FUnitStatsSharedFragment (E1).
- */
-USTRUCT()
+ */USTRUCT()
 struct FUnitFormationSharedFragment : public FMassSharedFragment
 {
 	GENERATED_BODY()
@@ -126,6 +143,30 @@ struct FUnitFormationSharedFragment : public FMassSharedFragment
 
 	/** Planner path; empty (NumPoints<2) until UnitLocomotion plans one. */
 	UPROPERTY() FBattlePathPolyline Path;
+
+	// -- garrison state (spec §3.3; ADR-18: fragment fields, no new tags /
+	//    processors / archetypes). Written game-thread by UnitLocomotion;
+	//    worker processors read these mirrors exclusively (A2). --
+
+	/** Field-layout file count at ingress entry (restored on egress). */
+	UPROPERTY() int32 FieldFilesSaved = 0;
+	/** Garrison participation + FSM phase (meaningful when Mode != None). */
+	UPROPERTY() EGarrisonMode GarrisonMode = EGarrisonMode::None;
+	UPROPERTY() EGarrisonPhase GarrisonPhase = EGarrisonPhase::None;
+	/** Structure + entrance the unit is committed to (0 / 0 when None). */
+	UPROPERTY() uint32 GarrisonStructureId = 0;
+	UPROPERTY() uint8 GarrisonEntranceIndex = 0;
+	/** Booked slot range [GarrisonSlotBase, GarrisonSlotBase+GarrisonSlotCount),
+	 *  mirrored from the ledger at Occupy (A2). */
+	UPROPERTY() int32 GarrisonSlotBase = 0;
+	UPROPERTY() int32 GarrisonSlotCount = 0;
+	/** Current interior elevation target (cm; Z servo input, spec §6). */
+	UPROPERTY() float GarrisonZ = 0.f;
+	/** Queue-phase retry timer (A4 cadence; same pattern as ReflowCooldown). */
+	UPROPERTY() float GarrisonRetryCooldown = 0.f;
+	/** Booked-range mirror: posts in cm (fixed array; not touched until
+	 *  Occupy). Indexed by (slot - GarrisonSlotBase). */
+	UPROPERTY() FGarrisonSlotFragment Slots[MaxGarrisonSlotsPerUnit];
 };
 
 /** Per-entity slot assignment (arch §3.1 row: slot index + generation counter;
@@ -141,7 +182,9 @@ struct FSlotAssignmentFragment : public FMassFragment
 };
 
 /** Servo target written by FormationSlotResolve (arch §4 row 6: "move targets").
- *  World-space slot position + per-rank facing, centimeters / degrees. */
+ *  World-space slot position + per-rank facing, centimeters / degrees. TargetZ
+ *  carries elevation for the garrison Z servo (spec §6): structure-slot Z when
+ *  occupying, path-interpolated Z while filing; 0 in the field. */
 USTRUCT()
 struct FSlotTargetFragment : public FMassFragment
 {
@@ -149,6 +192,7 @@ struct FSlotTargetFragment : public FMassFragment
 
 	UPROPERTY() FVector2D TargetPos = FVector2D::ZeroVector;
 	UPROPERTY() float TargetYaw = 0.f;
+	UPROPERTY() float TargetZ = 0.f;
 };
 
 /** Movement state (§8.3 enum; per-entity -- formation behavior is read per
