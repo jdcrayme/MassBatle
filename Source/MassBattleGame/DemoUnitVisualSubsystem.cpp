@@ -14,6 +14,7 @@
 #include "MassEntityView.h"
 #include "MassCommonFragments.h"
 #include "MeshDescription.h"
+#include "Misc/App.h"
 #include "StaticMeshAttributes.h"
 #include "Misc/Paths.h"
 
@@ -199,6 +200,14 @@ UInstancedStaticMeshComponent* UDemoUnitVisualSubsystem::EnsureVisual(FUnitHandl
 	{
 		return Existing->Get();
 	}
+	// Cooked + no-RHI (the nightly's staged -nullrhi run) cannot create render
+	// resources for a runtime-built static mesh at all (StaticMesh.cpp:2810
+	// asserts FApp::CanEverRender || !RequiresCookedData). Nothing renders in
+	// that environment by design -- skip visuals instead of crashing.
+	if (FPlatformProperties::RequiresCookedData() && !FApp::CanEverRender())
+	{
+		return nullptr;
+	}
 	UStaticMesh* Mesh = EnsureCapsuleMesh();
 	if (!Mesh)
 	{
@@ -351,7 +360,13 @@ UStaticMesh* UDemoUnitVisualSubsystem::EnsureCapsuleMesh()
 
 	TArray<const FMeshDescription*> Descriptions;
 	Descriptions.Add(&Desc);
-	Mesh->BuildFromMeshDescriptions(Descriptions);
+	// Cooked builds can only fast-build runtime meshes (UStaticMesh::
+	// BuildFromMeshDescriptions asserts !WITH_EDITOR && !bFastBuild) -- the
+	// nightly staged run surfaced this; bFastBuild is editor-harmless.
+	// FBuildMeshDescriptionsParams is nested in UStaticMesh (5.8).
+	UStaticMesh::FBuildMeshDescriptionsParams BuildParams;
+	BuildParams.bFastBuild = true;
+	Mesh->BuildFromMeshDescriptions(Descriptions, BuildParams);
 
 	CapsuleMesh = Mesh;
 	UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoCapsuleMesh built (r=%.0fcm h=%.0fcm)"),

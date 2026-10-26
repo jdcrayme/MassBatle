@@ -165,6 +165,10 @@ struct FUnitFormationSharedFragment : public FMassSharedFragment
 	/** Queue/egress-retry cadence state (A4; same pattern as ReflowCooldown,
 	 *  F16: persisted here so it survives chunk boundaries). */
 	UPROPERTY() float GarrisonRetryCooldown = 0.f;
+	/** Metric timestamps (GFrameNumber at order issue / queue entry; B.8 item
+	 *  4 diagnostics only -- never hashed, never sim-authoritative). */
+	UPROPERTY() int32 GarrisonOrderTick = 0;
+	UPROPERTY() int32 GarrisonQueueTick = 0;
 	/** Booked-range mirror: posts in cm (fixed array; not touched until
 	 *  Occupy). Indexed by (slot - GarrisonSlotBase). */
 	UPROPERTY() FGarrisonSlotFragment Slots[MaxGarrisonSlotsPerUnit];

@@ -54,6 +54,20 @@ const FGarrisonStructureRecord* UBattleGarrisonSubsystem::FindStructure(uint32 S
 	return Structures.Find(StructureId);
 }
 
+bool UBattleGarrisonSubsystem::IsSlotBooked(uint32 StructureId, int32 SlotIndex) const
+{
+	for (const TPair<FUnitHandle, FGarrisonBooking>& Pair : Bookings)
+	{
+		if (Pair.Value.StructureId == StructureId
+			&& SlotIndex >= Pair.Value.SlotBase
+			&& SlotIndex < Pair.Value.SlotBase + Pair.Value.SlotCount)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
 bool UBattleGarrisonSubsystem::TryBook(FUnitHandle Unit, uint32 StructureId, uint8 EntranceIndex,
 	int32 SlotCount, FGarrisonBooking& OutBooking)
 {

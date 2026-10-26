@@ -39,6 +39,10 @@ public:
 	uint32 RegisterStructure(const FGarrisonStructureRecord& Record);
 	const FGarrisonStructureRecord* FindStructure(uint32 StructureId) const;
 	int32 GetStructureCount() const { return Structures.Num(); }
+	/** Overlay/metrics iteration (game thread, read-only). */
+	const TMap<uint32, FGarrisonStructureRecord>& GetAllStructures() const { return Structures; }
+	/** True when any booking covers the slot (overlay occupied/free colors). */
+	bool IsSlotBooked(uint32 StructureId, int32 SlotIndex) const;
 
 	// -- booking ledger (spec §3.2; ADR-21 determinism) --
 

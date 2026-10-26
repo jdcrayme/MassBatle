@@ -64,6 +64,19 @@ public:
 	void RecordLadderEscalation() { LadderEscalations++; }
 	int32 GetLadderEscalations() const { return LadderEscalations; }
 
+	// -- Garrison metrics (B.8 item 4; task 9) --
+
+	/** One call per unit reaching Settled (UnitLocomotion, game thread):
+	 *  filing time = order -> settled, queue wait = queue enter -> ingress
+	 *  (both in ticks; diagnostic only -- never hashed). */
+	void RecordGarrisonSettled(int32 FilingTicks, int32 QueueWaitTicks);
+	/** `Battle.Garrison.Metrics` EXEC line: filings, averages, occupancy. */
+	void DumpGarrisonMetrics(int32 BookedUnits, int32 QueueWaiting);
+
+	int32 GetGarrisonFilings() const { return GarrisonFilings; }
+	int32 GetGarrisonFilingTicksAvg() const { return GarrisonFilings > 0 ? GarrisonFilingTicksTotal / GarrisonFilings : 0; }
+	int32 GetGarrisonQueueWaitTicksAvg() const { return GarrisonQueueWaits > 0 ? GarrisonQueueWaitTicksTotal / GarrisonQueueWaits : 0; }
+
 	/** Test hook: zero the diagnostic counters (scenario start). */
 	void ResetDiagnostics();
 
@@ -72,6 +85,12 @@ private:
 
 	/** T1.5/T1.8 diagnostics; relaxed atomicity is fine (diagnostic only). */
 	std::atomic<int32> LadderEscalations{0};
+
+	// Garrison metric accumulators (B.4 instrumented set, game thread only).
+	int32 GarrisonFilings = 0;
+	int32 GarrisonFilingTicksTotal = 0;
+	int32 GarrisonQueueWaits = 0;
+	int32 GarrisonQueueWaitTicksTotal = 0;
 
 	FCriticalSection OverlayMutex;
 	TArray<FBattleOverlayLine> PendingOverlayLines;

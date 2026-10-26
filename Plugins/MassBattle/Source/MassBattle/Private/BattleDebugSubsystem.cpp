@@ -37,6 +37,29 @@ void UBattleDebugSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 void UBattleDebugSubsystem::ResetDiagnostics()
 {
 	LadderEscalations = 0;
+	GarrisonFilings = 0;
+	GarrisonFilingTicksTotal = 0;
+	GarrisonQueueWaits = 0;
+	GarrisonQueueWaitTicksTotal = 0;
+}
+
+void UBattleDebugSubsystem::RecordGarrisonSettled(int32 FilingTicks, int32 QueueWaitTicks)
+{
+	++GarrisonFilings;
+	GarrisonFilingTicksTotal += FMath::Max(0, FilingTicks);
+	if (QueueWaitTicks > 0)
+	{
+		++GarrisonQueueWaits;
+		GarrisonQueueWaitTicksTotal += QueueWaitTicks;
+	}
+}
+
+void UBattleDebugSubsystem::DumpGarrisonMetrics(int32 BookedUnits, int32 QueueWaiting)
+{
+	UE_LOG(LogMassBattle, Display,
+		TEXT("EXEC_RESULT GarrisonMetrics Filings=%d FilingTicksAvg=%d QueueWaits=%d QueueWaitTicksAvg=%d BookedUnits=%d Waiting=%d"),
+		GarrisonFilings, GetGarrisonFilingTicksAvg(), GarrisonQueueWaits,
+		GetGarrisonQueueWaitTicksAvg(), BookedUnits, QueueWaiting);
 }
 
 void UBattleDebugSubsystem::Tick(float DeltaTime)

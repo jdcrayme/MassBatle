@@ -501,6 +501,26 @@ namespace BattleExec
 		SpawnGarrisonFixtureImpl(EGarrisonStructureType::Wall, TEXT("Garrison.SpawnWall"), Args, World);
 	}
 
+	void GarrisonMetrics(const TArray<FString>& Args, UWorld* World)
+	{
+		UBattleDebugSubsystem* Debug = World ? World->GetSubsystem<UBattleDebugSubsystem>() : nullptr;
+		UBattleGarrisonSubsystem* Garrison = World ? World->GetSubsystem<UBattleGarrisonSubsystem>() : nullptr;
+		if (!Debug || !Garrison)
+		{
+			UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT Garrison.Metrics FAIL no subsystems"));
+			return;
+		}
+		Garrison->DumpStructures(); // per-structure occupancy evidence
+		int32 Booked = 0;
+		int32 Waiting = 0;
+		for (const TPair<uint32, FGarrisonStructureRecord>& It : Garrison->GetAllStructures())
+		{
+			Booked += Garrison->GetBookedCount(It.Key);
+			Waiting += Garrison->GetQueueWaitCount(It.Key);
+		}
+		Debug->DumpGarrisonMetrics(Booked, Waiting);
+	}
+
 	void OrderGarrison(const TArray<FString>& Args, UWorld* World)
 	{
 		UUnitRegistrySubsystem* Registry = World ? World->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
@@ -621,6 +641,11 @@ static FAutoConsoleCommandWithWorldAndArgs GBattleGarrisonDumpStructures(
 	TEXT("Battle.Garrison.DumpStructures"),
 	TEXT("Dumps garrison structure records + booking state; EXEC_RESULT Garrison.Structure / Garrison.Booking lines"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BattleExec::GarrisonDumpStructures));
+
+static FAutoConsoleCommandWithWorldAndArgs GBattleGarrisonMetrics(
+	TEXT("Battle.Garrison.Metrics"),
+	TEXT("Dumps garrison B.4 metrics (filings, filing-time avg, queue-wait avg, occupancy); EXEC_RESULT GarrisonMetrics line"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BattleExec::GarrisonMetrics));
 
 static FAutoConsoleCommandWithWorldAndArgs GBattleGarrisonSpawnBuilding(
 	TEXT("Battle.Garrison.SpawnBuilding"),

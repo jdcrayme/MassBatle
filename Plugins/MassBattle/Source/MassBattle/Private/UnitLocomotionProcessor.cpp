@@ -12,6 +12,7 @@
 #include "BattlePassGeometry.h"
 #include "BattleServo.h"
 #include "BattleCompression.h"
+#include "BattleDebugSubsystem.h"
 #include "MassBattleModule.h"
 
 #include "MassExecutionContext.h"
@@ -107,6 +108,12 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 
 	const float DT = Context.GetDeltaTimeSeconds();
 	const bool bGarrisonEnabled = FGarrisonCVars::Enable() != 0;
+
+	// B.8 item 3 overlay: the A3 toggle gates the garrison draws too (the
+	// cvar lives in BattleDebugSubsystem.cpp; readers go through the manager).
+	UBattleDebugSubsystem* Debug = Context.GetWorld() ? Context.GetWorld()->GetSubsystem<UBattleDebugSubsystem>() : nullptr;
+	const IConsoleVariable* ShowOverlayCvar = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Debug.ShowOverlay"));
+	const bool DebugOverlay = ShowOverlayCvar != nullptr && ShowOverlayCvar->GetInt() != 0;
 
 	// ---- Unit bodies (for the §8.2 facing lock) ----
 	// R-G3: garrisoned units are EXCLUDED -- their field OBB is meaningless
@@ -229,12 +236,23 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 
 		// Garrison FSM transition helper (ground rule 4): one EXEC line per
 		// transition, event-rate.
-		auto GarrisonTransition = [&Formation](EGarrisonPhase NewPhase, const TCHAR* Reason)
+		auto GarrisonTransition = [&Formation, &Context](EGarrisonPhase NewPhase, const TCHAR* Reason)
 		{
 			Formation.GarrisonPhase = NewPhase;
 			UE_LOG(LogMassBattle, Display,
 				TEXT("EXEC_RESULT Garrison Phase Unit=%u:%u Phase=%d Reason=%s"),
 				Formation.OwnerUnit.Index, Formation.OwnerUnit.Serial, static_cast<int32>(NewPhase), Reason);
+			// B.8 item 4: filing/queue-wait metrics, sampled at the settle
+			// transition (diagnostic only -- never hashed).
+			if (NewPhase == EGarrisonPhase::Settled)
+			{
+				if (UBattleDebugSubsystem* DebugSink = Context.GetWorld()->GetSubsystem<UBattleDebugSubsystem>())
+				{
+					DebugSink->RecordGarrisonSettled(
+						GFrameNumber - Formation.GarrisonOrderTick,
+						Formation.GarrisonQueueTick > 0 ? GFrameNumber - Formation.GarrisonQueueTick : 0);
+				}
+			}
 		};
 
 		// Cancel a garrison that has not entered the structure yet (order
@@ -312,6 +330,10 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 			}
 			else
 			{
+				if (Formation.GarrisonQueueTick == 0)
+				{
+					Formation.GarrisonQueueTick = GFrameNumber; // B.8 item 4 queue-wait start
+				}
 				const int32 QueueSlot = Garrison->RegisterQueueWait(Unit,
 					Formation.GarrisonStructureId, Formation.GarrisonEntranceIndex);
 				GarrisonTransition(EGarrisonPhase::Queue, TEXT("FULL-OR-BUSY"));
@@ -406,6 +428,8 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 					Formation.GarrisonMode = EGarrisonMode::Garrisoning;
 					Formation.GarrisonStructureId = StructureId;
 					Formation.GarrisonEntranceIndex = static_cast<uint8>(Entrance);
+					Formation.GarrisonOrderTick = GFrameNumber;
+					Formation.GarrisonQueueTick = 0;
 					GarrisonTransition(EGarrisonPhase::Approach, TEXT("ORDER"));
 					if (PlanFieldPathTo(Record->Entrances[Entrance].QueuePos))
 					{
@@ -927,5 +951,69 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 					Formation.FacingYaw, Order->FacingYaw, FacingDeltaRate, DT);
 			}
 		}
+
+		// ---- Per-unit garrison phase marker (B.8 item 3 overlay) ----
+		if (bGarrisoned && DebugOverlay && Debug)
+		{
+			static const FColor PhaseColors[7] = {
+				FColor::White,                             // None
+				FColor(200, 200, 255),                     // Approach
+				FColor::Yellow,                            // Queue
+				FColor::Orange,                            // Ingress
+				FColor::Cyan,                              // Occupy
+				FColor::Green,                             // Settled
+				FColor::Red                                // Egress
+			};
+			FBattleOverlayLine Marker;
+			const FVector2D AnchorM = Formation.AnchorPos * 0.01f;
+			Marker.From = FVector(AnchorM.X, AnchorM.Y, 0.f);
+			Marker.To = FVector(AnchorM.X, AnchorM.Y, 300.f);
+			Marker.Color = PhaseColors[FMath::Clamp(static_cast<int32>(Formation.GarrisonPhase), 0, 6)];
+			Debug->EnqueueOverlayLine(Marker);
+		}
 	});
+
+	// ---- Structure overlay (B.8 item 3; task 9): footprint, entrance legs,
+	//      queue/assembly points, and slot posts (occupied vs free). ----
+	if (DebugOverlay && Garrison->GetStructureCount() > 0)
+	{
+		if (UBattleDebugSubsystem* DebugSink = Context.GetWorld()->GetSubsystem<UBattleDebugSubsystem>())
+		{
+			constexpr float GroundZ = 20.f;
+			auto Line = [DebugSink](const FVector2D& A, float AZ, const FVector2D& B, float BZ, const FColor& C)
+			{
+				FBattleOverlayLine L;
+				L.From = FVector(A.X, A.Y, AZ);
+				L.To = FVector(B.X, B.Y, BZ);
+				L.Color = C;
+				DebugSink->EnqueueOverlayLine(L);
+			};
+			for (const TPair<uint32, FGarrisonStructureRecord>& It : Garrison->GetAllStructures())
+			{
+				const FGarrisonStructureRecord& Rec = It.Value;
+				const FVector2D Corners[4] = {
+					Rec.Footprint.Min, FVector2D(Rec.Footprint.Max.X, Rec.Footprint.Min.Y),
+					Rec.Footprint.Max, FVector2D(Rec.Footprint.Min.X, Rec.Footprint.Max.Y)
+				};
+				for (int32 C = 0; C < 4; ++C)
+				{
+					Line(Corners[C], GroundZ, Corners[(C + 1) % 4], GroundZ, FColor(120, 120, 40));
+				}
+				for (const FGarrisonEntrance& E : Rec.Entrances)
+				{
+					Line(E.QueuePos, GroundZ, E.DoorPos, GroundZ, FColor::Orange);
+					Line(E.DoorPos, GroundZ, E.AssemblyPos, GroundZ, FColor(255, 80, 80));
+				}
+				for (int32 S = 0; S < Rec.Slots.Num(); ++S)
+				{
+					const FGarrisonSlot& Slot = Rec.Slots[S];
+					const float ZCm = Slot.Z * 100.f + GroundZ;
+					const float Half = 25.f;
+					const FColor SlotColor = Garrison->IsSlotBooked(It.Key, S) ? FColor::Cyan : FColor(0, 90, 60);
+					Line(FVector2D(Slot.Pos.X - Half, Slot.Pos.Y), ZCm, FVector2D(Slot.Pos.X + Half, Slot.Pos.Y), ZCm, SlotColor);
+					Line(FVector2D(Slot.Pos.X, Slot.Pos.Y - Half), ZCm, FVector2D(Slot.Pos.X, Slot.Pos.Y + Half), ZCm, SlotColor);
+				}
+			}
+		}
+	}
 }
