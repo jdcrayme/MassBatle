@@ -1,13 +1,13 @@
 // DemoGameMode.cpp -- see header.
 #include "DemoGameMode.h"
 #include "DemoUnitActor.h"
-#include "DemoGarrisonProp.h"
 #include "DemoCameraPawn.h"
 #include "DemoPlayerController.h"
 #include "DemoHUD.h"
 #include "DemoUnitVisualSubsystem.h"
 
 #include "BattleRegistry.h"
+#include "BattleGarrisonSubsystem.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "MassEntitySubsystem.h"
@@ -39,54 +39,37 @@ void ADemoGameMode::BeginPlay()
 	GetWorldTimerManager().SetTimerForNextTick(this, &ADemoGameMode::TrySpawnLevelUnits);
 }
 
-void ADemoGameMode::SpawnGarrisonSample()
+void ADemoGameMode::VerifyGarrisonStructures()
 {
-	if (bGarrisonSampleRegistered)
+	UBattleGarrisonSubsystem* Garrison = GetWorld() ? GetWorld()->GetSubsystem<UBattleGarrisonSubsystem>() : nullptr;
+	if (!Garrison || Garrison->GetStructureCount() == 0)
 	{
+		UE_LOG(LogDemoBattle, Display,
+			TEXT("EXEC_RESULT DemoClickProbe none (no garrison structures registered)"));
 		return;
 	}
-	UWorld* World = GetWorld();
-
-	// Level-placed props first (authored in the map when present).
-	int32 LevelProps = 0;
-	for (TActorIterator<ADemoGarrisonProp> It(World); It; ++It)
+	// Probe each structure's own footprint center through the SAME static the
+	// RMB click path uses (ADemoPlayerController::FindStructureAtWorld) -- a
+	// miss here means a click there would fail too.
+	int32 Ok = 0;
+	int32 Probed = 0;
+	for (const TPair<uint32, FGarrisonStructureRecord>& It : Garrison->GetAllStructures())
 	{
-		++LevelProps; // self-register in their own BeginPlay
+		const FVector2D CenterM = It.Value.Footprint.GetCenter();
+		const uint32 Resolved = ADemoPlayerController::FindStructureAtWorld(GetWorld(), CenterM * 100.f);
+		++Probed;
+		Ok += Resolved == It.Key ? 1 : 0;
+		UE_LOG(LogDemoBattle, Display,
+			TEXT("EXEC_RESULT DemoClickProbe Structure=%u Center=(%.1f,%.1f)m Resolved=%u ok=%d"),
+			It.Key, CenterM.X, CenterM.Y, Resolved, Resolved == It.Key ? 1 : 0);
 	}
-
-	// Representative sample bootstrap (deviation, disclosed in the phase
-	// report): one structure per family, clear of the demo unit lines at
-	// x = +-50 m. Idempotent with level placement: skipped when the map
-	// already carries props.
-	if (LevelProps == 0)
+	UE_LOG(LogDemoBattle, Display,
+		TEXT("EXEC_RESULT DemoClickProbe summary probes=%d ok=%d"), Probed, Ok);
+	if (Ok != Probed)
 	{
-		struct FSample { EGarrisonStructureType Type; FVector2D PosM; float RotDeg; const TCHAR* Name; };
-		const FSample Samples[3] = {
-			{ EGarrisonStructureType::Building, FVector2D(0.f, 90.f), 0.f, TEXT("DemoKeep") },
-			{ EGarrisonStructureType::Wall, FVector2D(-90.f, 0.f), 90.f, TEXT("DemoWall") },
-			{ EGarrisonStructureType::Trench, FVector2D(90.f, 0.f), 90.f, TEXT("DemoTrench") },
-		};
-		for (const FSample& S : Samples)
-		{
-			const FVector Loc(S.PosM.X * 100.f, S.PosM.Y * 100.f, 0.f);
-			// Deferred: StructureType must be set BEFORE BeginPlay dispatches
-			// (registration happens there).
-			ADemoGarrisonProp* Prop = World->SpawnActorDeferred<ADemoGarrisonProp>(
-				ADemoGarrisonProp::StaticClass(), FTransform(FRotator(0.f, S.RotDeg, 0.f), Loc),
-				nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
-			if (Prop)
-			{
-				Prop->SetStructureType(S.Type);
-				Prop->FinishSpawning(FTransform(FRotator(0.f, S.RotDeg, 0.f), Loc));
-			}
-		}
-		UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoGarrisonSample spawned 3 (building/wall/trench)"));
+		UE_LOG(LogDemoBattle, Error,
+			TEXT("EXEC_RESULT DemoClickProbe FAIL %d of %d structures not clickable"), Probed - Ok, Probed);
 	}
-	else
-	{
-		UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoGarrisonSample level props present=%d (bootstrap skipped)"), LevelProps);
-	}
-	bGarrisonSampleRegistered = true;
 }
 
 void ADemoGameMode::TrySpawnLevelUnits()
@@ -111,9 +94,10 @@ void ADemoGameMode::TrySpawnLevelUnits()
 		return;
 	}
 
-	// Garrison sample first: registration stamps the cost grid so any early
-	// player orders route around the structures from the first tick.
-	SpawnGarrisonSample();
+	// Garrison structures are MAP actors (ADemoGarrisonProp placed in
+	// L_MassBattle_Demo01); their BeginPlay registered the records + stamped
+	// the cost grid at level start. One-time click-path probe, then units.
+	VerifyGarrisonStructures();
 
 	int32 Spawned = 0;
 	for (const TObjectPtr<ADemoUnitActor>& Unit : LevelUnits)

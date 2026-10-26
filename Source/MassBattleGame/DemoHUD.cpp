@@ -50,6 +50,7 @@ void ADemoHUD::DrawControlsHint()
 		TEXT("LMB click / shift+click  - select / toggle unit"),
 		TEXT("LMB drag                 - marquee select"),
 		TEXT("RMB click                - move (keeps formation)"),
+		TEXT("RMB on structure         - garrison (units file in)"),
 		TEXT("RMB drag                 - formation: width + facing (drag line = front)"),
 		TEXT("H                        - halt        WASD/arrows - pan"),
 		TEXT("Q/E - rotate             - mouse wheel - zoom"),

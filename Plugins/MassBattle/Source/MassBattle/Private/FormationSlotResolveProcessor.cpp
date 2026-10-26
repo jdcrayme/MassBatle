@@ -35,6 +35,18 @@ namespace
 		2,
 		TEXT("Max file columns an entity may shift during a reflow (k in the T1.1 bound)."),
 		ECVF_Default);
+
+	// TW-style fan-in peel (arch §8.1 amendment): while a field path exists,
+	// an entity targets its destination-layout slot whenever that is the
+	// closer walk than its traveling slot -- entities stream directly into
+	// their final positions during the approach instead of holding the rigid
+	// block until anchor arrival and re-dressing afterwards. This deadband
+	// (m) keeps the decision boundary from flip-flopping; <= 0 disables.
+	TAutoConsoleVariable<float> GBattleMovementFanInHysteresis(
+		TEXT("Battle.Movement.FanInHysteresis"),
+		0.3f,
+		TEXT("Fan-in peel hysteresis deadband, m; the destination slot must be closer by this much (<= 0 disables the peel)."),
+		ECVF_Default);
 }
 
 UFormationSlotResolveProcessor::UFormationSlotResolveProcessor(const FObjectInitializer& ObjectInitializer)
@@ -239,6 +251,28 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 			SlotYaw[Slot] = YawDeg;
 		}
 
+		// ---- TW fan-in destination layout (arch §8.1 amendment) ----
+		// Static anchor-formula layout at the ordered destination/facing,
+		// computed only when UnitLocomotion armed the frame for this field
+		// move. Assignment keeps matching on the TRAVELING layout (block-
+		// coherent slot identity, stable predictive swaps); the peel applies
+		// per entity at target-write time below. Open-order spacing (scale 1):
+		// the destination is a formed block, not a squeezed one.
+		const bool bFanIn = bHasPath && Formation.FanInDestValid != 0;
+		TArray<FVector2D> FinalSlotPosM;
+		if (bFanIn)
+		{
+			FinalSlotPosM.SetNumUninitialized(Formation.NumSlots);
+			for (int32 Slot = 0; Slot < Formation.NumSlots; ++Slot)
+			{
+				const int32 Rank = Slot / Formation.NumFiles;
+				const int32 File = Slot % Formation.NumFiles;
+				FinalSlotPosM[Slot] = FPathFrameLayout::AnchorFormula(
+					Formation.FinalAnchorPos * 0.01f, Formation.FinalFacingYaw,
+					Rank, File, Formation.NumFiles, RankSpacingM, FileSpacingM);
+			}
+		}
+
 		// ---- Batched reflow (arch §8.4): 0.5 s cadence or rank-gap trigger ----
 		TArray<int32> Assignment;
 		Assignment.Reserve(NumEntities);
@@ -323,6 +357,7 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 		// ---- Write move targets + slot-error overlay (A3) ----
 		UBattleDebugSubsystem* Debug = Context.GetWorld() ? Context.GetWorld()->GetSubsystem<UBattleDebugSubsystem>() : nullptr;
 		TArrayView<FSlotTargetFragment> Targets = Context.GetMutableFragmentView<FSlotTargetFragment>();
+		const float FanInHystM = GBattleMovementFanInHysteresis.GetValueOnAnyThread();
 		for (int32 i = 0; i < NumEntities; ++i)
 		{
 			const int32 Slot = Assignment[i];
@@ -330,8 +365,28 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 			{
 				continue;
 			}
-			Targets[i].TargetPos = FVector2D(SlotPosM[Slot]) * 100.f;
-			Targets[i].TargetYaw = SlotYaw[Slot];
+			// TW fan-in peel: the destination slot wins when it is the closer
+			// walk for THIS entity (straight-line, the TW rule). The deadband
+			// keeps the boundary from flip-flopping -- once an entity steps
+			// toward the final slot, that side only gets closer. Peeled
+			// entities already face the ordered arrival facing; the servo's
+			// per-state teammate avoidance covers the crossing streams, and
+			// the arrival facing snap in UnitLocomotion makes the post-arrival
+			// anchor frame coincide with the peeled targets.
+			FVector2D TargetPosM = SlotPosM[Slot];
+			float TargetYawDeg = SlotYaw[Slot];
+			if (bFanIn && FanInHystM > 0.f)
+			{
+				const float DistTravelM = FVector2D::Distance(EntityPosM[i], SlotPosM[Slot]);
+				const float DistFinalM = FVector2D::Distance(EntityPosM[i], FinalSlotPosM[Slot]);
+				if (DistFinalM + FanInHystM < DistTravelM)
+				{
+					TargetPosM = FinalSlotPosM[Slot];
+					TargetYawDeg = Formation.FinalFacingYaw;
+				}
+			}
+			Targets[i].TargetPos = FVector2D(TargetPosM) * 100.f;
+			Targets[i].TargetYaw = TargetYawDeg;
 			// Garrison filing (spec §6): TargetZ interpolates along the path
 			// at the entity's rank arc; field movement stays at ground Z.
 			Targets[i].TargetZ = bFiling && Formation.Path.IsValid()
@@ -344,8 +399,9 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 				FBattleOverlayLine Line;
 				Line.From = Context.GetFragmentView<FTransformFragment>()[i].GetTransform().GetTranslation();
 				Line.To = FVector(Targets[i].TargetPos.X, Targets[i].TargetPos.Y, Line.From.Z);
-				// Magnitude-graded color: green near slot -> red far.
-				const float ErrorM = FVector2D::Distance(EntityPosM[i], SlotPosM[Slot]);
+				// Magnitude-graded color: green near slot -> red far (measured
+				// against the target actually written, peel included).
+				const float ErrorM = FVector2D::Distance(EntityPosM[i], TargetPosM);
 				const uint8 Magnitude = static_cast<uint8>(FMath::Clamp(ErrorM * 25.5f, 0.f, 255.f));
 				Line.Color = FColor(255, 255 - Magnitude, 0);
 				Debug->EnqueueOverlayLine(Line);

@@ -7,7 +7,9 @@
 // threshold = formation gesture (the drag line is the FRONT line: start =
 // left edge, end = right edge, facing = line normal; the line is divided
 // across selected units and each gets a commanded file count from its segment
-// width via the A2 width API). H = halt.
+// width via the A2 width API); RMB on a garrison structure = garrison the
+// selection into it (the plugin's FSM files the unit through the entrance).
+// H = halt.
 #pragma once
 
 #include "CoreMinimal.h"
@@ -19,6 +21,7 @@ class ADemoCameraPawn;
 class UDemoUnitVisualSubsystem;
 class UInputAction;
 class UInputMappingContext;
+class UWorld;
 
 UCLASS()
 class MASSBATTLEGAME_API ADemoPlayerController : public APlayerController
@@ -32,6 +35,12 @@ public:
 	virtual void SetupInputComponent() override;
 	virtual void Tick(float DeltaSeconds) override;
 	virtual void BeginPlay() override;
+
+	/** Garrison-order click resolution: the structure whose (margin-expanded)
+	 *  footprint contains the world point (cm, planar), 0 when none. Shared by
+	 *  the RMB order path, the Demo.GarrisonAt console command, and the game
+	 *  mode's boot probe. */
+	static uint32 FindStructureAtWorld(UWorld* World, const FVector2D& PointCm, float MarginCm = 300.f);
 
 	// -- HUD probes (canvas HUD reads these) --
 	bool IsMarqueeActive(FVector2D& OutStart, FVector2D& OutCurrent) const;

@@ -27,21 +27,17 @@ private:
 	/** Deferred spawn pump: retries until the world + Mass are ready. */
 	void TrySpawnLevelUnits();
 
-	/** Registers the representative garrison sample (building / wall /
-	 *  trench) on the demo map. The ADemoGarrisonProp class is level-placeable;
-	 *  this bootstrap exists because the map file was not authored in the
-	 *  garrison run -- owner can re-place them in-editor later (deviation
-	 *  disclosed in the phase report). */
-	void SpawnGarrisonSample();
+	/** One-time click-path probe after the level settles: resolves each
+	 *  registered structure's own footprint center through the SAME static
+	 *  the RMB click uses -- EXEC_RESULT DemoClickProbe evidence that
+	 *  map-placed structures are clickable. */
+	void VerifyGarrisonStructures();
 
 	/** Grace-tick counter for the deferred spawn pump. */
 	int32 SpawnGraceTicks = 0;
 
 	/** True once every discovered unit actor has spawned its roster. */
 	bool bLevelUnitsSpawned = false;
-
-	/** True once the garrison sample is registered. */
-	bool bGarrisonSampleRegistered = false;
 
 	/** Level-placed unit actors found at BeginPlay (authored in the map). */
 	UPROPERTY() TArray<TObjectPtr<ADemoUnitActor>> LevelUnits;

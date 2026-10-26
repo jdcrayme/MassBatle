@@ -144,6 +144,22 @@ struct FUnitFormationSharedFragment : public FMassSharedFragment
 	/** Planner path; empty (NumPoints<2) until UnitLocomotion plans one. */
 	UPROPERTY() FBattlePathPolyline Path;
 
+	// -- TW fan-in destination frame (A2 game-thread mirror; workers read) --
+	// Armed ONLY by a successful field-Move plan (UnitLocomotion order
+	// consumption) and cleared on every other order consumption, so garrison
+	// approach/filing paths never inherit a stale destination. While armed and
+	// a path exists, FormationSlotResolve offers each entity its
+	// destination-layout slot as an alternative target and the entity peels to
+	// it whenever that is the closer walk (Total War-style fan-in) instead of
+	// holding the rigid marching block until anchor arrival.
+
+	/** Destination anchor (cm, planar) -- the planned polyline's last point. */
+	UPROPERTY() FVector2D FinalAnchorPos = FVector2D::ZeroVector;
+	/** Destination facing (degrees) -- the ordered facing applied at arrival. */
+	UPROPERTY() float FinalFacingYaw = 0.f;
+	/** 1 = FinalAnchorPos/FinalFacingYaw describe the current field move. */
+	UPROPERTY() uint8 FanInDestValid = 0;
+
 	// -- garrison state (spec §3.3; ADR-18: fragment fields, no new tags /
 	//    processors / archetypes). Written game-thread by UnitLocomotion;
 	//    worker processors read these mirrors exclusively (A2). --

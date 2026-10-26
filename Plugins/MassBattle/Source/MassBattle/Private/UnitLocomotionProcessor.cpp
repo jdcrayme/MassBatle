@@ -366,6 +366,11 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 			Formation.PlannedOrderSerial = Serial;
 			Formation.PathS = 0.f;
 			Formation.PassLocked = 0; // new order = new pass (T1.7 commit rule is per traversal)
+			// Fan-in destination frame: only a successful field-Move plan
+			// re-arms it (below) -- a stale destination must never outlive the
+			// order that owned it (garrison approach paths would otherwise
+			// peel entities toward the previous march's end).
+			Formation.FanInDestValid = 0;
 
 			const bool bGarrisonOrder = Order->Type == FUnitOrder::EType::Garrison
 				|| Order->Type == FUnitOrder::EType::ExitGarrison;
@@ -544,11 +549,23 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 					UE_LOG(LogMassBattle, Display,
 						TEXT("EXEC_RESULT PlanPath Unit=%u:%u Length=%.1fm Points=%d"),
 						Unit.Index, Unit.Serial, Formation.Path.TotalLength * 0.01f, Formation.Path.NumPoints);
+					// Arm the fan-in destination frame (A2 mirror for the
+					// worker-side FormationSlotResolve peel). The anchor comes
+					// from the polyline's last point -- the planner may snap
+					// the ordered goal to a valid grid node.
+					if (Formation.Path.NumPoints >= 2)
+					{
+						Formation.FinalAnchorPos = Formation.Path.Points[Formation.Path.NumPoints - 1].Pos;
+						Formation.FinalFacingYaw = Order->FacingYaw;
+						Formation.FanInDestValid = 1;
+					}
 				}
 				else
 				{
 					// Unreachable anchor (or in-place reform when the goal
-					// coincides): hold position -- no silent teleport.
+					// coincides): hold position -- no silent teleport. The
+					// destination frame stays disarmed so the in-place
+					// re-dress keeps its rotating-frame behavior.
 					UE_LOG(LogMassBattle, Display,
 						TEXT("EXEC_RESULT PlanPath Unit=%u:%u IN-PLACE or UNREACHABLE -- holding"),
 						Unit.Index, Unit.Serial);
@@ -858,6 +875,15 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 				const float RemainingCm = FMath::Max(0.f, PathM.TotalLength * 100.f - Formation.PathS);
 				if (!bGarrisoned && Order->Type == FUnitOrder::EType::Move && RemainingCm <= 1.f)
 				{
+					// A2 refront-at-destination, snap form: the commanded
+					// facing takes effect the moment the anchor arrives. With
+					// fan-in the peeled entities already stand at (or walk
+					// into) the destination layout, so snapping the frame here
+					// lands the block with minimal motion; the gradual sweep
+					// would re-orbit already-dressed entities around the
+					// anchor. In-place refronts (degenerate plan, no path)
+					// keep the slow sweep in the no-path branch below.
+					Formation.FacingYaw = Order->FacingYaw;
 					UE_LOG(LogMassBattle, Display,
 						TEXT("EXEC_RESULT ArriveRefront Unit=%u:%u Facing=%.1f Files=%d"),
 						Unit.Index, Unit.Serial, Formation.FacingYaw, Formation.NumFiles);

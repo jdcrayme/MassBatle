@@ -5,6 +5,7 @@
 #include "DemoUnitVisualSubsystem.h"
 
 #include "BattleRegistry.h"
+#include "BattleGarrisonSubsystem.h"
 
 #include "Camera/PlayerCameraManager.h"
 #include "Components/InstancedStaticMeshComponent.h"
@@ -12,6 +13,7 @@
 #include "Engine/Engine.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
+#include "HAL/IConsoleManager.h"
 #include "InputAction.h"
 #include "InputMappingContext.h"
 
@@ -138,6 +140,31 @@ ADemoCameraPawn* ADemoPlayerController::CameraPawn() const
 UDemoUnitVisualSubsystem* ADemoPlayerController::VisualSubsystem() const
 {
 	return GetWorld() ? GetWorld()->GetSubsystem<UDemoUnitVisualSubsystem>() : nullptr;
+}
+
+// -- garrison click resolution -------------------------------------------------
+
+uint32 ADemoPlayerController::FindStructureAtWorld(UWorld* World, const FVector2D& PointCm, float MarginCm)
+{
+	UBattleGarrisonSubsystem* Garrison = World ? World->GetSubsystem<UBattleGarrisonSubsystem>() : nullptr;
+	if (!Garrison)
+	{
+		return 0;
+	}
+	const FVector2D PointM = PointCm * 0.01f; // fragment boundary: click point cm -> record meters
+	const float MarginM = MarginCm * 0.01f;
+	for (const TPair<uint32, FGarrisonStructureRecord>& It : Garrison->GetAllStructures())
+	{
+		// The margin covers thin bodies (the 4 m wall/trench channels): a
+		// cursor click on a wall face lands near, not exactly on, the record
+		// footprint -- and the no-collision gray-box bodies let the cursor
+		// trace pass through to the ground plane behind them.
+		if (It.Value.Footprint.ExpandBy(MarginM).IsInside(PointM))
+		{
+			return It.Key;
+		}
+	}
+	return 0;
 }
 
 // -- per-frame ---------------------------------------------------------------
@@ -490,10 +517,34 @@ void ADemoPlayerController::OnRMBReleased()
 	{
 		return;
 	}
-	UUnitRegistrySubsystem* Registry = GetWorld() ? GetWorld()->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	UWorld* World = GetWorld();
+	UUnitRegistrySubsystem* Registry = World ? World->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
 	UDemoUnitVisualSubsystem* Visuals = VisualSubsystem();
 	if (!Registry || !Visuals)
 	{
+		return;
+	}
+
+	// Right-click on a garrisonable structure garrisons the selection (ETW
+	// semantics): the structure footprint is stamped impassable, so a move
+	// order onto it plans as unreachable -- intercept before move handling.
+	// A drag ENDING on a structure also garrisons (the endpoint is the intent;
+	// drag elsewhere deploys normally). The plugin's FSM files the unit
+	// through the entrance; re-garrisoning the same structure is a no-op.
+	if (const uint32 StructureId = FindStructureAtWorld(World, DragCurrentWorldCm); StructureId != 0)
+	{
+		int32 Issued = 0;
+		for (const FUnitHandle& H : SelectedUnits)
+		{
+			if (Registry->IssueGarrisonOrder(H, StructureId))
+			{
+				++Issued;
+			}
+		}
+		UE_LOG(LogDemoBattle, Display,
+			TEXT("EXEC_RESULT DemoOrder Garrison Issued=%d of %d Structure=%u At=(%.1f,%.1f)m"),
+			Issued, SelectedUnits.Num(), StructureId,
+			DragCurrentWorldCm.X * 0.01f, DragCurrentWorldCm.Y * 0.01f);
 		return;
 	}
 
@@ -661,3 +712,70 @@ void ADemoPlayerController::OnZoomOut()
 		Cam->Zoom(-1.f);
 	}
 }
+
+// -- Demo.GarrisonAt console command -------------------------------------------
+// Resolves the garrisonable structure at a world point through the SAME
+// footprint test the RMB click path uses, then issues garrison orders -- the
+// interactive/log-based evidence channel for click-to-garrison (and usable
+// from the PIE console). No unit indices = all player-team units.
+static FAutoConsoleCommandWithWorldAndArgs GDemoGarrisonAt(
+	TEXT("Demo.GarrisonAt"),
+	TEXT("<x_m> <y_m> [unitIndex...] -- garrison the structure under the world point (RMB-click semantics); no unit indices = all player units; EXEC_RESULT DemoGarrisonAt"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(
+		[](const TArray<FString>& Args, UWorld* World)
+	{
+		if (World == nullptr || Args.Num() < 2)
+		{
+			UE_LOG(LogDemoBattle, Display,
+				TEXT("EXEC_RESULT DemoGarrisonAt FAIL BadArgs (need: x_m y_m [unitIndex...])"));
+			return;
+		}
+		const FVector2D PointCm(FCString::Atof(*Args[0]) * 100.f, FCString::Atof(*Args[1]) * 100.f);
+		const uint32 StructureId = ADemoPlayerController::FindStructureAtWorld(World, PointCm);
+		if (StructureId == 0)
+		{
+			UE_LOG(LogDemoBattle, Display,
+				TEXT("EXEC_RESULT DemoGarrisonAt MISS Point=(%.1f,%.1f)m (no structure footprint there)"),
+				PointCm.X * 0.01f, PointCm.Y * 0.01f);
+			return;
+		}
+
+		// Target units: explicit registry indices, else the whole player team.
+		UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>();
+		UDemoUnitVisualSubsystem* Visuals = World->GetSubsystem<UDemoUnitVisualSubsystem>();
+		if (!Registry || !Visuals)
+		{
+			UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoGarrisonAt FAIL no subsystems"));
+			return;
+		}
+		TArray<FUnitHandle> Targets;
+		if (Args.Num() > 2)
+		{
+			for (const FUnitHandle& Handle : Registry->GetSortedHandles())
+			{
+				for (int32 i = 2; i < Args.Num(); ++i)
+				{
+					if (Handle.Index == static_cast<uint32>(FCString::Atoi(*Args[i])))
+					{
+						Targets.Add(Handle);
+					}
+				}
+			}
+		}
+		else
+		{
+			Visuals->GetUnitsOfTeam(EDemoTeam::Player, Targets);
+		}
+
+		int32 Issued = 0;
+		for (const FUnitHandle& Handle : Targets)
+		{
+			if (Registry->IssueGarrisonOrder(Handle, StructureId))
+			{
+				++Issued;
+			}
+		}
+		UE_LOG(LogDemoBattle, Display,
+			TEXT("EXEC_RESULT DemoGarrisonAt OK Structure=%u Issued=%d of %d Point=(%.1f,%.1f)m"),
+			StructureId, Issued, Targets.Num(), PointCm.X * 0.01f, PointCm.Y * 0.01f);
+	}));
