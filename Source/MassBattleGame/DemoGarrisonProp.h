@@ -29,9 +29,14 @@ public:
 
 protected:
 	/** Structure family (fixture geometry comes from the plugin's
-	 *  FGarrisonLayout::MakeFixture -- building 2 units / wall + trench 1). */
+	 *  FGarrisonLayout::MakeFixture -- building 2 units / wall + trench 1).
+	 *  Public setter for deferred-spawn bootstrap: the type must be assigned
+	 *  before BeginPlay dispatches (registration happens there). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Battle|Demo")
 	EGarrisonStructureType StructureType = EGarrisonStructureType::Building;
+
+public:
+	void SetStructureType(EGarrisonStructureType InType) { StructureType = InType; }
 
 	/** Register the record + stamp the cost grid on BeginPlay. Off = preview
 	 *  boxes only (placement authoring without touching the sim). */

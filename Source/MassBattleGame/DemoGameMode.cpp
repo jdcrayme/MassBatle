@@ -66,15 +66,19 @@ void ADemoGameMode::SpawnGarrisonSample()
 			{ EGarrisonStructureType::Wall, FVector2D(-90.f, 0.f), 90.f, TEXT("DemoWall") },
 			{ EGarrisonStructureType::Trench, FVector2D(90.f, 0.f), 90.f, TEXT("DemoTrench") },
 		};
-		FActorSpawnParameters Params;
-		Params.ObjectFlags |= RF_Transient;
-		Params.Name = NAME_None;
 		for (const FSample& S : Samples)
 		{
 			const FVector Loc(S.PosM.X * 100.f, S.PosM.Y * 100.f, 0.f);
-			ADemoGarrisonProp* Prop = World->SpawnActor<ADemoGarrisonProp>(
-				Loc, FRotator(0.f, S.RotDeg, 0.f), Params);
-			(void)Prop; // each prop self-registers in its own BeginPlay
+			// Deferred: StructureType must be set BEFORE BeginPlay dispatches
+			// (registration happens there).
+			ADemoGarrisonProp* Prop = World->SpawnActorDeferred<ADemoGarrisonProp>(
+				ADemoGarrisonProp::StaticClass(), FTransform(FRotator(0.f, S.RotDeg, 0.f), Loc),
+				nullptr, nullptr, ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+			if (Prop)
+			{
+				Prop->SetStructureType(S.Type);
+				Prop->FinishSpawning(FTransform(FRotator(0.f, S.RotDeg, 0.f), Loc));
+			}
 		}
 		UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoGarrisonSample spawned 3 (building/wall/trench)"));
 	}
