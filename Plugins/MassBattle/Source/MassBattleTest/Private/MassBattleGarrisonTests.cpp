@@ -533,6 +533,79 @@ bool FGarrison_Booking::RunTest(const FString& Parameters)
 	}
 	TestEqual(TEXT("one battle archetype with extended fragment (no garrison-induced split)"), Archetypes.Num(), 1);
 
+	// -- Order surface (task 4): orders reach the registry with serial bumps,
+	//    the A9 cavalry guard rejects at issue, A7 parking round-trips. --
+	const uint32 SerialBefore = Registry->GetOrderSerial(SpawnResult.Unit);
+	TestTrue(TEXT("IssueGarrisonOrder accepted"), Registry->IssueGarrisonOrder(SpawnResult.Unit, StructureA));
+	{
+		const FUnitOrder* Order = Registry->FindOrder(SpawnResult.Unit);
+		if (TestNotNull(TEXT("garrison order present"), Order))
+		{
+			TestEqual(TEXT("order type Garrison"), static_cast<int32>(Order->Type),
+				static_cast<int32>(FUnitOrder::EType::Garrison));
+			TestEqual(TEXT("order structure id"), Order->StructureId, StructureA);
+		}
+		TestEqual(TEXT("serial bumped once"), Registry->GetOrderSerial(SpawnResult.Unit), SerialBefore + 1);
+	}
+	TestTrue(TEXT("IssueExitGarrisonOrder accepted"), Registry->IssueExitGarrisonOrder(SpawnResult.Unit));
+	TestEqual(TEXT("order type ExitGarrison"),
+		static_cast<int32>(Registry->FindOrder(SpawnResult.Unit)->Type),
+		static_cast<int32>(FUnitOrder::EType::ExitGarrison));
+
+	// A9 guard: a cavalry unit is rejected at issue (no order written).
+	const FString CavalryEdu = TEXT("\n")
+		TEXT("type Test Cavalry\n")
+		TEXT("dictionary Test_Cavalry\n")
+		TEXT("category cavalry\n")
+		TEXT("class light\n")
+		TEXT("soldier Peasant, 40, 0, 1\n")
+		TEXT("attributes sea_faring\n")
+		TEXT("formation 1.2, 1.2, 2.4, 2.4, 3, square\n")
+		TEXT("stat_health 1, 1\n")
+		TEXT("stat_pri 1, 2, no, 0, 0, melee, simple, other, 10, 0.2, 0.2\n")
+		TEXT("stat_pri_armour 0, 1, 0, flesh\n")
+		TEXT("stat_mental 2, low, untrained\n")
+		TEXT("stat_charge_dist 30\n")
+		TEXT("stat_cost 1, 100, 90, 40, 60, 90\n")
+		TEXT("ownership slave, england\n");
+	{
+		TArray<FEduUnit> CavRows;
+		FEduParseError CavErr;
+		if (TestTrue(TEXT("cavalry fixture parses"), FBattleEduParser::Parse(CavalryEdu, CavRows, CavErr)) && CavRows.Num() > 0)
+		{
+			FUnitSpawnSpec CavSpec;
+			CavSpec.EduRowIndex = 0;
+			CavSpec.SoldierCount = 10;
+			CavSpec.UnitName = TEXT("GarrisonCav");
+			CavSpec.SpawnPos = FVector2D(9000.f, 1000.f);
+			FBattleSpawnResult CavResult;
+			FString CavError;
+			if (TestTrue(TEXT("cavalry spawn"), UBattleSpawnLibrary::SpawnUnitFromEduRow(World, CavSpec, CavRows[0], CavResult, CavError)))
+			{
+				const uint32 CavSerial = Registry->GetOrderSerial(CavResult.Unit);
+				TestFalse(TEXT("cavalry garrison rejected at issue (A9)"),
+					Registry->IssueGarrisonOrder(CavResult.Unit, StructureA));
+				TestEqual(TEXT("no order written for cavalry"), Registry->GetOrderSerial(CavResult.Unit), CavSerial);
+			}
+		}
+	}
+
+	// A7 parking: a parked order survives and resumes with a serial bump.
+	{
+		FUnitOrder Parked;
+		Parked.Type = FUnitOrder::EType::Move;
+		Parked.AnchorPos = FVector2D(12300.f, 4500.f);
+		Registry->ParkPendingAfterEgress(SpawnResult.Unit, Parked);
+		FUnitOrder Popped;
+		TestTrue(TEXT("parked order resumes"), Registry->ConsumePendingAfterEgress(SpawnResult.Unit, Popped));
+		TestEqual(TEXT("parked order type"), static_cast<int32>(Popped.Type), static_cast<int32>(FUnitOrder::EType::Move));
+		TestEqual(TEXT("parked order anchor"), Popped.AnchorPos, FVector2D(12300.f, 4500.f));
+		TestEqual(TEXT("resume set CurrentOrder"),
+			static_cast<int32>(Registry->FindOrder(SpawnResult.Unit)->Type), static_cast<int32>(FUnitOrder::EType::Move));
+		FUnitOrder Second;
+		TestFalse(TEXT("second consume finds nothing"), Registry->ConsumePendingAfterEgress(SpawnResult.Unit, Second));
+	}
+
 	World->DestroyWorld(false);
 	return true;
 }
