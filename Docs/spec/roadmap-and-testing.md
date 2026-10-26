@@ -274,6 +274,8 @@ Scenario tests S1–S(upto phase) green · debug overlay sanity pass · archetyp
 
 Phase 0 entry: `Battle.Unit.*` + `Battle.Data.*` + `Battle.Smoke` (15 tests) and `Battle.Func.*` (S0_SyncLatency / S0_DeathPath / S0_ExitCriteria) green via `Tools/CI/run_tests.bat` · archetype count 2 after the T0 scenario (watched via `Battle.DumpMetrics`) · spawn/sync/death paths each carry their `Battle.*` cvar hooks · no allocations added in UnitSync/DeathObserver hot paths.
 
+Phase garrison entry: `Battle.Unit.Garrison.*` (TG.1 Stamping / TG.2 InternalPath / TG.3 SlotAssign / TG.4 Booking / TG.5 ZModel) + `Battle.Func.S8_BuildingGarrison` / `S9_TrenchGarrison` / `S10_WallGarrison` / `S8b_MultiUnitGarrison` (TG.6-TG.9) green via `run_tests.bat {unit,func}` · garrison soak variant (`Battle.Garrison.SoakOrders=1`) ends with settled-or-queueing garrisons, stuck = 0, separation = 0, archetypes 6 · flag-off soak (`SoakOrders=0`) byte-identical to the T1.8 baseline · debug overlay garrison draws (phase markers, footprint, entrance legs, slot posts) gated by `Battle.Debug.ShowOverlay` · metrics via `Battle.Garrison.Metrics` · CVARs `Battle.Garrison.Enable` / `SoakOrders` off restore pre-garrison behavior.
+
 ### B.8 Definition of done for any new capability
 
 A capability is not "done" until it has:

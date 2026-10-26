@@ -356,9 +356,11 @@ void UBattleMovementSoakController::OnTick(float TimeDelta)
 		// separation = 0: no entity outside its unit body + 5 m; no co-located pairs.
 		int32 SeparatedNow = 0;
 		// Garrison variant: garrisoned units are judged by the SETTLED end
-		// state (posts), not field body bounds.
+		// state (posts), not field body bounds; per-phase counts make any
+		// residual stall identifiable from the FINAL line alone.
 		int32 GarrisonedNow = 0;
 		int32 GarrisonedUnsettled = 0;
+		int32 PhaseCounts[7] = { 0, 0, 0, 0, 0, 0, 0 };
 		FMassEntityManager& EM = ES->GetMutableEntityManager();
 		for (const FUnitHandle& Unit : Registry->GetSortedHandles())
 		{
@@ -373,6 +375,7 @@ void UBattleMovementSoakController::OnTick(float TimeDelta)
 			if (Formation->GarrisonMode != EGarrisonMode::None)
 			{
 				++GarrisonedNow;
+				++PhaseCounts[FMath::Clamp(static_cast<int32>(Formation->GarrisonPhase), 0, 6)];
 				// A4 semantics: capacity waiters (Queue) and long approaches
 				// are LEGITIMATE end states -- the gate only fails units
 				// caught MID-TRANSITION after the settle budget (a stall).
@@ -436,9 +439,10 @@ void UBattleMovementSoakController::OnTick(float TimeDelta)
 			&& GarrisonedUnsettled == 0
 			&& ArchetypesNow == ArchetypeCountAtSpawn;
 		UE_LOG(LogGauntlet, Display,
-			TEXT("GAUNTLET BattleMovementSoak FINAL settled stuck=%d separation=%d archetypes=%d (spawn %d) garrisoned=%d unsettled=%d duringSoak escalations=%d duringSoak separationEvents=%d testMode=%d ok=%d"),
+			TEXT("GAUNTLET BattleMovementSoak FINAL settled stuck=%d separation=%d archetypes=%d (spawn %d) garrisoned=%d unsettled=%d phases=[None=%d App=%d Queue=%d Ingress=%d Occupy=%d Settled=%d Egress=%d] duringSoak escalations=%d duringSoak separationEvents=%d testMode=%d ok=%d"),
 			StuckNow, SeparatedNow, ArchetypesNow, ArchetypeCountAtSpawn,
 			GarrisonedNow, GarrisonedUnsettled,
+			PhaseCounts[0], PhaseCounts[1], PhaseCounts[2], PhaseCounts[3], PhaseCounts[4], PhaseCounts[5], PhaseCounts[6],
 			SoakEscalations - EscalationsAtSpawn, SeparationViolations,
 			bTestModeOk ? 1 : 0, bOk ? 1 : 0);
 		Phase = EPhase::Done;

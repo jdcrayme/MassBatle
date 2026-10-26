@@ -282,6 +282,16 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 				return false;
 			}
 			const FGarrisonEntrance& Entrance = Record->Entrances[Formation.GarrisonEntranceIndex];
+			// An exit ordered mid-ingress continues OUTWARD from the current
+			// arc (the egress path mirrors the entry path up to the door; the
+			// assembly vs queue legs differ slightly) -- adopting the path
+			// with PathS = 0 would teleport the anchor back to the node.
+			const bool bTurnAroundMidIngress = bEgress
+				&& Formation.GarrisonPhase == EGarrisonPhase::Ingress
+				&& Formation.Path.IsValid();
+			const float MirrorS = bTurnAroundMidIngress
+				? FMath::Clamp(Formation.Path.TotalLength - Formation.PathS, 0.f, Formation.Path.TotalLength)
+				: 0.f;
 			Formation.GarrisonMode = bEgress ? EGarrisonMode::Exiting : EGarrisonMode::Garrisoning;
 			if (!bEgress)
 			{
@@ -289,7 +299,7 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 				Formation.NumFiles = FGarrisonLayout::ColumnFilesFor(Entrance.ClearWidthM, Formation.FileSpacing * 0.01f, Formation.NumFiles);
 			}
 			PolylineFromGarrisonPath(Internal);
-			Formation.PathS = 0.f;
+			Formation.PathS = MirrorS;
 			Formation.PassLocked = 1; // F7 pre-commit: the column decision is the entrance's declared width
 			++Formation.Generation;
 			GarrisonTransition(bEgress ? EGarrisonPhase::Egress : EGarrisonPhase::Ingress, bEgress ? TEXT("EGRESS") : TEXT("INGRESS"));
@@ -403,11 +413,15 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 					}
 					else
 					{
-						// Occupy/Settled/Ingress: file out; the booking rides
-						// until egress completion (spec §4.5).
-						if (!TryBeginEgress())
+						// Occupy/Settled: file out; the booking rides until
+						// egress completion (spec §4.5). Already Egressing ->
+						// the current walk-out finishes and the parked order
+						// resumes at the assembly point (no path re-adoption
+						// churn -- restarting the interior path from the node
+						// would teleport the anchor backwards every re-order).
+						if (Formation.GarrisonPhase != EGarrisonPhase::Egress)
 						{
-							// lease busy: mode=Exiting + retry branch takes over
+							TryBeginEgress();
 						}
 					}
 				}
@@ -469,12 +483,12 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 				{
 					CancelPreIngressGarrison();
 				}
-				else
+				else if (Formation.GarrisonPhase != EGarrisonPhase::Egress
+					&& !TryBeginEgress())
 				{
-					if (!TryBeginEgress())
-					{
-						// lease busy: mode=Exiting + retry branch takes over
-					}
+					// lease busy: mode=Exiting + retry branch takes over.
+					// Already Egressing: consume as a no-op (the walk-out is
+					// the exit -- restarting it would churn the choke).
 				}
 			}
 			else if (Order->Type == FUnitOrder::EType::Move && Formation.GarrisonMode != EGarrisonMode::None)
