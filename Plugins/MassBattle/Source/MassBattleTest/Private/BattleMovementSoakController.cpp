@@ -1,6 +1,8 @@
 #include "BattleMovementSoakController.h"
 #include "BattleFragments.h"
 #include "BattleMovementFragments.h"
+#include "BattleGarrison.h"
+#include "BattleGarrisonSubsystem.h"
 #include "BattleRegistry.h"
 #include "BattleSpawnLibrary.h"
 #include "BattleEduParser.h"
@@ -136,6 +138,36 @@ void UBattleMovementSoakController::OnTick(float TimeDelta)
 		}
 		UE_LOG(LogGauntlet, Display, TEXT("GAUNTLET BattleMovementSoak Spawned Units=8 Archetypes=%d"),
 			ArchetypeCountAtSpawn);
+
+		// Task 8 (R-G1): the garrison soak variant registers three gray-box
+		// structures and mixes garrison orders into the seeded cadence. Flag
+		// off (default) = the T1.8 baseline byte-identical -- nothing above or
+		// below may run.
+		if (FGarrisonCVars::SoakOrders() != 0)
+		{
+			if (UBattleGarrisonSubsystem* Garrison = World->GetSubsystem<UBattleGarrisonSubsystem>())
+			{
+				FGarrisonStructureRecord Rec;
+				const FVector2D Spots[3] = { FVector2D(0.f, 60.f), FVector2D(-60.f, 15.f), FVector2D(60.f, 15.f) };
+				const float Rots[3] = { 0.f, 90.f, 90.f };
+				const EGarrisonStructureType Types[3] = {
+					EGarrisonStructureType::Building, EGarrisonStructureType::Wall, EGarrisonStructureType::Trench };
+				int32 FirstId = 0;
+				for (int32 S = 0; S < 3; ++S)
+				{
+					if (FGarrisonLayout::MakeFixture(Types[S], Spots[S], Rots[S], Rec))
+					{
+						const uint32 Id = Garrison->RegisterStructure(Rec);
+						if (FirstId == 0)
+						{
+							FirstId = Id;
+						}
+					}
+				}
+				UE_LOG(LogGauntlet, Display, TEXT("GAUNTLET BattleMovementSoak garrison variant structures=%d (ids %u..%u)"),
+					Garrison->GetStructureCount(), FirstId, FirstId > 0 ? FirstId + 2u : 0u);
+			}
+		}
 		Phase = EPhase::Soak;
 		PhaseTime = 0.f;
 		SoakTime = 0.f;
@@ -159,9 +191,15 @@ void UBattleMovementSoakController::OnTick(float TimeDelta)
 		// gate (stuck = 0, separation = 0) must be achievable, so the random
 		// orders never deliberately drive one unit's 24 m frontage through
 		// another's standing formation.
+		// Garrison variant (Battle.Garrison.SoakOrders=1): ~15% garrison into
+		// a seeded structure, ~15% exit; flag off keeps the exact baseline
+		// draw sequence (R-G1).
+		const bool bGarrisonSoak = FGarrisonCVars::SoakOrders() != 0;
 		if (SoakTime >= NextOrderTime)
 		{
 			NextOrderTime += OrderIntervalSeconds;
+			UBattleGarrisonSubsystem* GarrisonSoak = bGarrisonSoak
+				? World->GetSubsystem<UBattleGarrisonSubsystem>() : nullptr;
 			const TArray<FUnitHandle> Units = Registry->GetSortedHandles();
 			int32 UnitIdx = 0;
 			for (const FUnitHandle& Unit : Units)
@@ -170,10 +208,26 @@ void UBattleMovementSoakController::OnTick(float TimeDelta)
 				const int32 Row = UnitIdx / 4;
 				const FVector2D Home(-4500.f + Col * 3000.f, Row * 3000.f);
 				++UnitIdx;
-				if (Stream.FRand() < 0.2f)
+				if (Stream.FRand() < (bGarrisonSoak ? 0.15f : 0.2f))
 				{
 					Registry->IssueStopOrder(Unit);
 					continue;
+				}
+				if (GarrisonSoak)
+				{
+					const float Pick = Stream.FRand();
+					if (Pick < 0.5f)
+					{
+						// Garrison: cycle structures by unit index (deterministic).
+						const uint32 StructureId = static_cast<uint32>(1 + (UnitIdx % 3));
+						Registry->IssueGarrisonOrder(Unit, StructureId);
+						continue;
+					}
+					if (Pick < 0.7f)
+					{
+						Registry->IssueExitGarrisonOrder(Unit);
+						continue;
+					}
 				}
 				const FVector2D Goal(Home.X + Stream.FRandRange(-1000.f, 1000.f),
 					Home.Y + Stream.FRandRange(-1000.f, 1000.f));
@@ -198,6 +252,10 @@ void UBattleMovementSoakController::OnTick(float TimeDelta)
 				if (!Roster || !Formation)
 				{
 					continue;
+				}
+				if (Formation->GarrisonMode != EGarrisonMode::None)
+				{
+					continue; // garrison variant: posts sit inside the structure, not in the field body
 				}
 				const int32 NumRanks = FMath::Max(1, FMath::CeilToInt(static_cast<float>(Formation->NumSlots) / Formation->NumFiles));
 				const float Rad = FMath::DegreesToRadians(Formation->FacingYaw);
@@ -270,9 +328,12 @@ void UBattleMovementSoakController::OnTick(float TimeDelta)
 	if (Phase == EPhase::FinalSettle)
 	{
 		// ~15 s of fixed-step settle: all units halted, ladders unwind on
-		// slot arrival, shoves stop (only moving units shove).
+		// slot arrival, shoves stop (only moving units shove). The garrison
+		// variant needs a longer unwind: a garrison order issued at the last
+		// cadence tick still has to approach + file + occupy (~70 s).
 		SettleTicks += 1;
-		if (SettleTicks > 900)
+		const int32 SettleBudget = FGarrisonCVars::SoakOrders() != 0 ? 5000 : 900;
+		if (SettleTicks > SettleBudget)
 		{
 			Phase = EPhase::Assert;
 		}
@@ -294,6 +355,10 @@ void UBattleMovementSoakController::OnTick(float TimeDelta)
 		int32 StuckNow = 0;
 		// separation = 0: no entity outside its unit body + 5 m; no co-located pairs.
 		int32 SeparatedNow = 0;
+		// Garrison variant: garrisoned units are judged by the SETTLED end
+		// state (posts), not field body bounds.
+		int32 GarrisonedNow = 0;
+		int32 GarrisonedUnsettled = 0;
 		FMassEntityManager& EM = ES->GetMutableEntityManager();
 		for (const FUnitHandle& Unit : Registry->GetSortedHandles())
 		{
@@ -303,6 +368,15 @@ void UBattleMovementSoakController::OnTick(float TimeDelta)
 				Head ? EM.GetSharedFragmentDataPtr<FUnitFormationSharedFragment>(*Head) : nullptr;
 			if (!Roster || !Formation)
 			{
+				continue;
+			}
+			if (Formation->GarrisonMode != EGarrisonMode::None)
+			{
+				++GarrisonedNow;
+				if (Formation->GarrisonPhase != EGarrisonPhase::Settled)
+				{
+					++GarrisonedUnsettled;
+				}
 				continue;
 			}
 			const int32 NumRanks = FMath::Max(1, FMath::CeilToInt(static_cast<float>(Formation->NumSlots) / Formation->NumFiles));
@@ -354,10 +428,12 @@ void UBattleMovementSoakController::OnTick(float TimeDelta)
 		const bool bOk = bTestModeOk
 			&& StuckNow == 0
 			&& SeparatedNow == 0
+			&& GarrisonedUnsettled == 0
 			&& ArchetypesNow == ArchetypeCountAtSpawn;
 		UE_LOG(LogGauntlet, Display,
-			TEXT("GAUNTLET BattleMovementSoak FINAL settled stuck=%d separation=%d archetypes=%d (spawn %d) duringSoak escalations=%d duringSoak separationEvents=%d testMode=%d ok=%d"),
+			TEXT("GAUNTLET BattleMovementSoak FINAL settled stuck=%d separation=%d archetypes=%d (spawn %d) garrisoned=%d unsettled=%d duringSoak escalations=%d duringSoak separationEvents=%d testMode=%d ok=%d"),
 			StuckNow, SeparatedNow, ArchetypesNow, ArchetypeCountAtSpawn,
+			GarrisonedNow, GarrisonedUnsettled,
 			SoakEscalations - EscalationsAtSpawn, SeparationViolations,
 			bTestModeOk ? 1 : 0, bOk ? 1 : 0);
 		Phase = EPhase::Done;
