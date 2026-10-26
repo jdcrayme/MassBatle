@@ -406,4 +406,90 @@ bool FS6_InPlaceReform::RunTest(const FString& Parameters)
 	return true;
 }
 
+// ---------------------------------------------------------------------------
+// Phase-garrison func gates TG.6-TG.9 (brief §6). Task 0 ships fail-by-design
+// skeletons; the real scenario plumbing (S8/S9/S10/S8b actors) lands with
+// tasks 5-8 and replaces these bodies.
+// ---------------------------------------------------------------------------
+
+namespace
+{
+	/** Skeleton body shared by the garrison func gates: fails immediately so
+	 *  the gate family is CI-visible before any implementation. */
+	class FGarrisonSkeletonCommand : public IAutomationLatentCommand
+	{
+	public:
+		FGarrisonSkeletonCommand(FAutomationTestBase* InOwner, const TCHAR* InGate)
+			: Owner(InOwner), Gate(InGate) {}
+		virtual bool Update() override
+		{
+			Owner->AddError(FString::Printf(TEXT("skeleton: %s lands with its owning task (brief §5)"), *Gate));
+			return true;
+		}
+	private:
+		FAutomationTestBase* Owner = nullptr;
+		FString Gate;
+	};
+}
+
+IMPLEMENT_CUSTOM_COMPLEX_AUTOMATION_TEST(FS8_BuildingGarrison, FBattleFuncTestBase,
+	"Battle.Func.S8_BuildingGarrison", (EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter))
+
+void FS8_BuildingGarrison::GetTests(TArray<FString>& OutBeautifiedNames, TArray<FString>& OutTestCommands) const
+{
+	OutBeautifiedNames.Add(TEXT("S8_BuildingGarrison"));
+	OutTestCommands.Add(TEXT(""));
+}
+
+bool FS8_BuildingGarrison::RunTest(const FString& Parameters)
+{
+	ADD_LATENT_AUTOMATION_COMMAND(FGarrisonSkeletonCommand(this, TEXT("TG.6 Battle.Func.S8_BuildingGarrison (tasks 5-6)")));
+	return true;
+}
+
+IMPLEMENT_CUSTOM_COMPLEX_AUTOMATION_TEST(FS9_TrenchGarrison, FBattleFuncTestBase,
+	"Battle.Func.S9_TrenchGarrison", (EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter))
+
+void FS9_TrenchGarrison::GetTests(TArray<FString>& OutBeautifiedNames, TArray<FString>& OutTestCommands) const
+{
+	OutBeautifiedNames.Add(TEXT("S9_TrenchGarrison"));
+	OutTestCommands.Add(TEXT(""));
+}
+
+bool FS9_TrenchGarrison::RunTest(const FString& Parameters)
+{
+	ADD_LATENT_AUTOMATION_COMMAND(FGarrisonSkeletonCommand(this, TEXT("TG.7 Battle.Func.S9_TrenchGarrison (task 6)")));
+	return true;
+}
+
+IMPLEMENT_CUSTOM_COMPLEX_AUTOMATION_TEST(FS10_WallGarrison, FBattleFuncTestBase,
+	"Battle.Func.S10_WallGarrison", (EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter))
+
+void FS10_WallGarrison::GetTests(TArray<FString>& OutBeautifiedNames, TArray<FString>& OutTestCommands) const
+{
+	OutBeautifiedNames.Add(TEXT("S10_WallGarrison"));
+	OutTestCommands.Add(TEXT(""));
+}
+
+bool FS10_WallGarrison::RunTest(const FString& Parameters)
+{
+	ADD_LATENT_AUTOMATION_COMMAND(FGarrisonSkeletonCommand(this, TEXT("TG.8 Battle.Func.S10_WallGarrison (task 6)")));
+	return true;
+}
+
+IMPLEMENT_CUSTOM_COMPLEX_AUTOMATION_TEST(FS8b_MultiUnitGarrison, FBattleFuncTestBase,
+	"Battle.Func.S8b_MultiUnitGarrison", (EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter))
+
+void FS8b_MultiUnitGarrison::GetTests(TArray<FString>& OutBeautifiedNames, TArray<FString>& OutTestCommands) const
+{
+	OutBeautifiedNames.Add(TEXT("S8b_MultiUnitGarrison"));
+	OutTestCommands.Add(TEXT(""));
+}
+
+bool FS8b_MultiUnitGarrison::RunTest(const FString& Parameters)
+{
+	ADD_LATENT_AUTOMATION_COMMAND(FGarrisonSkeletonCommand(this, TEXT("TG.9 Battle.Func.S8b_MultiUnitGarrison (task 7)")));
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS
