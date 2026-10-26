@@ -16,6 +16,8 @@
 #include "BattleDebugSubsystem.h"
 #include "BattleTestSettings.h"
 #include "BattleCostGridSubsystem.h"
+#include "BattleGarrison.h"
+#include "BattleGarrisonSubsystem.h"
 #include "MassCommonFragments.h"
 #include "BattleStateHash.h"
 #include "MassSimulationSubsystem.h"
@@ -2512,6 +2514,711 @@ void AUnitInPlaceReformTest::Tick(float DeltaSeconds)
 // ---------------------------------------------------------------------------
 // Factory registrations (see FBattleFuncTestRegistry)
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Phase-garrison scenarios (TG.6-TG.9; brief §6). Gray-box fixtures are
+// registered through the same C++ path as the ExecBridge commands (F15) --
+// no editor-authored structure actors.
+// ---------------------------------------------------------------------------
+
+namespace
+{
+	/** 3D entity positions (centimeters) for elevation asserts. */
+	void GatherEntityPositions3D(UWorld* World, const FUnitHandle& Handle, TArray<FVector>& OutPosCm)
+	{
+		OutPosCm.Reset();
+		UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>();
+		UMassEntitySubsystem* ES = World->GetSubsystem<UMassEntitySubsystem>();
+		const TArray<FMassEntityHandle>* Roster = Registry ? Registry->FindRoster(Handle) : nullptr;
+		if (!Roster || !ES)
+		{
+			return;
+		}
+		FMassEntityManager& EM = ES->GetMutableEntityManager();
+		for (const FMassEntityHandle& E : *Roster)
+		{
+			const FTransformFragment* T = FMassEntityView(EM, E).GetFragmentDataPtr<FTransformFragment>();
+			if (T)
+			{
+				OutPosCm.Add(T->GetTransform().GetTranslation());
+			}
+		}
+	}
+
+	float AngleDeltaDeg(float A, float B)
+	{
+		float D = FMath::Fmod(A - B, 360.f);
+		if (D > 180.f) { D -= 360.f; }
+		if (D < -180.f) { D += 360.f; }
+		return D;
+	}
+}
+
+AGarrisonScenarioBase::AGarrisonScenarioBase()
+{
+	TimeLimit = 600.f;
+	TimesUpResult = EFunctionalTestResult::Error;
+}
+
+void AGarrisonScenarioBase::BeginTest()
+{
+	SetActorTickEnabled(true);
+	PrimaryActorTick.bCanEverTick = true;
+	bIsRunning = true;
+	Result = EFunctionalTestResult::Running;
+}
+
+void AGarrisonScenarioBase::CompleteTest(EFunctionalTestResult TestResult, const FString& Message)
+{
+	Result = TestResult;
+	bIsRunning = false;
+	SetActorTickEnabled(false);
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT GarrisonScenario Complete Result=%s Msg=%s"),
+	       *LexToString(TestResult), *Message);
+}
+
+void AGarrisonScenarioBase::StartTest()
+{
+	Super::StartTest();
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("no world"));
+		return;
+	}
+	UBattleTestSettings::ApplyTestMode();
+	TArray<FString> Violations;
+	if (!UBattleTestSettings::AssertTestMode(nullptr, &Violations, World))
+	{
+		CompleteTest(EFunctionalTestResult::Error,
+			FString::Printf(TEXT("test-mode contract violated: %s"), *FString::Join(Violations, TEXT("; "))));
+		return;
+	}
+	UBattleCostGridSubsystem* CostGrid = World->GetSubsystem<UBattleCostGridSubsystem>();
+	UBattleGarrisonSubsystem* Garrison = World->GetSubsystem<UBattleGarrisonSubsystem>();
+	UBattleDebugSubsystem* Debug = World->GetSubsystem<UBattleDebugSubsystem>();
+	UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>();
+	if (!CostGrid || !Garrison || !Debug || !Registry)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("subsystems missing"));
+		return;
+	}
+	CostGrid->ResetToFlat();
+	Debug->ResetDiagnostics();
+
+	FGarrisonStructureRecord Record;
+	if (!FGarrisonLayout::MakeFixture(FixtureType, FixturePosM, FixtureRotDeg, Record))
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("fixture build failed"));
+		return;
+	}
+	StructureId = Garrison->RegisterStructure(Record);
+	if (StructureId == 0)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("fixture registration rejected"));
+		return;
+	}
+
+	FActorSpawnParameters Params;
+	Params.ObjectFlags |= RF_Transient;
+	Unit = World->SpawnActor<AUnitActor>(FVector(UnitSpawnPosCm.X, UnitSpawnPosCm.Y, 100.f), FRotator::ZeroRotator, Params);
+	if (!Unit)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("unit actor spawn failed"));
+		return;
+	}
+	Unit->EduRowIndex = 0;
+	Unit->SoldierCount = 40;
+	FBattleSpawnResult SpawnResult;
+	FString Error;
+	if (!Unit->SpawnEntities(SpawnResult, Error))
+	{
+		CompleteTest(EFunctionalTestResult::Error, FString::Printf(TEXT("spawn failed: %s"), *Error));
+		return;
+	}
+	if (!Registry->IssueGarrisonOrder(Unit->GetUnitHandle(), StructureId))
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("garrison order rejected"));
+		return;
+	}
+	UE_LOG(LogMassBattle, Display,
+		TEXT("EXEC_RESULT GarrisonScenario Start Structure=%u Spawn=(%.0f,%.0f)m"),
+		StructureId, UnitSpawnPosCm.X * 0.01f, UnitSpawnPosCm.Y * 0.01f);
+	Phase = EPhase::Order;
+	TicksInPhase = 0;
+}
+
+void AGarrisonScenarioBase::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+	if (!IsRunning() || Phase == EPhase::Done)
+	{
+		return;
+	}
+	UWorld* World = GetWorld();
+	UUnitRegistrySubsystem* Registry = World ? World->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	UBattleGarrisonSubsystem* Garrison = World ? World->GetSubsystem<UBattleGarrisonSubsystem>() : nullptr;
+	UBattleDebugSubsystem* Debug = World ? World->GetSubsystem<UBattleDebugSubsystem>() : nullptr;
+	if (!Registry || !Garrison || !Debug)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("subsystems missing"));
+		return;
+	}
+	++TicksInPhase;
+	const FUnitFormationSharedFragment* F = FindFormation(World, Unit->GetUnitHandle());
+
+	if (Phase == EPhase::Order)
+	{
+		// March to the queue point (Approach), then filing begins.
+		if (F && F->GarrisonPhase == EGarrisonPhase::Ingress)
+		{
+			Phase = EPhase::Garrison;
+			TicksInPhase = 0;
+		}
+		else if (TicksInPhase > 6000)
+		{
+			CompleteTest(EFunctionalTestResult::Error, TEXT("approach to the queue point timed out"));
+			return;
+		}
+	}
+	if (Phase == EPhase::Garrison)
+	{
+		// T-G.6 part 1: the filing column respects the declared choke width.
+		if (F && F->GarrisonPhase == EGarrisonPhase::Ingress)
+		{
+			MaxFilesSeenInIngress = FMath::Max(MaxFilesSeenInIngress, F->NumFiles);
+		}
+		if (F && F->GarrisonPhase == EGarrisonPhase::Settled)
+		{
+			EscalationsAtSettle = Debug->GetLadderEscalations();
+			Phase = EPhase::SettleWindow;
+			TicksInPhase = 0;
+		}
+		else if (TicksInPhase > 9000)
+		{
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT GarrisonScenario Stuck Phase=%d Mode=%d FilesSeen=%d"),
+				F ? static_cast<int32>(F->GarrisonPhase) : -1,
+				F ? static_cast<int32>(F->GarrisonMode) : -1, MaxFilesSeenInIngress);
+			CompleteTest(EFunctionalTestResult::Error, TEXT("garrison (file + occupy) timed out"));
+			return;
+		}
+	}
+	else if (Phase == EPhase::SettleWindow)
+	{
+		// Bounded hold at the posts; a stall would keep escalating here.
+		if (TicksInPhase > 600)
+		{
+			Phase = EPhase::AssertGarrison;
+			TicksInPhase = 0;
+		}
+	}
+	else if (Phase == EPhase::AssertGarrison)
+	{
+		bool bOk = true;
+		const FGarrisonStructureRecord* Record = Garrison->FindStructure(StructureId);
+		if (!F || !Record)
+		{
+			CompleteTest(EFunctionalTestResult::Error, TEXT("formation/record missing at garrison assert"));
+			return;
+		}
+
+		// Phase authority: settled at posts (B7 hold).
+		if (F->GarrisonPhase != EGarrisonPhase::Settled || F->GarrisonMode != EGarrisonMode::Garrisoned)
+		{
+			AddError(FString::Printf(TEXT("TG phase drift: phase=%d mode=%d"),
+				static_cast<int32>(F->GarrisonPhase), static_cast<int32>(F->GarrisonMode)));
+			bOk = false;
+		}
+		// Column width at the choke: floor(4 m / 1.2 m) = 3 files max.
+		if (MaxFilesSeenInIngress > 3)
+		{
+			AddError(FString::Printf(TEXT("TG filing width %d files > declared choke (3)"), MaxFilesSeenInIngress));
+			bOk = false;
+		}
+		// Occupancy: every live entity inside the footprint, at the post
+		// elevation, facing outward (B1/B4/B5).
+		TArray<FVector> PosCm;
+		GatherEntityPositions3D(World, Unit->GetUnitHandle(), PosCm);
+		if (PosCm.Num() != 40)
+		{
+			AddError(FString::Printf(TEXT("TG occupancy: %d live entities (expected 40)"), PosCm.Num()));
+			bOk = false;
+		}
+		int32 Outside = 0, BadZ = 0, BadYaw = 0;
+		for (const FVector& P : PosCm)
+		{
+			const FVector2D Pm(P.X * 0.01f, P.Y * 0.01f);
+			if (Pm.X < Record->Footprint.Min.X - 2.f || Pm.X > Record->Footprint.Max.X + 2.f
+				|| Pm.Y < Record->Footprint.Min.Y - 2.f || Pm.Y > Record->Footprint.Max.Y + 2.f)
+			{
+				++Outside;
+			}
+			if (FMath::Abs(P.Z * 0.01f - ExpectedSlotZM) > ZToleranceM)
+			{
+				++BadZ;
+			}
+		}
+		// Yaw pass (needs entity views; keep read-only).
+		{
+			UMassEntitySubsystem* ES = World->GetSubsystem<UMassEntitySubsystem>();
+			const TArray<FMassEntityHandle>* Roster = Registry->FindRoster(Unit->GetUnitHandle());
+			if (ES && Roster)
+			{
+				FMassEntityManager& EM = ES->GetMutableEntityManager();
+				for (const FMassEntityHandle& E : *Roster)
+				{
+					const FTransformFragment* T = FMassEntityView(EM, E).GetFragmentDataPtr<FTransformFragment>();
+					if (!T) { continue; }
+					const float Yaw = T->GetTransform().Rotator().Yaw;
+					const float D1 = FMath::Abs(AngleDeltaDeg(Yaw, OutwardYawDeg));
+					const bool bOkYaw = bYawIsBimodal
+						? (D1 < 45.f || FMath::Abs(AngleDeltaDeg(Yaw, OutwardYawDeg + 180.f)) < 45.f)
+						: D1 < 45.f;
+					if (!bOkYaw)
+					{
+						++BadYaw;
+					}
+				}
+			}
+		}
+		if (Outside > 0) { AddError(FString::Printf(TEXT("TG occupancy: %d entities outside the footprint"), Outside)); bOk = false; }
+		if (BadZ > 0) { AddError(FString::Printf(TEXT("TG elevation: %d entities off the post Z (%.2f m)"), BadZ, ExpectedSlotZM)); bOk = false; }
+		if (BadYaw > 0) { AddError(FString::Printf(TEXT("TG facing: %d entities not facing outward"), BadYaw)); bOk = false; }
+		// Zero escalations AT settle (T-G.6 part 2: stall proxy).
+		const int32 NewEscalations = Debug->GetLadderEscalations() - EscalationsAtSettle;
+		if (NewEscalations != 0)
+		{
+			AddError(FString::Printf(TEXT("TG stall proxy: %d escalations during the settle window"), NewEscalations));
+			bOk = false;
+		}
+		// Booking ledger: this unit holds one booking on the structure.
+		if (Garrison->GetBookedCount(StructureId) != 1)
+		{
+			AddError(FString::Printf(TEXT("TG booking: %d bookings on the settled structure"),
+				Garrison->GetBookedCount(StructureId)));
+			bOk = false;
+		}
+
+		UE_LOG(LogMassBattle, Display,
+			TEXT("EXEC_RESULT GarrisonScenario GarrisonAssert ok=%d filesSeen=%d escalations=%d"),
+			bOk ? 1 : 0, MaxFilesSeenInIngress, Debug->GetLadderEscalations());
+		Phase = EPhase::Egress;
+		TicksInPhase = 0;
+		if (!Registry->IssueExitGarrisonOrder(Unit->GetUnitHandle()))
+		{
+			CompleteTest(EFunctionalTestResult::Error, TEXT("exit garrison order rejected"));
+			return;
+		}
+		if (!bOk)
+		{
+			// Keep the flow alive so egress evidence still lands, but the
+			// final verdict carries the failures.
+		}
+		return;
+	}
+	else if (Phase == EPhase::Egress)
+	{
+		if (F && F->GarrisonPhase == EGarrisonPhase::Egress)
+		{
+			EscalationsAtEgress = Debug->GetLadderEscalations();
+		}
+		if (F && F->GarrisonMode == EGarrisonMode::None && F->GarrisonPhase == EGarrisonPhase::None)
+		{
+			Phase = EPhase::EgressWindow;
+			TicksInPhase = 0;
+		}
+		else if (TicksInPhase > 9000)
+		{
+			CompleteTest(EFunctionalTestResult::Error,
+				FString::Printf(TEXT("egress timed out (phase=%d mode=%d)"),
+					F ? static_cast<int32>(F->GarrisonPhase) : -1,
+					F ? static_cast<int32>(F->GarrisonMode) : -1));
+			return;
+		}
+	}
+	else if (Phase == EPhase::EgressWindow)
+	{
+		// Wait until the re-form actually clears the structure (stragglers
+		// walk from far posts at normal speed) -- bounded, then assert.
+		const FGarrisonStructureRecord* RecClear = Garrison->FindStructure(StructureId);
+		bool bClear = true;
+		if (RecClear)
+		{
+			TArray<FVector> PosCmClear;
+			GatherEntityPositions3D(World, Unit->GetUnitHandle(), PosCmClear);
+			for (const FVector& P : PosCmClear)
+			{
+				const FVector2D Pm(P.X * 0.01f, P.Y * 0.01f);
+				if (Pm.X > RecClear->Footprint.Min.X - 2.f && Pm.X < RecClear->Footprint.Max.X + 2.f
+					&& Pm.Y > RecClear->Footprint.Min.Y - 2.f && Pm.Y < RecClear->Footprint.Max.Y + 2.f)
+				{
+					bClear = false;
+					break;
+				}
+			}
+		}
+		if (bClear || TicksInPhase > 6000)
+		{
+			Phase = EPhase::AssertEgress;
+			TicksInPhase = 0;
+		}
+	}
+	else if (Phase == EPhase::AssertEgress)
+	{
+		bool bOk = true;
+		const FGarrisonStructureRecord* Record = Garrison->FindStructure(StructureId);
+		TArray<FVector> PosCm;
+		GatherEntityPositions3D(World, Unit->GetUnitHandle(), PosCm);
+		TArray<FVector2D> PosM;
+		for (const FVector& P : PosCm)
+		{
+			PosM.Add(FVector2D(P.X, P.Y) * 0.01f);
+		}
+		// B6: everyone re-formed OUTSIDE the structure, back at ground level.
+		int32 Strays = 0;
+		for (const FVector2D& Pm : PosM)
+		{
+			if (Record && Pm.X > Record->Footprint.Min.X - 2.f && Pm.X < Record->Footprint.Max.X + 2.f
+				&& Pm.Y > Record->Footprint.Min.Y - 2.f && Pm.Y < Record->Footprint.Max.Y + 2.f)
+			{
+				++Strays;
+			}
+		}
+		if (Strays > 0)
+		{
+			AddError(FString::Printf(TEXT("TG egress: %d strays remain at the structure"), Strays));
+			bOk = false;
+		}
+		if (F->NumFiles != F->FieldFilesSaved)
+		{
+			AddError(FString::Printf(TEXT("TG egress: field frontage not restored (%d vs saved %d)"),
+				F->NumFiles, F->FieldFilesSaved));
+			bOk = false;
+		}
+		if (Garrison->GetBookedCount(StructureId) != 0)
+		{
+			AddError(TEXT("TG egress: booking ledger not drained"));
+			bOk = false;
+		}
+		const int32 NewEscalations = Debug->GetLadderEscalations() - EscalationsAtEgress;
+		if (NewEscalations != 0)
+		{
+			AddError(FString::Printf(TEXT("TG egress: %d escalations during the re-form window"), NewEscalations));
+			bOk = false;
+		}
+		UE_LOG(LogMassBattle, Display,
+			TEXT("EXEC_RESULT GarrisonScenario EgressAssert ok=%d strays=%d files=%d booked=%d"),
+			bOk ? 1 : 0, Strays, F->NumFiles, Garrison->GetBookedCount(StructureId));
+		Phase = EPhase::Done;
+		CompleteTest(bOk ? EFunctionalTestResult::Succeeded : EFunctionalTestResult::Failed,
+			bOk ? TEXT("garrison scenario green") : TEXT("garrison scenario assertions failed"));
+	}
+}
+
+// -- Concrete fixtures (spec geometry; positions on the flat 256 m tile) --
+// (Class declarations live in BattleFuncTestActor.h -- UHT processes headers;
+// the ctors here only pin the fixture configuration.)
+
+AUnitBuildingGarrisonTest::AUnitBuildingGarrisonTest()
+{
+	FixtureType = EGarrisonStructureType::Building;
+	FixturePosM = FVector2D(30.f, 30.f);
+	FixtureRotDeg = 0.f;
+	UnitSpawnPosCm = FVector2D(3000.f, -1000.f);   // 24 m south of the door
+	ExpectedSlotZM = 0.f;
+	OutwardYawDeg = 180.f;
+	bYawIsBimodal = true;                          // two rows face opposite walls
+}
+
+AUnitTrenchGarrisonTest::AUnitTrenchGarrisonTest()
+{
+	FixtureType = EGarrisonStructureType::Trench;
+	FixturePosM = FVector2D(40.f, -40.f);
+	FixtureRotDeg = 0.f;
+	UnitSpawnPosCm = FVector2D(-1800.f, -4000.f);  // 14 m west of the ramp queue point
+	ExpectedSlotZM = -0.75f;                       // sunken posts (B5)
+	OutwardYawDeg = 90.f;
+	bYawIsBimodal = false;
+}
+
+AUnitWallGarrisonTest::AUnitWallGarrisonTest()
+{
+	FixtureType = EGarrisonStructureType::Wall;
+	FixturePosM = FVector2D(-40.f, -40.f);
+	FixtureRotDeg = 0.f;
+	UnitSpawnPosCm = FVector2D(-8400.f, -2000.f);  // approach the stair base
+	ExpectedSlotZM = 6.f;                          // wall walk (B4)
+	OutwardYawDeg = 90.f;
+	bYawIsBimodal = false;
+}
+
+// ---------------------------------------------------------------------------
+// S8b_MultiUnitGarrison (TG.9)
+// ---------------------------------------------------------------------------
+
+AUnitMultiUnitGarrisonTest::AUnitMultiUnitGarrisonTest()
+{
+	TimeLimit = 900.f;
+	TimesUpResult = EFunctionalTestResult::Error;
+}
+
+void AUnitMultiUnitGarrisonTest::BeginTest()
+{
+	SetActorTickEnabled(true);
+	PrimaryActorTick.bCanEverTick = true;
+	bIsRunning = true;
+	Result = EFunctionalTestResult::Running;
+}
+
+void AUnitMultiUnitGarrisonTest::CompleteTest(EFunctionalTestResult TestResult, const FString& Message)
+{
+	Result = TestResult;
+	bIsRunning = false;
+	SetActorTickEnabled(false);
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S8b Complete Result=%s Msg=%s"),
+	       *LexToString(TestResult), *Message);
+}
+
+void AUnitMultiUnitGarrisonTest::StartTest()
+{
+	Super::StartTest();
+	UWorld* World = GetWorld();
+	UBattleTestSettings::ApplyTestMode();
+	TArray<FString> Violations;
+	if (!UBattleTestSettings::AssertTestMode(nullptr, &Violations, World))
+	{
+		CompleteTest(EFunctionalTestResult::Error,
+			FString::Printf(TEXT("test-mode contract violated: %s"), *FString::Join(Violations, TEXT("; "))));
+		return;
+	}
+	UBattleCostGridSubsystem* CostGrid = World->GetSubsystem<UBattleCostGridSubsystem>();
+	UBattleGarrisonSubsystem* Garrison = World->GetSubsystem<UBattleGarrisonSubsystem>();
+	UBattleDebugSubsystem* Debug = World->GetSubsystem<UBattleDebugSubsystem>();
+	if (!CostGrid || !Garrison || !Debug)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("subsystems missing"));
+		return;
+	}
+	CostGrid->ResetToFlat();
+	Debug->ResetDiagnostics();
+
+	FGarrisonStructureRecord Record;
+	if (!FGarrisonLayout::MakeFixture(EGarrisonStructureType::Building, FVector2D(30.f, 30.f), 0.f, Record)
+		|| (StructureId = Garrison->RegisterStructure(Record)) == 0)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("fixture setup failed"));
+		return;
+	}
+
+	FActorSpawnParameters Params;
+	Params.ObjectFlags |= RF_Transient;
+	auto SpawnUnit = [this, World, &Params](const FVector2D& PosCm) -> AUnitActor*
+	{
+		AUnitActor* Actor = World->SpawnActor<AUnitActor>(FVector(PosCm.X, PosCm.Y, 100.f), FRotator::ZeroRotator, Params);
+		if (Actor)
+		{
+			Actor->EduRowIndex = 0;
+			Actor->SoldierCount = 40;
+			FBattleSpawnResult SpawnResult;
+			FString Error;
+			if (!Actor->SpawnEntities(SpawnResult, Error))
+			{
+				Actor = nullptr;
+			}
+		}
+		return Actor;
+	};
+	// Both units start at nearly the same range so they arrive together: the
+	// first books + takes the lease, the second must QUEUE for it (bounded
+	// wait) before its disjoint range.
+	UnitA = SpawnUnit(FVector2D(3000.f, -1900.f));
+	UnitB = SpawnUnit(FVector2D(3000.f, -2000.f));
+	if (!UnitA || !UnitB)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("spawn failed"));
+		return;
+	}
+	UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>();
+	if (!Registry->IssueGarrisonOrder(UnitA->GetUnitHandle(), StructureId)
+		|| !Registry->IssueGarrisonOrder(UnitB->GetUnitHandle(), StructureId))
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("garrison orders rejected"));
+		return;
+	}
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S8b Start Structure=%u two units ordered"), StructureId);
+	Phase = EPhase::Order;
+	TicksInPhase = 0;
+}
+
+void AUnitMultiUnitGarrisonTest::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+	if (!IsRunning() || Phase == EPhase::Done)
+	{
+		return;
+	}
+	UWorld* World = GetWorld();
+	UUnitRegistrySubsystem* Registry = World ? World->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	UBattleGarrisonSubsystem* Garrison = World ? World->GetSubsystem<UBattleGarrisonSubsystem>() : nullptr;
+	if (!Registry || !Garrison)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("subsystems missing"));
+		return;
+	}
+	++TicksInPhase;
+	const FUnitFormationSharedFragment* FA = FindFormation(World, UnitA->GetUnitHandle());
+	const FUnitFormationSharedFragment* FB = FindFormation(World, UnitB->GetUnitHandle());
+	if (!FA || !FB)
+	{
+		return;
+	}
+
+	if (Phase == EPhase::Order)
+	{
+		if (TicksInPhase > 12000)
+		{
+			CompleteTest(EFunctionalTestResult::Error, TEXT("both settled timed out"));
+			return;
+		}
+		// The second-arriver queues -- whichever unit that is.
+		if (FA->GarrisonPhase == EGarrisonPhase::Queue || FB->GarrisonPhase == EGarrisonPhase::Queue)
+		{
+			bObservedBQueued = true;
+			++BQueueTicks;
+		}
+		if (FA->GarrisonPhase == EGarrisonPhase::Settled && FB->GarrisonPhase == EGarrisonPhase::Settled)
+		{
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT S8b both settled ticks=%d queue-ticks=%d observed-queue=%d"),
+				TicksInPhase, BQueueTicks, bObservedBQueued ? 1 : 0);
+			Phase = EPhase::AssertOccupancy;
+			TicksInPhase = 0;
+		}
+	}
+	else if (Phase == EPhase::AssertOccupancy)
+	{
+		bool bOk = true;
+		if (!bObservedBQueued || BQueueTicks == 0)
+		{
+			AddError(TEXT("TG.9: neither unit observed queueing (no bounded wait)"));
+			bOk = false;
+		}
+		if (Garrison->GetBookedCount(StructureId) != 2)
+		{
+			AddError(FString::Printf(TEXT("TG.9: %d bookings (expected 2)"), Garrison->GetBookedCount(StructureId)));
+			bOk = false;
+		}
+		const FGarrisonBooking* BookingA = Garrison->FindBooking(UnitA->GetUnitHandle());
+		const FGarrisonBooking* BookingB = Garrison->FindBooking(UnitB->GetUnitHandle());
+		if (!BookingA || !BookingB)
+		{
+			AddError(TEXT("TG.9: a settled unit lost its booking"));
+			bOk = false;
+		}
+		else
+		{
+			const bool bDisjoint = BookingA->SlotBase + BookingA->SlotCount <= BookingB->SlotBase
+				|| BookingB->SlotBase + BookingB->SlotCount <= BookingA->SlotBase;
+			if (!bDisjoint)
+			{
+				AddError(FString::Printf(TEXT("TG.9: ranges overlap A=[%d,%d) B=[%d,%d)"),
+					BookingA->SlotBase, BookingA->SlotBase + BookingA->SlotCount,
+					BookingB->SlotBase, BookingB->SlotBase + BookingB->SlotCount));
+				bOk = false;
+			}
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT S8b Ranges A=[%d,%d) B=[%d,%d)"),
+				BookingA->SlotBase, BookingA->SlotBase + BookingA->SlotCount,
+				BookingB->SlotBase, BookingB->SlotBase + BookingB->SlotCount);
+		}
+
+		Phase = EPhase::ExitA;
+		TicksInPhase = 0;
+		OccupancyAssertOk = bOk;
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S8b occupancy assert ok=%d -- exiting A"), bOk ? 1 : 0);
+		Registry->IssueExitGarrisonOrder(UnitA->GetUnitHandle());
+		return;
+	}
+	else if (Phase == EPhase::ExitA)
+	{
+		if (TicksInPhase > 12000)
+		{
+			CompleteTest(EFunctionalTestResult::Error, TEXT("unit A egress timed out (lease deadlock?)"));
+			return;
+		}
+		if (FA->GarrisonMode == EGarrisonMode::None)
+		{
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S8b A out ticks=%d B-phase=%d"),
+				TicksInPhase, static_cast<int32>(FB->GarrisonPhase));
+			Phase = EPhase::ExitB;
+			TicksInPhase = 0;
+			Registry->IssueExitGarrisonOrder(UnitB->GetUnitHandle());
+		}
+	}
+	else if (Phase == EPhase::ExitB)
+	{
+		if (TicksInPhase > 12000)
+		{
+			CompleteTest(EFunctionalTestResult::Error, TEXT("unit B egress timed out"));
+			return;
+		}
+		if (FB->GarrisonMode == EGarrisonMode::None)
+		{
+			Phase = EPhase::AssertDrained;
+			TicksInPhase = 0;
+		}
+	}
+	else if (Phase == EPhase::AssertDrained)
+	{
+		bool bOk = true;
+		if (Garrison->GetBookedCount(StructureId) != 0)
+		{
+			AddError(FString::Printf(TEXT("TG.9: %d bookings left after both exited"),
+				Garrison->GetBookedCount(StructureId)));
+			bOk = false;
+		}
+		const FGarrisonStructureRecord* Record = Garrison->FindStructure(StructureId);
+		int32 Strays = 0;
+		auto CountStrays = [&](const TObjectPtr<AUnitActor>& Unit)
+		{
+			TArray<FVector> PosCm;
+			GatherEntityPositions3D(World, Unit->GetUnitHandle(), PosCm);
+			for (const FVector& P : PosCm)
+			{
+				const FVector2D Pm(P.X * 0.01f, P.Y * 0.01f);
+				if (Record && Pm.X > Record->Footprint.Min.X - 2.f && Pm.X < Record->Footprint.Max.X + 2.f
+					&& Pm.Y > Record->Footprint.Min.Y - 2.f && Pm.Y < Record->Footprint.Max.Y + 2.f)
+				{
+					++Strays;
+				}
+			}
+		};
+		CountStrays(UnitA);
+		CountStrays(UnitB);
+		// Wait out the re-form (bounded) before judging strays.
+		if (Strays > 0 && TicksInPhase < 6000)
+		{
+			return;
+		}
+		if (Strays > 0)
+		{
+			AddError(FString::Printf(TEXT("TG.9: %d strays remain at the structure"), Strays));
+			bOk = false;
+		}
+		UE_LOG(LogMassBattle, Display,
+			TEXT("EXEC_RESULT S8b drained ok=%d booked=%d strays=%d"),
+			bOk ? 1 : 0, Garrison->GetBookedCount(StructureId), Strays);
+		Phase = EPhase::Done;
+		const bool bAllOk = bOk && OccupancyAssertOk;
+		CompleteTest(bAllOk ? EFunctionalTestResult::Succeeded : EFunctionalTestResult::Failed,
+			bAllOk ? TEXT("multi-unit garrison green") : TEXT("multi-unit garrison assertions failed"));
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Factory registrations + registrar table (see the registry block at the end).
+// ---------------------------------------------------------------------------
+
 namespace
 {
 	AFunctionalTest* MakeSyncLatencyTest(UWorld* World)
@@ -2569,4 +3276,26 @@ namespace
 	}
 	const FBattleFuncTestRegistry::FRegistrar GRegS5(TEXT("AUnitMarchRefrontTest"), &MakeMarchRefrontTest);
 	const FBattleFuncTestRegistry::FRegistrar GRegS6(TEXT("AUnitInPlaceReformTest"), &MakeInPlaceReformTest);
+
+	// -- Phase garrison scenarios (TG.6-TG.9) --
+	AFunctionalTest* MakeBuildingGarrisonTest(UWorld* World)
+	{
+		return World->SpawnActor<AUnitBuildingGarrisonTest>();
+	}
+	AFunctionalTest* MakeTrenchGarrisonTest(UWorld* World)
+	{
+		return World->SpawnActor<AUnitTrenchGarrisonTest>();
+	}
+	AFunctionalTest* MakeWallGarrisonTest(UWorld* World)
+	{
+		return World->SpawnActor<AUnitWallGarrisonTest>();
+	}
+	AFunctionalTest* MakeMultiUnitGarrisonTest(UWorld* World)
+	{
+		return World->SpawnActor<AUnitMultiUnitGarrisonTest>();
+	}
+	const FBattleFuncTestRegistry::FRegistrar GRegS8(TEXT("AUnitBuildingGarrisonTest"), &MakeBuildingGarrisonTest);
+	const FBattleFuncTestRegistry::FRegistrar GRegS9(TEXT("AUnitTrenchGarrisonTest"), &MakeTrenchGarrisonTest);
+	const FBattleFuncTestRegistry::FRegistrar GRegS10(TEXT("AUnitWallGarrisonTest"), &MakeWallGarrisonTest);
+	const FBattleFuncTestRegistry::FRegistrar GRegS8b(TEXT("AUnitMultiUnitGarrisonTest"), &MakeMultiUnitGarrisonTest);
 }

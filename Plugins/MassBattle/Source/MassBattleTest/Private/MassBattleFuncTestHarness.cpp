@@ -173,6 +173,14 @@ namespace
 				{
 					S6->BeginTest();
 				}
+				else if (AGarrisonScenarioBase* Garrison = Cast<AGarrisonScenarioBase>(TestActor))
+				{
+					Garrison->BeginTest();
+				}
+				else if (AUnitMultiUnitGarrisonTest* S8b = Cast<AUnitMultiUnitGarrisonTest>(TestActor))
+				{
+					S8b->BeginTest();
+				}
 				// T0.9: apply + assert the test-mode contract at scenario start
 				// (roadmap B.0: assert ACTIVE engine settings, not CVars being
 				// set; the -game process does not seed the contract on its own).
@@ -407,30 +415,10 @@ bool FS6_InPlaceReform::RunTest(const FString& Parameters)
 }
 
 // ---------------------------------------------------------------------------
-// Phase-garrison func gates TG.6-TG.9 (brief §6). Task 0 ships fail-by-design
-// skeletons; the real scenario plumbing (S8/S9/S10/S8b actors) lands with
-// tasks 5-8 and replaces these bodies.
+// Phase-garrison func gates TG.6-TG.9 (brief §6): the real scenario plumbing.
+// Actors are found on the map by name or spawned through the deterministic
+// factory registry (phase-0 pattern, same as every S-scenario above).
 // ---------------------------------------------------------------------------
-
-namespace
-{
-	/** Skeleton body shared by the garrison func gates: fails immediately so
-	 *  the gate family is CI-visible before any implementation. */
-	class FGarrisonSkeletonCommand : public IAutomationLatentCommand
-	{
-	public:
-		FGarrisonSkeletonCommand(FAutomationTestBase* InOwner, const TCHAR* InGate)
-			: Owner(InOwner), Gate(InGate) {}
-		virtual bool Update() override
-		{
-			Owner->AddError(FString::Printf(TEXT("skeleton: %s lands with its owning task (brief §5)"), *Gate));
-			return true;
-		}
-	private:
-		FAutomationTestBase* Owner = nullptr;
-		FString Gate;
-	};
-}
 
 IMPLEMENT_CUSTOM_COMPLEX_AUTOMATION_TEST(FS8_BuildingGarrison, FBattleFuncTestBase,
 	"Battle.Func.S8_BuildingGarrison", (EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter))
@@ -443,7 +431,9 @@ void FS8_BuildingGarrison::GetTests(TArray<FString>& OutBeautifiedNames, TArray<
 
 bool FS8_BuildingGarrison::RunTest(const FString& Parameters)
 {
-	ADD_LATENT_AUTOMATION_COMMAND(FGarrisonSkeletonCommand(this, TEXT("TG.6 Battle.Func.S8_BuildingGarrison (tasks 5-6)")));
+	IFunctionalTestingModule::Get().MarkPendingActivation();
+	ADD_LATENT_AUTOMATION_COMMAND(FOpenBattleFuncMap(this));
+	ADD_LATENT_AUTOMATION_COMMAND(FRunBattleFuncTest(this, TEXT("S8_BuildingGarrison"), TEXT("AUnitBuildingGarrisonTest")));
 	return true;
 }
 
@@ -458,7 +448,9 @@ void FS9_TrenchGarrison::GetTests(TArray<FString>& OutBeautifiedNames, TArray<FS
 
 bool FS9_TrenchGarrison::RunTest(const FString& Parameters)
 {
-	ADD_LATENT_AUTOMATION_COMMAND(FGarrisonSkeletonCommand(this, TEXT("TG.7 Battle.Func.S9_TrenchGarrison (task 6)")));
+	IFunctionalTestingModule::Get().MarkPendingActivation();
+	ADD_LATENT_AUTOMATION_COMMAND(FOpenBattleFuncMap(this));
+	ADD_LATENT_AUTOMATION_COMMAND(FRunBattleFuncTest(this, TEXT("S9_TrenchGarrison"), TEXT("AUnitTrenchGarrisonTest")));
 	return true;
 }
 
@@ -473,7 +465,9 @@ void FS10_WallGarrison::GetTests(TArray<FString>& OutBeautifiedNames, TArray<FSt
 
 bool FS10_WallGarrison::RunTest(const FString& Parameters)
 {
-	ADD_LATENT_AUTOMATION_COMMAND(FGarrisonSkeletonCommand(this, TEXT("TG.8 Battle.Func.S10_WallGarrison (task 6)")));
+	IFunctionalTestingModule::Get().MarkPendingActivation();
+	ADD_LATENT_AUTOMATION_COMMAND(FOpenBattleFuncMap(this));
+	ADD_LATENT_AUTOMATION_COMMAND(FRunBattleFuncTest(this, TEXT("S10_WallGarrison"), TEXT("AUnitWallGarrisonTest")));
 	return true;
 }
 
@@ -488,7 +482,9 @@ void FS8b_MultiUnitGarrison::GetTests(TArray<FString>& OutBeautifiedNames, TArra
 
 bool FS8b_MultiUnitGarrison::RunTest(const FString& Parameters)
 {
-	ADD_LATENT_AUTOMATION_COMMAND(FGarrisonSkeletonCommand(this, TEXT("TG.9 Battle.Func.S8b_MultiUnitGarrison (task 7)")));
+	IFunctionalTestingModule::Get().MarkPendingActivation();
+	ADD_LATENT_AUTOMATION_COMMAND(FOpenBattleFuncMap(this));
+	ADD_LATENT_AUTOMATION_COMMAND(FRunBattleFuncTest(this, TEXT("S8b_MultiUnitGarrison"), TEXT("AUnitMultiUnitGarrisonTest")));
 	return true;
 }
 

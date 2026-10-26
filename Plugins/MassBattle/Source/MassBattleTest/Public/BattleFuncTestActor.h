@@ -8,6 +8,7 @@
 #include "CoreMinimal.h"
 #include "FunctionalTest.h"
 #include "Mass/EntityHandle.h"
+#include "BattleGarrisonTypes.h"
 #include "BattleFuncTestActor.generated.h"
 
 class AUnitActor;
@@ -335,4 +336,106 @@ struct MASSBATTLETEST_API FBattleFuncTestRegistry
 			Get().Add(Name, Factory);
 		}
 	};
+};
+
+// ---------------------------------------------------------------------------
+// Phase-garrison scenarios (TG.6-TG.9). AGarrisonScenarioBase owns the full
+// ETW flow (order -> approach -> file in -> settle -> assert -> egress ->
+// re-form -> assert); subclasses configure fixture type/geometry and the
+// elevation/facing expectations (B4/B5).
+// ---------------------------------------------------------------------------
+UCLASS()
+class MASSBATTLETEST_API AGarrisonScenarioBase : public AFunctionalTest
+{
+	GENERATED_BODY()
+
+public:
+	AGarrisonScenarioBase();
+
+	void BeginTest();
+	void CompleteTest(EFunctionalTestResult TestResult, const FString& Message);
+	virtual void StartTest() override;
+	virtual void Tick(float DeltaSeconds) override;
+	virtual bool IsReady_Implementation() override { return true; }
+
+protected:
+	/** Subclass configuration (set in the ctor). */
+	UPROPERTY() EGarrisonStructureType FixtureType = EGarrisonStructureType::Building;
+	FVector2D FixturePosM = FVector2D::ZeroVector;
+	float FixtureRotDeg = 0.f;
+	FVector2D UnitSpawnPosCm = FVector2D::ZeroVector;
+	float ExpectedSlotZM = 0.f;   // wall 6 / trench -0.75 / building 0
+	float ZToleranceM = 0.4f;
+	float OutwardYawDeg = 0.f;    // expected post facing (wall/trench)
+	bool bYawIsBimodal = false;   // building: rows face 0 or 180
+
+	enum class EPhase : int32 { Spawn, Order, Garrison, SettleWindow, AssertGarrison, Egress, EgressWindow, AssertEgress, Done };
+	EPhase Phase = EPhase::Spawn;
+	int32 TicksInPhase = 0;
+	int32 MaxFilesSeenInIngress = 0;
+	int32 EscalationsAtSettle = 0;
+	int32 EscalationsAtEgress = 0;
+
+	UPROPERTY() TObjectPtr<AUnitActor> Unit;
+	uint32 StructureId = 0;
+};
+
+/** S8_BuildingGarrison (TG.6): 40-man unit into the gray-box building. */
+UCLASS()
+class MASSBATTLETEST_API AUnitBuildingGarrisonTest : public AGarrisonScenarioBase
+{
+	GENERATED_BODY()
+public:
+	AUnitBuildingGarrisonTest();
+};
+
+/** S9_TrenchGarrison (TG.7): ramp filing, sunken posts (Z < 0), egress. */
+UCLASS()
+class MASSBATTLETEST_API AUnitTrenchGarrisonTest : public AGarrisonScenarioBase
+{
+	GENERATED_BODY()
+public:
+	AUnitTrenchGarrisonTest();
+};
+
+/** S10_WallGarrison (TG.8): stair climb (Z rise), wall-top posts, outward yaw. */
+UCLASS()
+class MASSBATTLETEST_API AUnitWallGarrisonTest : public AGarrisonScenarioBase
+{
+	GENERATED_BODY()
+public:
+	AUnitWallGarrisonTest();
+};
+
+// ---------------------------------------------------------------------------
+// S8b_MultiUnitGarrison (TG.9, task 7): two units garrison one building; the
+// second QUEUES with a bounded wait, then settles into its disjoint range;
+// sequential egress files both out with zero strays and no lease deadlock;
+// the booking ledger drains to empty.
+// ---------------------------------------------------------------------------
+UCLASS()
+class MASSBATTLETEST_API AUnitMultiUnitGarrisonTest : public AFunctionalTest
+{
+	GENERATED_BODY()
+
+public:
+	AUnitMultiUnitGarrisonTest();
+
+	void BeginTest();
+	void CompleteTest(EFunctionalTestResult TestResult, const FString& Message);
+	virtual void StartTest() override;
+	virtual void Tick(float DeltaSeconds) override;
+	virtual bool IsReady_Implementation() override { return true; }
+
+private:
+	enum class EPhase : int32 { Spawn, Order, BothSettled, AssertOccupancy, ExitA, ExitB, AssertDrained, Done };
+	EPhase Phase = EPhase::Spawn;
+	int32 TicksInPhase = 0;
+	int32 BQueueTicks = 0;
+	bool bObservedBQueued = false;
+	bool OccupancyAssertOk = true;
+
+	UPROPERTY() TObjectPtr<AUnitActor> UnitA;
+	UPROPERTY() TObjectPtr<AUnitActor> UnitB;
+	uint32 StructureId = 0;
 };

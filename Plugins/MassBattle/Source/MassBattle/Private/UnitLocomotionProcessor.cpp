@@ -292,6 +292,42 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 			return BeginInteriorMove(/*bEgress*/ true);
 		};
 
+		// Booking + lease attempt at the queue point (the Approach-arrival
+		// handler; also used when the approach plan is degenerate because the
+		// unit already stands at the queue point). Anything short of booked +
+		// leased queues (A4) with a deterministic hold-point offset.
+		auto AttemptEntry = [&]()
+		{
+			const FGarrisonStructureRecord* Rec = Garrison->FindStructure(Formation.GarrisonStructureId);
+			const int32 RosterSize = FMath::Max(1, Registry->GetRosterSize(Unit));
+			FGarrisonBooking Booking;
+			const bool bBooked = Garrison->TryBook(Unit, Formation.GarrisonStructureId,
+				Formation.GarrisonEntranceIndex, RosterSize, Booking)
+				|| Garrison->FindBooking(Unit) != nullptr;
+			if (bBooked && Garrison->IsEntryLeaseFree(Formation.GarrisonStructureId, Formation.GarrisonEntranceIndex)
+				&& Garrison->TryAcquireEntryLease(Formation.GarrisonStructureId, Formation.GarrisonEntranceIndex, Unit))
+			{
+				Garrison->UnregisterQueueWait(Unit);
+				BeginInteriorMove(/*bEgress*/ false);
+			}
+			else
+			{
+				const int32 QueueSlot = Garrison->RegisterQueueWait(Unit,
+					Formation.GarrisonStructureId, Formation.GarrisonEntranceIndex);
+				GarrisonTransition(EGarrisonPhase::Queue, TEXT("FULL-OR-BUSY"));
+				if (Rec && QueueSlot > 0)
+				{
+					TArray<FVector2D> HoldPoints;
+					FGarrisonLayout::QueuePoints(*Rec, Formation.GarrisonEntranceIndex,
+						QueueSlot + 1, HoldPoints);
+					if (HoldPoints.IsValidIndex(QueueSlot))
+					{
+						PlanFieldPathTo(HoldPoints[QueueSlot]);
+					}
+				}
+			}
+		};
+
 		// ---- Order-type dispatch on serial change ----
 		if (Serial != Formation.PlannedOrderSerial)
 		{
@@ -382,9 +418,19 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 					}
 					else
 					{
-						// Queue point unreachable: hold (no teleport) and keep
-						// the FSM in Approach so a later order can recover.
-						GarrisonTransition(EGarrisonPhase::Approach, TEXT("UNREACHABLE"));
+						// Degenerate (already at the queue point) or unreachable:
+						// at the queue point this IS arrival -- attempt entry at
+						// once; otherwise hold (no teleport) in Approach.
+						if (FVector2D::DistSquared(Formation.AnchorPos * 0.01f,
+								Record->Entrances[Entrance].QueuePos) <= FMath::Square(1.f))
+						{
+							++Formation.Generation;
+							AttemptEntry();
+						}
+						else
+						{
+							GarrisonTransition(EGarrisonPhase::Approach, TEXT("UNREACHABLE"));
+						}
 					}
 				}
 			}
@@ -778,34 +824,7 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 					Formation.Path.TotalLength = 0.f;
 					Formation.PathS = 0.f;
 					++Formation.Generation;
-					const int32 RosterSize = FMath::Max(1, Registry->GetRosterSize(Unit));
-					FGarrisonBooking Booking;
-					const bool bBooked = Garrison->TryBook(Unit, Formation.GarrisonStructureId,
-						Formation.GarrisonEntranceIndex, RosterSize, Booking)
-						|| Garrison->FindBooking(Unit) != nullptr;
-					if (bBooked && Garrison->IsEntryLeaseFree(Formation.GarrisonStructureId, Formation.GarrisonEntranceIndex)
-						&& Garrison->TryAcquireEntryLease(Formation.GarrisonStructureId, Formation.GarrisonEntranceIndex, Unit))
-					{
-						BeginInteriorMove(/*bEgress*/ false);
-					}
-					else
-					{
-						// Queue phase: register the hold point (deterministic
-						// offset behind QueuePos) and walk to it if displaced.
-						const int32 QueueSlot = Garrison->RegisterQueueWait(Unit,
-							Formation.GarrisonStructureId, Formation.GarrisonEntranceIndex);
-						GarrisonTransition(EGarrisonPhase::Queue, TEXT("FULL-OR-BUSY"));
-						if (GarrisonRecord && QueueSlot > 0)
-						{
-							TArray<FVector2D> HoldPoints;
-							FGarrisonLayout::QueuePoints(*GarrisonRecord, Formation.GarrisonEntranceIndex,
-								QueueSlot + 1, HoldPoints);
-							if (HoldPoints.IsValidIndex(QueueSlot))
-							{
-								PlanFieldPathTo(HoldPoints[QueueSlot]);
-							}
-						}
-					}
+					AttemptEntry();
 				}
 				else if (Formation.GarrisonPhase == EGarrisonPhase::Queue && RemainingCm <= 1.f)
 				{
