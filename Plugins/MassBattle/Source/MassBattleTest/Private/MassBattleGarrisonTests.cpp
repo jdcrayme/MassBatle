@@ -1,5 +1,5 @@
 #if WITH_DEV_AUTOMATION_TESTS
-// Battle.Unit.Garrison.* -- phase-garrison gate family TG.1-TG.5 (brief §6).
+// Battle.Unit.Garrison.* -- phase-1 garrison gate family TG.1-TG.5 (brief §6).
 // Task 0 shipped these as fail-by-design skeletons (gate-first discipline);
 // each body lands with its owning task (or earlier, per §5 gate-first rule).
 #include "Misc/AutomationTest.h"

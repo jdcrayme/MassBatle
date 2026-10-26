@@ -1,5 +1,7 @@
 # Phase Garrison -- Handoff Report
 
+> **Archive note (2026-10-26 roll).** Garrison executed as its own folder (`Docs/phases/phase-garrison/`, decision A6) between Phase 1 and Phase 2; rolled into `Docs/phases/phase-1/` on 2026-10-26 because it is part of Phase 1. Frozen record; historical paths in the text refer to the original location.
+
 | | |
 |---|---|
 | **Date** | 2026-10-26 |

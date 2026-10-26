@@ -16,7 +16,8 @@
 | Phase 0 (foundation: CI R8, registry, EDU parse, spawn, sync, death path, T0.1–T0.9) | **COMPLETE** 2026-10-24 — all tasks 0–13, DoD checked |
 | Phase 0 audit + fix pass | **COMPLETE** 2026-10-24 — H1–H3 + M1–M8 + most lows fixed; evidence in `Docs/phases/phase-0/audit.md` §7 |
 | Phase 1 (movement core: planner T1.9, layout T1.2, locomotion T1.3, compression T1.4, assigner T1.1, servo A1, OBB contact, unstuck v1, A2 orders, S1–S3, T1.8 soak) | **COMPLETE** 2026-10-25 — unit tier 44/44, func tier 7/7, nightly soak `stuck=0 separation=0 archetypes=6 ok=1`; report at `Docs/phases/phase-1/report.md` |
-| **Phase garrison (garrison movement: booking ledger, gray-box building/wall/trench fixtures, ingress/egress FSM, slot-source + Z servo, S8/S9/S10/S8b, TG.1–TG.9)** | **COMPLETE** 2026-10-26 — unit tier 50/50, func tier 14/14, nightly baseline soak `ok=1`, garrison soak variant evidence in `Docs/phases/phase-garrison/report.md` |
+| Phase 1 extension — garrison (booking ledger, gray-box building/wall/trench fixtures, ingress/egress FSM, slot-source + Z servo, S8/S9/S10/S8b, TG.1–TG.9; executed between Phase 1 and Phase 2, rolled into `phase-1/` 2026-10-26) | **COMPLETE** 2026-10-26 — unit tier 50/50, func tier 14/14, nightly baseline soak `ok=1`, garrison soak variant evidence in `Docs/phases/phase-1/report-garrison.md` |
+| Phase 1 audit + fix pass | **IN PROGRESS** 2026-10-26 — audit at `Docs/phases/phase-1/audit.md`; fix pass executing per its §7 recommended order |
 | CI state | Per-commit gate + Jenkins `massbattle-gate` green; nightly runs smoke + T1.8 movement soak on the staged build (garrison-phase run green; baseline committed) |
 | **Next** | Phase 2 — engagement solver & melee (roadmap Part A Phase 2). Brief not yet written. |
 
@@ -39,8 +40,7 @@
 | `Docs/reference/environment.md` | Install/project/VCS/config facts + facts-correction ledger | **Living reference** |
 | `Docs/phases/pre-phase-0/` | brief · progress · report (environment scaffold run) | **Archive** |
 | `Docs/phases/phase-0/` | brief · progress · report · audit (foundation run + post-run audit) | **Archive** (report §7 = Phase 1 entry point) |
-| `Docs/phases/phase-1/` | brief · progress · report (movement-core run) | **Archive** (report §4 = Phase 2 entry point) |
-| `Docs/phases/phase-garrison/` | brief · progress · report (garrison-movement run; executed between Phase 1 and Phase 2, spec §9) | **Archive** (report §5 = Phase 2 entry point) |
+| `Docs/phases/phase-1/` | brief · progress · report · audit + the rolled-in garrison run (`brief-garrison` · `progress-garrison` · `report-garrison`) | **Archive** (report §4 + report-garrison §4 = Phase 2 entry points) |
 | `Docs/reviews/plan-review-findings.md` | 2026-10-23 plan review: errors E1–E6, risks R1–R13, improvements I1–I7, evidence + citations | **Archive** (referenced by live specs) |
 
 Repo files outside `Docs/` you will be pointed at: `Tools/CI/README.md`, `Tools/CI/JENKINS.md`, `Tools/CI/run_tests.bat` / `nightly.bat` / `compare_baseline.py`, `Baselines/perf/README.md`, `Jenkinsfile`.

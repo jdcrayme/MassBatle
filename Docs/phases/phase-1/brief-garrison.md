@@ -1,5 +1,7 @@
 # MassBattle Phase Garrison Brief -- Garrison Movement (Buildings, Walls, Trenches)
 
+> **Archive note (2026-10-26 roll).** Garrison executed as its own folder (`Docs/phases/phase-garrison/`, decision A6) between Phase 1 and Phase 2; rolled into `Docs/phases/phase-1/` on 2026-10-26 because it is part of Phase 1. Frozen record; historical paths in the text refer to the original location.
+
 | | |
 |---|---|
 | **Companion docs** | `Docs/spec/garrison-movement.md` (design spec: B1-B7 behavior contract, data model, mechanics, ADR proposals) · `Docs/AGENTS.md` (standing protocol) · `Docs/spec/roadmap-and-testing.md` (B.0 test contract, B.8 DoD) |

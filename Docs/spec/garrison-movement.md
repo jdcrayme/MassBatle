@@ -4,7 +4,7 @@
 **Status:** Draft 1.0 · 2026-10-25 -- plan prepared for owner review; not yet executed
 **Engine pin:** Unreal Engine 5.8.x (ADR-13)
 **Audience:** Owner + implementing agent (companion to the phase brief)
-**Companion:** `Docs/phases/phase-garrison/brief.md` (executable task plan) · `Docs/spec/architecture.md` (parent spec; §8 movement, §13 open decisions) · `Docs/spec/roadmap-and-testing.md` (gate conventions, B.8 DoD)
+**Companion:** `Docs/phases/phase-1/brief-garrison.md` (executable task plan; rolled into phase-1 2026-10-26) · `Docs/spec/architecture.md` (parent spec; §8 movement, §13 open decisions) · `Docs/spec/roadmap-and-testing.md` (gate conventions, B.8 DoD)
 
 ---
 

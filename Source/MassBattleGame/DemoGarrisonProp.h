@@ -3,7 +3,7 @@
 // subsystem at its transform (plugin public API only -- MakeFixture +
 // RegisterStructure), stamps the cost grid so field A* routes approaches to
 // the entrance, and draws a minimal gray-box body so the structure reads on
-// screen. This is the editor-authored half of the phase-garrison fixture
+// screen. This is the editor-authored half of the phase-1 garrison fixture
 // story: place it in the map like an ADemoUnitActor; the sim consumes only
 // the plain record.
 #pragma once
