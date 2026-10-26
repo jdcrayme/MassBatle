@@ -385,7 +385,19 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 			{
 				const uint32 StructureId = Order->StructureId;
 				const FGarrisonStructureRecord* Record = Garrison->FindStructure(StructureId);
-				if (Formation.GarrisonPhase == EGarrisonPhase::Settled && Formation.GarrisonStructureId == StructureId)
+				if (Formation.GarrisonStructureId == StructureId && Formation.GarrisonMode != EGarrisonMode::None)
+				{
+					// Spec §4.1 no-op family, extended to the whole in-bound
+					// flow (Approach/Queue/Ingress): already heading into THIS
+					// structure -- continue. Parking + egress here would churn
+					// the choke on every re-order (the soak variant caught
+					// units cycling ingress->egress forever under a 60 s
+					// re-order cadence).
+					UE_LOG(LogMassBattle, Display,
+						TEXT("EXEC_RESULT Garrison NoOp Unit=%u:%u Structure=%u (phase=%d)"),
+						Unit.Index, Unit.Serial, StructureId, static_cast<int32>(Formation.GarrisonPhase));
+				}
+				else if (Formation.GarrisonPhase == EGarrisonPhase::Settled && Formation.GarrisonStructureId == StructureId)
 				{
 					// Spec §4.1: re-garrison into the same structure while
 					// settled is a no-op.
