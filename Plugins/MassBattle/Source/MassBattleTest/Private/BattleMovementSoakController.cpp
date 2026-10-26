@@ -384,6 +384,13 @@ void UBattleMovementSoakController::OnTick(float TimeDelta)
 					|| Formation->GarrisonPhase == EGarrisonPhase::Egress)
 				{
 					++GarrisonedUnsettled;
+					// Stall diagnosis: arc position vs path length + speed.
+					UE_LOG(LogGauntlet, Display,
+						TEXT("GAUNTLET BattleMovementSoak STALL Unit=%u:%u phase=%d mode=%d PathS=%.1f Total=%.1f SpeedLimit=%.2f Anchor=(%.1f,%.1f)m"),
+						Unit.Index, Unit.Serial,
+						static_cast<int32>(Formation->GarrisonPhase), static_cast<int32>(Formation->GarrisonMode),
+						Formation->PathS, Formation->Path.TotalLength, Formation->SpeedLimit,
+						Formation->AnchorPos.X * 0.01f, Formation->AnchorPos.Y * 0.01f);
 				}
 				continue;
 			}
