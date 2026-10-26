@@ -1,6 +1,7 @@
 #include "FormationSlotResolveProcessor.h"
 #include "BattleMovementFragments.h"
 #include "BattleSlotAssigner.h"
+#include "BattleGarrison.h"
 #include "BattlePathFrameLayout.h"
 #include "BattleCompression.h"
 #include "BattleDebugSubsystem.h"
@@ -92,6 +93,91 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 			EntityPosM.Add(FVector2D(Pos.X, Pos.Y) * 0.01f);
 		}
 
+		// ---- Garrison slot-source branch (spec §4.4, A1/A2): when the unit
+		//      holds posts (Occupy/Settled), slot targets come from the
+		//      booked-range mirror, not the field layout. ----
+		const bool bGarrisonHold = Formation.GarrisonMode == EGarrisonMode::Garrisoned
+			&& (Formation.GarrisonPhase == EGarrisonPhase::Occupy || Formation.GarrisonPhase == EGarrisonPhase::Settled)
+			&& Formation.GarrisonSlotCount > 0;
+		if (bGarrisonHold)
+		{
+			const int32 Count = FMath::Min(Formation.GarrisonSlotCount, MaxGarrisonSlotsPerUnit);
+			TArray<FVector2D> PostPosM;
+			TArray<float> PostYaw;
+			TArray<float> PostZCm;
+			PostPosM.SetNumUninitialized(Count);
+			PostYaw.SetNumUninitialized(Count);
+			PostZCm.SetNumUninitialized(Count);
+			for (int32 i = 0; i < Count; ++i)
+			{
+				const FGarrisonSlotFragment& Post = Formation.Slots[i];
+				PostPosM[i] = Post.Pos * 0.01f; // cm -> m
+				PostYaw[i] = Post.YawDeg;
+				PostZCm[i] = Post.Z;
+			}
+
+			// Assignment over the booked range (deterministic greedy
+			// bijection, the k-file bound's analog; R-G4: this is the ONLY
+			// garrison phase where reflow runs). FSlotAssignmentFragment
+			// keeps its role: SlotIndex indexes the BOOKED range
+			// [GarrisonSlotBase, +Count) -- AssignSlots works on local
+			// [0,Count) arrays, so map in and out.
+			const int32 SlotBase = Formation.GarrisonSlotBase;
+			TArray<int32> Assignment;
+			Assignment.Reserve(NumEntities);
+			for (int32 i = 0; i < NumEntities; ++i)
+			{
+				const int32 Slot = Context.GetFragmentView<FSlotAssignmentFragment>()[i].SlotIndex - SlotBase;
+				Assignment.Add((Slot >= 0 && Slot < Count) ? Slot : INDEX_NONE);
+			}
+
+			FReflowScheduler Scheduler;
+			Scheduler.IntervalSeconds = 0.5f;
+			Scheduler.Cooldown = Formation.ReflowCooldown;
+			const bool bLayoutRedecision = Formation.Generation != Formation.AssignedGeneration;
+			if (bLayoutRedecision || Scheduler.ConsumeIfDue(DT, /*bRankGap*/ false))
+			{
+				TArray<int32> NewAssignment;
+				FGarrisonLayout::AssignSlots(EntityPosM, PostPosM, Assignment,
+					bLayoutRedecision ? BIG_NUMBER : FGarrisonCVars::MaxSlotDisplacement(), NewAssignment);
+				for (int32 i = 0; i < NumEntities; ++i)
+				{
+					Context.GetMutableFragmentView<FSlotAssignmentFragment>()[i].SlotIndex =
+						NewAssignment[i] >= 0 ? NewAssignment[i] + SlotBase : INDEX_NONE;
+				}
+				Assignment = MoveTemp(NewAssignment);
+				Formation.AssignedGeneration = Formation.Generation;
+			}
+			Formation.ReflowCooldown = Scheduler.Cooldown;
+
+			// Write move targets + slot-error overlay (A3).
+			UBattleDebugSubsystem* DebugHold = Context.GetWorld() ? Context.GetWorld()->GetSubsystem<UBattleDebugSubsystem>() : nullptr;
+			TArrayView<FSlotTargetFragment> HoldTargets = Context.GetMutableFragmentView<FSlotTargetFragment>();
+			for (int32 i = 0; i < NumEntities; ++i)
+			{
+				const int32 Slot = Assignment[i];
+				if (Slot < 0 || Slot >= Count)
+				{
+					continue;
+				}
+				HoldTargets[i].TargetPos = FVector2D(PostPosM[Slot]) * 100.f;
+				HoldTargets[i].TargetYaw = PostYaw[Slot];
+				HoldTargets[i].TargetZ = PostZCm[Slot];
+
+				if (DebugHold)
+				{
+					FBattleOverlayLine Line;
+					Line.From = Context.GetFragmentView<FTransformFragment>()[i].GetTransform().GetTranslation();
+					Line.To = FVector(HoldTargets[i].TargetPos.X, HoldTargets[i].TargetPos.Y, PostZCm[Slot]);
+					const float ErrorM = FVector2D::Distance(EntityPosM[i], PostPosM[Slot]);
+					const uint8 Magnitude = static_cast<uint8>(FMath::Clamp(ErrorM * 25.5f, 0.f, 255.f));
+					Line.Color = FColor(0, 255 - Magnitude, 255); // cyan-graded: garrison slot error
+					DebugHold->EnqueueOverlayLine(Line);
+				}
+			}
+			return; // booked-range source replaces the field layout entirely
+		}
+
 		// Slot world positions (meters): path-frame when a path exists, the
 		// §8.2 anchor-formula degenerate layout otherwise. En route the block
 		// projects around the anchor's CURRENT arc position (PathS) -- the
@@ -100,6 +186,9 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 		// entity beelining for its final slot (the unit blobs apart mid-march).
 		FBattlePlannedPath PathM;
 		const bool bHasPath = FPathFrameLayout::FromFragment(Formation.Path, PathM);
+		const bool bFiling = Formation.GarrisonMode != EGarrisonMode::None
+			&& (Formation.GarrisonPhase == EGarrisonPhase::Ingress
+				|| Formation.GarrisonPhase == EGarrisonPhase::Egress);
 		const float FileSpacingM = Formation.FileSpacing * 0.01f;
 		const float RankSpacingM = Formation.RankSpacing * 0.01f;
 
@@ -192,8 +281,10 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 		// Generation): re-assign immediately and UNBOUNDED -- each entity takes
 		// its nearest slot in the new layout instead of a k-bounded shuffle that
 		// would force treks across a rotated block (arch §8.4 re-decision path).
+		// R-G4: reflow NEVER runs while filing a garrison interior path (the
+		// PassLocked column filing owns the shape; spec §4.4).
 		const bool bLayoutRedecision = Formation.Generation != Formation.AssignedGeneration;
-		if (bLayoutRedecision || Scheduler.ConsumeIfDue(DT, bRankGap))
+		if (!bFiling && (bLayoutRedecision || Scheduler.ConsumeIfDue(DT, bRankGap)))
 		{
 			TArray<int32> NewAssignment;
 			const int32 MaxDisplacement = bLayoutRedecision
@@ -203,8 +294,9 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 				MaxDisplacement, NewAssignment);
 
 			// Predictive swaps (optional policy, arch §8.4): crossing servo
-			// projections within ~1 s swap slot indices.
-			if (GBattleMovementPredictiveSwaps.GetValueOnAnyThread() != 0)
+			// projections within ~1 s swap slot indices. Skipped while filing
+			// (deterministic column shape through the choke).
+			if (!bFiling && GBattleMovementPredictiveSwaps.GetValueOnAnyThread() != 0)
 			{
 				TArray<FVector2D> VelM;
 				VelM.Reserve(NumEntities);
@@ -240,6 +332,12 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 			}
 			Targets[i].TargetPos = FVector2D(SlotPosM[Slot]) * 100.f;
 			Targets[i].TargetYaw = SlotYaw[Slot];
+			// Garrison filing (spec §6): TargetZ interpolates along the path
+			// at the entity's rank arc; field movement stays at ground Z.
+			Targets[i].TargetZ = bFiling && Formation.Path.IsValid()
+				? FGarrisonLayout::ZAtSFragment(Formation.Path,
+					FMath::Max(0.f, Formation.PathS - static_cast<float>(Slot / Formation.NumFiles) * Formation.RankSpacing))
+				: 0.f;
 
 			if (Debug)
 			{
