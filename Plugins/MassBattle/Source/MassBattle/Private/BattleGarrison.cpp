@@ -11,8 +11,8 @@ namespace
 {
 	TAutoConsoleVariable<int32> GBattleGarrisonEnable(
 		TEXT("Battle.Garrison.Enable"),
-		0,
-		TEXT("Enable garrison orders + the locomotion garrison FSM. 0 (default until task 5) leaves the T1.8 baseline untouched (B.8 item 6)."),
+		1,
+		TEXT("Enable garrison orders + the locomotion garrison FSM (1 from task 5; 0 restores the pre-garrison behavior for baseline equivalence)."),
 		ECVF_Default);
 
 	TAutoConsoleVariable<float> GBattleGarrisonInteriorSpeedFactor(

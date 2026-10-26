@@ -162,7 +162,8 @@ struct FUnitFormationSharedFragment : public FMassSharedFragment
 	UPROPERTY() int32 GarrisonSlotCount = 0;
 	/** Current interior elevation target (cm; Z servo input, spec §6). */
 	UPROPERTY() float GarrisonZ = 0.f;
-	/** Queue-phase retry timer (A4 cadence; same pattern as ReflowCooldown). */
+	/** Queue/egress-retry cadence state (A4; same pattern as ReflowCooldown,
+	 *  F16: persisted here so it survives chunk boundaries). */
 	UPROPERTY() float GarrisonRetryCooldown = 0.f;
 	/** Booked-range mirror: posts in cm (fixed array; not touched until
 	 *  Occupy). Indexed by (slot - GarrisonSlotBase). */

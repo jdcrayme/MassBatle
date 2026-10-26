@@ -127,6 +127,10 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 		{
 			return;
 		}
+		if (FormationPtr->GarrisonMode != EGarrisonMode::None)
+		{
+			return; // R-G3: garrisoned units are neither shove sources nor targets
+		}
 		const FUnitFormationSharedFragment& Formation = *FormationPtr;
 		const int32 NumRanks = FMath::Max(1, FMath::CeilToInt(static_cast<float>(Formation.NumSlots) / Formation.NumFiles));
 		// Body centers on the formation CENTROID (the anchor leads at the
