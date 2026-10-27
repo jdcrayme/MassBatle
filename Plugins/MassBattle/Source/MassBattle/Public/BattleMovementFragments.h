@@ -246,4 +246,8 @@ struct FServoStateFragment : public FMassFragment
 	UPROPERTY() FVector2D SidestepDir = FVector2D::ZeroVector;
 	/** Displacement blend weight for shove/wake (Task 9; 0 = none). */
 	UPROPERTY() float DisplacementWeight = 0.f;
+	/** Audit M1, ladder step 4: the terminal handoff flag -- set when the
+	 *  ladder reaches level 4, cleared on full recovery. The unit-AI layer
+	 *  (Phase 2) consumes it; nothing else keys on it. */
+	UPROPERTY() uint8 bUnitAIHandoff = 0;
 };

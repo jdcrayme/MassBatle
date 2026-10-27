@@ -134,8 +134,11 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 	// ---- Unit bodies (for the §8.2 facing lock) ----
 	// R-G3: garrisoned units are EXCLUDED -- their field OBB is meaningless
 	// once distributed; interior crowding is servo+compression.
+	// Audit H4: capacity reserved once per frame (game thread, single pass).
 	TArray<FUnitOBB> UnitBodies;
+	UnitBodies.Reserve(16);
 	TArray<FUnitHandle> BodyUnits;
+	BodyUnits.Reserve(16);
 	UnitBodyQuery.ForEachEntityChunk(Context, [&UnitBodies, &BodyUnits](FMassExecutionContext& Context)
 	{
 		const FUnitFormationSharedFragment* Formation = Context.GetSharedFragmentPtr<FUnitFormationSharedFragment>();
@@ -834,7 +837,11 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 			CommandedSpeedM *= FUnitContact::PassThroughSpeedFactor;
 		}
 
-		FBattlePlannedPath PathM;
+		// Audit H4: per-thread path mirror -- FromFragment reuses this
+		// buffer's capacity instead of heap-copying the 64-point polyline
+		// per unit per frame.
+		static thread_local FBattlePlannedPath TLPathM;
+		FBattlePlannedPath& PathM = TLPathM;
 		const bool bHasPath = FPathFrameLayout::FromFragment(Formation.Path, PathM);
 
 		// Member speeds: EffectiveSpeed(i) = WalkSpeed * SpeedMult (Phase 1:

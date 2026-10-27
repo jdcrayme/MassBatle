@@ -51,6 +51,8 @@ void UServoProcessor::ConfigureQueries(const TSharedRef<FMassEntityManager>& Ent
 	ServoQuery.AddRequirement<FServoStateFragment>(EMassFragmentAccess::ReadWrite);
 	ServoQuery.AddRequirement<FMassVelocityFragment>(EMassFragmentAccess::ReadWrite);
 	ServoQuery.AddRequirement<FOwnerUnitFragment>(EMassFragmentAccess::ReadOnly);
+	// Audit M1 step 3: the forced slot swap reads/writes slot indices.
+	ServoQuery.AddRequirement<FSlotAssignmentFragment>(EMassFragmentAccess::ReadWrite);
 	ServoQuery.AddSharedRequirement<FUnitFormationSharedFragment>(EMassFragmentAccess::ReadOnly);
 
 	// Frame snapshot: every battle entity's position/velocity/state, all
@@ -192,9 +194,12 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 	});
 
 	// Per-snapshot-entity shove displacement (m/s) + blend weight.
+	// Audit H4: capacity reserved so Init reuses the allocation per frame.
 	TArray<FVector2D> ShoveVel;
+	ShoveVel.Reserve(Snapshot.Num());
 	ShoveVel.Init(FVector2D::ZeroVector, Snapshot.Num());
 	TArray<float> ShoveW;
+	ShoveW.Reserve(Snapshot.Num());
 	ShoveW.Init(0.f, Snapshot.Num());
 	// Audit H3: Block-policy pairs. Equal-footing contact shoves nobody --
 	// instead the mover's entities take the blocking unit's entities as
@@ -202,6 +207,7 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 	// servoing straight through). This is the mechanism behind the S3
 	// pass-mouth queue. Built before the chunk fan-out; read-only in it.
 	TMap<FUnitHandle, TArray<FUnitHandle>> BlockPartners;
+	BlockPartners.Reserve(16);
 	for (int32 A = 0; A < UnitBodies.Num(); ++A)
 	{
 		if (!BodyMoving[A])
@@ -505,9 +511,58 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 					}
 					ServoStates[i].SidestepDir = Perp;
 				}
+
+				// Audit M1, ladder step 3: forced slot swap with a blocking
+				// teammate (brief Task 8). Deterministic: the first same-unit
+				// entity within 1 m holding a DIFFERENT valid slot trades
+				// indices, so the two trade destinations instead of shoving
+				// at one crossing point.
+				if (FUnstuckLadder::WantsSlotSwap(NewLevel) && !FUnstuckLadder::WantsSlotSwap(OldLevel))
+				{
+					auto Assignments = Context.GetMutableFragmentView<FSlotAssignmentFragment>();
+					for (int32 j = 0; j < Context.GetNumEntities(); ++j)
+					{
+						if (j == i || Owners[j].Owner != MyOwner
+							|| Assignments[j].SlotIndex < 0 || Assignments[j].SlotIndex == Assignments[i].SlotIndex)
+						{
+							continue;
+						}
+						const FVector Q = Transforms[j].GetTransform().GetTranslation();
+						if (FVector2D::DistSquared(PosM, FVector2D(Q.X, Q.Y) * 0.01f) < FMath::Square(1.f))
+						{
+							UE_LOG(LogMassBattle, Display,
+								TEXT("EXEC_RESULT UnstuckSlotSwap Entity=%u:%u Unit=%u:%u With=%u:%u SlotA=%d SlotB=%d"),
+								Context.GetEntity(i).Index, Context.GetEntity(i).SerialNumber,
+								MyOwner.Index, MyOwner.Serial,
+								Context.GetEntity(j).Index, Context.GetEntity(j).SerialNumber,
+								Assignments[i].SlotIndex, Assignments[j].SlotIndex);
+							Swap(Assignments[i].SlotIndex, Assignments[j].SlotIndex);
+							break;
+						}
+					}
+				}
+				// Audit M1, ladder step 4: escalate to the unit-AI layer --
+				// the minimal handoff flag + counter (the consumer is a Phase
+				// 2 ready hook; the flag is reset by a full recovery below).
+				if (NewLevel == 4 && ServoStates[i].bUnitAIHandoff == 0)
+				{
+					ServoStates[i].bUnitAIHandoff = 1;
+					if (Debug)
+					{
+						Debug->RecordUnitAIHandoff();
+					}
+					UE_LOG(LogMassBattle, Display,
+						TEXT("EXEC_RESULT UnstuckHandoff Entity=%u:%u Unit=%u:%u (terminal level 4)"),
+						Context.GetEntity(i).Index, Context.GetEntity(i).SerialNumber,
+						MyOwner.Index, MyOwner.Serial);
+				}
 			}
 			ServoStates[i].LowSpeedTime = Timer;
 			ServoStates[i].LadderLevel = NewLevel;
+			if (NewLevel == 0)
+			{
+				ServoStates[i].bUnitAIHandoff = 0; // recovered: handoff withdrawn
+			}
 
 			// Servo-local transitions around HoldSlot. Doctrine (§8.3): HoldSlot
 			// runs NO avoidance -- so never enter it while still touching a

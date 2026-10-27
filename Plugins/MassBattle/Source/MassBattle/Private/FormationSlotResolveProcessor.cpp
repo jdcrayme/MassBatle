@@ -89,6 +89,15 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 
 	ResolveQuery.ForEachEntityChunk(Context, [DT](FMassExecutionContext& Context)
 	{
+		// Audit H4: per-thread scratch reused across chunks and frames
+		// (Reset/Init keep capacity) -- zero steady-state heap traffic from
+		// the slot-resolve stage at Phase-1 scale or at the 2x2400 target.
+		static thread_local TArray<FVector2D> TLEntityPosM, TLPostPosM, TLFinalSlotPosM, TLSlotPosM, TLFanInVelM;
+		static thread_local TArray<float> TLPostYaw, TLPostZCm, TLSlotYaw;
+		static thread_local TArray<int32> TLAssignment, TLNewAssignment;
+		static thread_local TArray<bool> TLSlotOccupied;
+		static thread_local FBattlePlannedPath TLPathM;
+
 		FUnitFormationSharedFragment& Formation = Context.GetMutableSharedFragment<FUnitFormationSharedFragment>();
 		const int32 NumEntities = Context.GetNumEntities();
 		if (Formation.NumSlots <= 0 || Formation.NumFiles <= 0)
@@ -97,8 +106,8 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 		}
 
 		// ---- Assemble assigner inputs (meters at the fragment boundary) ----
-		TArray<FVector2D> EntityPosM;
-		EntityPosM.Reserve(NumEntities);
+		TArray<FVector2D>& EntityPosM = TLEntityPosM;
+		EntityPosM.Reset(NumEntities);
 		for (int32 i = 0; i < NumEntities; ++i)
 		{
 			const FVector Pos = Context.GetFragmentView<FTransformFragment>()[i].GetTransform().GetTranslation();
@@ -114,9 +123,9 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 		if (bGarrisonHold)
 		{
 			const int32 Count = FMath::Min(Formation.GarrisonSlotCount, MaxGarrisonSlotsPerUnit);
-			TArray<FVector2D> PostPosM;
-			TArray<float> PostYaw;
-			TArray<float> PostZCm;
+			TArray<FVector2D>& PostPosM = TLPostPosM;
+			TArray<float>& PostYaw = TLPostYaw;
+			TArray<float>& PostZCm = TLPostZCm;
 			PostPosM.SetNumUninitialized(Count);
 			PostYaw.SetNumUninitialized(Count);
 			PostZCm.SetNumUninitialized(Count);
@@ -135,8 +144,8 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 			// [GarrisonSlotBase, +Count) -- AssignSlots works on local
 			// [0,Count) arrays, so map in and out.
 			const int32 SlotBase = Formation.GarrisonSlotBase;
-			TArray<int32> Assignment;
-			Assignment.Reserve(NumEntities);
+			TArray<int32>& Assignment = TLAssignment;
+			Assignment.Reset(NumEntities);
 			for (int32 i = 0; i < NumEntities; ++i)
 			{
 				const int32 Slot = Context.GetFragmentView<FSlotAssignmentFragment>()[i].SlotIndex - SlotBase;
@@ -196,7 +205,7 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 		// formation travels coherently with the unit (arch §8.1 the unit is
 		// the locomotor); projecting at the path end instead would send every
 		// entity beelining for its final slot (the unit blobs apart mid-march).
-		FBattlePlannedPath PathM;
+		FBattlePlannedPath& PathM = TLPathM;
 		const bool bHasPath = FPathFrameLayout::FromFragment(Formation.Path, PathM);
 		const bool bFiling = Formation.GarrisonMode != EGarrisonMode::None
 			&& (Formation.GarrisonPhase == EGarrisonPhase::Ingress
@@ -204,8 +213,8 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 		const float FileSpacingM = Formation.FileSpacing * 0.01f;
 		const float RankSpacingM = Formation.RankSpacing * 0.01f;
 
-		TArray<FVector2D> SlotPosM;
-		TArray<float> SlotYaw;
+		TArray<FVector2D>& SlotPosM = TLSlotPosM;
+		TArray<float>& SlotYaw = TLSlotYaw;
 		SlotPosM.SetNumUninitialized(Formation.NumSlots);
 		SlotYaw.SetNumUninitialized(Formation.NumSlots);
 		FVector2D StartPosM = FVector2D::ZeroVector;
@@ -259,7 +268,7 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 		// per entity at target-write time below. Open-order spacing (scale 1):
 		// the destination is a formed block, not a squeezed one.
 		const bool bFanIn = bHasPath && Formation.FanInDestValid != 0;
-		TArray<FVector2D> FinalSlotPosM;
+		TArray<FVector2D>& FinalSlotPosM = TLFinalSlotPosM;
 		if (bFanIn)
 		{
 			FinalSlotPosM.SetNumUninitialized(Formation.NumSlots);
@@ -274,9 +283,9 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 		}
 
 		// ---- Batched reflow (arch §8.4): 0.5 s cadence or rank-gap trigger ----
-		TArray<int32> Assignment;
-		Assignment.Reserve(NumEntities);
-		TArray<bool> SlotOccupied;
+		TArray<int32>& Assignment = TLAssignment;
+		Assignment.Reset(NumEntities);
+		TArray<bool>& SlotOccupied = TLSlotOccupied;
 		SlotOccupied.Init(false, Formation.NumSlots);
 		for (int32 i = 0; i < NumEntities; ++i)
 		{
@@ -320,7 +329,7 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 		const bool bLayoutRedecision = Formation.Generation != Formation.AssignedGeneration;
 		if (!bFiling && (bLayoutRedecision || Scheduler.ConsumeIfDue(DT, bRankGap)))
 		{
-			TArray<int32> NewAssignment;
+			TArray<int32>& NewAssignment = TLNewAssignment;
 			const int32 MaxDisplacement = bLayoutRedecision
 				? Formation.NumSlots
 				: GBattleMovementMaxFileDisplacement.GetValueOnAnyThread();
@@ -332,8 +341,8 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 			// (deterministic column shape through the choke).
 			if (!bFiling && GBattleMovementPredictiveSwaps.GetValueOnAnyThread() != 0)
 			{
-				TArray<FVector2D> VelM;
-				VelM.Reserve(NumEntities);
+				TArray<FVector2D>& VelM = TLFanInVelM;
+				VelM.Reset(NumEntities);
 				for (int32 i = 0; i < NumEntities; ++i)
 				{
 					const FVector Vel = Context.GetFragmentView<FMassVelocityFragment>()[i].Value;

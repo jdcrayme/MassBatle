@@ -142,6 +142,13 @@ bool FServo_UnstuckLadderEscalation::RunTest(const FString& Parameters)
 	TestFalse(TEXT("level 1: no sidestep"), FUnstuckLadder::WantsSidestep(1));
 	TestTrue(TEXT("level 2: sidestep"), FUnstuckLadder::WantsSidestep(2));
 
+	// Audit M1: step 3 demands the forced slot swap with the blocking
+	// teammate; steps 3/4 exist (the old code had four levels but only two
+	// hooks -- levels 3/4 were no-ops).
+	TestFalse(TEXT("level 2: no slot swap"), FUnstuckLadder::WantsSlotSwap(2));
+	TestTrue(TEXT("level 3: slot swap"), FUnstuckLadder::WantsSlotSwap(3));
+	TestTrue(TEXT("level 4: slot swap"), FUnstuckLadder::WantsSlotSwap(4));
+
 	// Moving fine holds the current level (no unwind without slot arrival).
 	Level = FUnstuckLadder::Advance(2, false, false, 0.016f, Timer, FUnitServoConstants::EscalateAfterSeconds);
 	TestEqual(TEXT("moving fine holds level"), Level, 2);

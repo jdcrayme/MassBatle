@@ -70,6 +70,10 @@ public:
 	void RecordMorphDecision() { ++MorphDecisions; }
 	int32 GetMorphDecisions() const { return MorphDecisions; }
 
+	/** Audit M1: ladder step-4 handoffs (unit-AI escalation signal). */
+	void RecordUnitAIHandoff() { ++UnitAIHandoffs; }
+	int32 GetUnitAIHandoffs() const { return UnitAIHandoffs; }
+
 	// -- Garrison metrics (B.8 item 4; task 9) --
 
 	/** One call per unit reaching Settled (UnitLocomotion, game thread):
@@ -95,6 +99,8 @@ private:
 
 	/** Morph decisions (game-thread writer; see RecordMorphDecision). */
 	int32 MorphDecisions = 0;
+	/** Ladder step-4 handoffs (worker writer via servo -- atomic). */
+	std::atomic<int32> UnitAIHandoffs{0};
 
 	// Garrison metric accumulators (B.4 instrumented set, game thread only).
 	int32 GarrisonFilings = 0;

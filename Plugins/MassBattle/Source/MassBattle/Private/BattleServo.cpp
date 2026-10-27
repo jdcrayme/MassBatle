@@ -136,4 +136,9 @@ namespace FUnstuckLadder
 	{
 		return Level == 2; // step 2: sidestep impulse perpendicular to the servo
 	}
+
+	bool WantsSlotSwap(int32 Level)
+	{
+		return Level >= 3; // step 3: forced slot swap with the blocking teammate
+	}
 }

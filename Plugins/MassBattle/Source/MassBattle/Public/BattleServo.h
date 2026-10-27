@@ -62,4 +62,9 @@ namespace FUnstuckLadder
 
 	/** True when the level injects a sidestep impulse (step 2). */
 	MASSBATTLE_API bool WantsSidestep(int32 Level);
+
+	/** True at step 3: the ladder demands a forced slot swap with the
+	 *  blocking teammate (brief Task 8; implemented by ServoProcessor via
+	 *  the assigner's slot indices). */
+	MASSBATTLE_API bool WantsSlotSwap(int32 Level);
 }
