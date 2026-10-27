@@ -50,6 +50,10 @@ public:
 	/** Called by UnitSync (thin shim) to record its per-frame cost. */
 	void RecordUnitSyncMs(double Ms);
 
+	/** Phase 2 (task 5): last spatial-hash rebuild cost (BuildSpatialHash). */
+	void RecordCombatHashMs(double Ms) { CombatHashMs = Ms; }
+	double GetCombatHashMs() const { return CombatHashMs; }
+
 	/** Thread-safe overlay enqueue (worker processors call this; A3 states
 	 *  only: slot-error magnitude, path polyline, unstuck ladder). */
 	void EnqueueOverlayLine(const FBattleOverlayLine& Line);
@@ -92,6 +96,9 @@ public:
 
 private:
 	FBattleFrameMetrics LastMetrics;
+
+	/** Phase 2 combat pass costs (B.4; DumpMetrics line). */
+	double CombatHashMs = 0.0;
 
 	/** T1.5/T1.8 diagnostics; seq_cst std::atomic (workers write; the extra
 	 *  ordering is irrelevant for a diagnostic counter but harmless). */

@@ -114,6 +114,11 @@ struct FUnitRuntimeState
 
 	// Phase 0: engagement-record stub intentionally empty (arch §2.3) --
 	// engagement records arrive with the Phase 2 engagement solver.
+
+	// Phase 2 (spec §3.2): unit-level engagement aggregates (FSM + metrics
+	// inputs), rebuilt by the 4 Hz cluster pass. Game thread only.
+	int32 EngagedCount = 0;
+	int32 ChargingCount = 0; // written by the charge processor (task 7)
 };
 
 /** Spawn request: one parsed EDU row + roster size. Formation params seed the

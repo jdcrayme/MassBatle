@@ -346,6 +346,19 @@ public:
 	/** Removes dead-flagged records (cluster pass, 4 Hz). Returns removed. */
 	int32 PruneDeadEngagements();
 
+	/** Cluster-pass rebuild prelude: flags EVERY record dead; CreateOrRefresh
+	 *  revives the contacted pairs, Prune removes the rest. Returns flagged. */
+	int32 FlagAllEngagementsDead();
+
+	/** 4 Hz cluster-pass cadence (processor-owned, registry-stored: per-world
+	 *  state; game thread only). */
+	float GetCombatClusterCooldown() const { return CombatClusterCooldown; }
+	void SetCombatClusterCooldown(float Seconds) { CombatClusterCooldown = Seconds; }
+
+	/** Spec §3.2: per-unit engagement aggregates (FSM + metrics inputs). */
+	void SetEngagedCount(FUnitHandle Handle, int32 Count);
+	int32 GetEngagedCount(FUnitHandle Handle) const;
+
 	/** Records in a deterministic (attacker index, defender index) order --
 	 *  hash/debug/save consumers iterate this, never the map directly. */
 	TArray<FEngagementKey> GetSortedEngagementKeys() const;
@@ -421,4 +434,7 @@ private:
 	 *  cache; preallocated once, Reset() per pass, never reallocated. */
 	FCombatTallyTable TallyScratch;
 	FCombatCoverageTable CoverageScratch;
+
+	/** 4 Hz cluster-pass cadence accumulator (game thread only). */
+	float CombatClusterCooldown = 0.f;
 };

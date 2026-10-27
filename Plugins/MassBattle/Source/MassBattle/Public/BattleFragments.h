@@ -30,6 +30,9 @@ struct FLoadoutFragment : public FMassFragment
 	UPROPERTY() int32 EduRowIndex = INDEX_NONE;
 	UPROPERTY() int32 MeshId = INDEX_NONE;
 	UPROPERTY() int32 WeaponId = INDEX_NONE;
+	/** EBattleWeaponReach (EDU weapon class; task 2 mapping). Combat hash
+	 *  entries + the second-rank budget bonus read this (spec §3.3). */
+	UPROPERTY() uint8 ReachClass = 1;
 };
 
 /** Immutable EDU-mapped base stats (arch §3.1: "spawn, immutable"). Multipliers

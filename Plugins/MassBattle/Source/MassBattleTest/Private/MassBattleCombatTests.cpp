@@ -11,6 +11,8 @@
 #include "BattleSpawnLibrary.h"
 #include "BattleEngagement.h"
 #include "BattleMelee.h"
+#include "BattleSpatialHash.h"
+#include "BattleUnitContact.h"
 #include "BattleStateHash.h"
 #include "BattleFragments.h"
 #include "BattleCombatFragments.h"
@@ -1130,6 +1132,236 @@ bool FPerfGate2Skeleton::RunTest(const FString& Parameters)
 	// baseline JSON checked in, CI compares.
 	AddError(TEXT("skeleton: perf gate lands with task 9"));
 	return false;
+}
+
+
+
+// ---------------------------------------------------------------------------
+// Task 5: spatial hash -- insert/query/miss, rebuild determinism, and the
+// EC9 zero-allocation proxy (steady-state rebuilds keep array capacity).
+// ---------------------------------------------------------------------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCombat_SpatialHash,
+	"Battle.Unit.Combat.SpatialHash",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FCombat_SpatialHash::RunTest(const FString& Parameters)
+{
+	UWorld* World = MakeCombatTestWorld();
+	UBattleSpatialHashSubsystem* Hash = World->GetSubsystem<UBattleSpatialHashSubsystem>();
+	TestNotNull(TEXT("hash subsystem"), Hash);
+	if (!Hash)
+	{
+		World->DestroyWorld(false);
+		return false;
+	}
+
+	// -- Insert + query + miss --
+	{
+		TArray<FBattleHashEntry> Entries;
+		TArray<FVector2D> Positions;
+		for (int32 i = 0; i < 16; ++i)
+		{
+			FBattleHashEntry Entry;
+			Entry.Entity.Index = static_cast<uint32>(1 + i);
+			Entry.Entity.SerialNumber = 1;
+			Entry.Unit.Index = 10;
+			Entry.Unit.Serial = 1;
+			Entries.Add(Entry);
+			Positions.Add(FVector2D(static_cast<float>(i) * 0.5f, 0.f)); // 8 m line
+		}
+		Hash->RebuildWithPositions(MoveTemp(Entries), MoveTemp(Positions));
+
+		TArray<FBattleHashEntry> Out;
+		Hash->QueryCircle(FVector2D(2.f, 0.f), 1.0f, Out);
+		TestEqual(TEXT("circle query hits the entries in range"), Out.Num(), 5); // x in [1, 3] -> 0.5 steps
+		Out.Reset();
+		Hash->QueryCircle(FVector2D(2.f, 0.f), 0.1f, Out);
+		TestEqual(TEXT("tight query hits one"), Out.Num(), 1);
+		Out.Reset();
+		Hash->QueryCircle(FVector2D(100.f, 100.f), 5.f, Out);
+		TestEqual(TEXT("miss far away"), Out.Num(), 0);
+
+		// Within-cell iteration is handle-sorted (spec §4.1): the sorted
+		// entry array is globally handle-ordered.
+		const TArray<FBattleHashEntry>& Sorted = Hash->GetSortedEntries();
+		bool bHandleSorted = Sorted.Num() == 16;
+		for (int32 i = 1; i < Sorted.Num() && bHandleSorted; ++i)
+		{
+			bHandleSorted = Sorted[i - 1].Entity.Index < Sorted[i].Entity.Index;
+		}
+		TestTrue(TEXT("entries iterate handle-sorted"), bHandleSorted);
+	}
+
+	// -- Rebuild determinism: two identical rebuilds -> identical queries --
+	{
+		auto BuildInput = []()
+		{
+			TArray<FBattleHashEntry> Entries;
+			TArray<FVector2D> Positions;
+			for (int32 i = 0; i < 64; ++i)
+			{
+				FBattleHashEntry Entry;
+				Entry.Entity.Index = static_cast<uint32>(i * 7 % 64 + 1); // shuffled insertion order
+				Entry.Entity.SerialNumber = 1;
+				Entries.Add(Entry);
+				Positions.Add(FVector2D(static_cast<float>(i % 8) * 3.f, static_cast<float>(i / 8) * 3.f));
+			}
+			return TPair<TArray<FBattleHashEntry>, TArray<FVector2D>>(MoveTemp(Entries), MoveTemp(Positions));
+		};
+		auto Fold = [&Hash]()
+		{
+			uint32 FoldValue = 0;
+			for (const FBattleHashEntry& E : Hash->GetSortedEntries())
+			{
+				FoldValue = HashCombine(FoldValue, E.Entity.Index);
+			}
+			for (const FVector2D& P : Hash->GetEntryPositionsM())
+			{
+				FoldValue = HashCombine(FoldValue, GetTypeHash(P.X));
+				FoldValue = HashCombine(FoldValue, GetTypeHash(P.Y));
+			}
+			return FoldValue;
+		};
+		TPair<TArray<FBattleHashEntry>, TArray<FVector2D>> In1 = BuildInput();
+		Hash->RebuildWithPositions(MoveTemp(In1.Key), MoveTemp(In1.Value));
+		const uint32 Fold1 = Fold();
+		TPair<TArray<FBattleHashEntry>, TArray<FVector2D>> In2 = BuildInput();
+		Hash->RebuildWithPositions(MoveTemp(In2.Key), MoveTemp(In2.Value));
+		const uint32 Fold2 = Fold();
+		TestEqual(TEXT("rebuild determinism across identical runs"), Fold2, Fold1);
+	}
+
+	// -- EC9 zero-allocation proxy: steady-state rebuilds keep capacity --
+	{
+		TArray<FBattleHashEntry> Entries;
+		TArray<FVector2D> Positions;
+		for (int32 i = 0; i < 256; ++i)
+		{
+			FBattleHashEntry Entry;
+			Entry.Entity.Index = static_cast<uint32>(i + 1);
+			Entry.Entity.SerialNumber = 1;
+			Entries.Add(Entry);
+			Positions.Add(FVector2D(static_cast<float>(i % 16) * 3.f, static_cast<float>(i / 16) * 3.f));
+		}
+		Hash->RebuildWithPositions(MoveTemp(Entries), MoveTemp(Positions));
+		const int32 CapacityBefore = Hash->GetSortedEntries().Max();
+		const int32 PositionCapacityBefore = Hash->GetEntryPositionsM().Max();
+		for (int32 TickIndex = 0; TickIndex < 100; ++TickIndex)
+		{
+			TArray<FBattleHashEntry> TickEntries;
+			TArray<FVector2D> TickPositions;
+			TickEntries.Reserve(256);
+			TickPositions.Reserve(256);
+			for (int32 i = 0; i < 256; ++i)
+			{
+				FBattleHashEntry Entry;
+				Entry.Entity.Index = static_cast<uint32>(i + 1);
+				Entry.Entity.SerialNumber = 1;
+				TickEntries.Add(Entry);
+				TickPositions.Add(FVector2D(static_cast<float>(i % 16) * 3.f + 0.01f * TickIndex, static_cast<float>(i / 16) * 3.f));
+			}
+			Hash->RebuildWithPositions(MoveTemp(TickEntries), MoveTemp(TickPositions));
+		}
+		TestEqual(TEXT("steady-state rebuilds: entry capacity stable (EC9 proxy)"),
+			Hash->GetSortedEntries().Max(), CapacityBefore);
+		TestEqual(TEXT("steady-state rebuilds: position capacity stable (EC9 proxy)"),
+			Hash->GetEntryPositionsM().Max(), PositionCapacityBefore);
+	}
+
+	World->DestroyWorld(false);
+	return true;
+}
+
+// ---------------------------------------------------------------------------
+// Task 5: cluster-record seam fixtures (frontal / flank / mob / none) over
+// synthetic unit bodies (the processor is a thin shim; the func tier proves
+// the wiring end-to-end in task 6).
+// ---------------------------------------------------------------------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCombat_ClusterRecords,
+	"Battle.Unit.Combat.ClusterRecords",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FCombat_ClusterRecords::RunTest(const FString& Parameters)
+{
+	// Two formed units 40 m wide x 3 ranks, facing +X, 2 m apart front-to-front.
+	FCombatSolver::FUnitClusterNode A, B;
+	A.Unit = FUnitHandle{10, 1};
+	B.Unit = FUnitHandle{20, 1};
+	A.AnchorM = FVector2D(0.f, 0.f);
+	B.AnchorM = FVector2D(4.f, 0.f);
+	A.YawDeg = 0.f;      // A faces +X (toward B)
+	B.YawDeg = 180.f;    // B faces -X (toward A)
+	A.HalfAlongM = 20.f; // frontage half-extent (along the SIDE axis)
+	A.HalfAcrossM = 1.8f;
+	B.HalfAlongM = 20.f;
+	B.HalfAcrossM = 1.8f;
+	A.AliveCount = 40;
+	B.AliveCount = 40;
+
+	// -- Frontal: A attacks B head-on (inside the frontage interior).
+	{
+		FCombatSolver::FEngagementRecordBuild Out;
+		FCombatSolver::BuildEngagementRecord(A, B, /*DirectionMask*/ 0, Out);
+		TestEqual(TEXT("frontal mode"), Out.Mode, static_cast<uint8>(0));
+		TestEqual(TEXT("frontal pressure = defenderAlive x FormedSlots"), Out.DesiredPressure,
+			40 * FCombatCVars::FormedSlots());
+		// Frontage segment: attacker opposite the line center, clipped inside.
+		TestTrue(TEXT("frontage covers the crossing"),
+			Out.FrontageStart <= 0.f && Out.FrontageEnd >= 0.f);
+	}
+	// -- Flank: attacker beyond the defended end (t = 25 > HalfAlong 20).
+	{
+		FCombatSolver::FUnitClusterNode Flanker = A;
+		Flanker.AnchorM = FVector2D(4.f, 25.f); // past B's lateral end
+		FCombatSolver::FEngagementRecordBuild Out;
+		FCombatSolver::BuildEngagementRecord(Flanker, B, 0, Out);
+		TestEqual(TEXT("flank mode"), Out.Mode, static_cast<uint8>(1));
+		// Flank keeps the frontal pressure formula (spec §3.2).
+		TestEqual(TEXT("flank pressure"), Out.DesiredPressure, 40 * FCombatCVars::FormedSlots());
+	}
+	// -- Mob: the defender's attackers span >= 3 quadrants.
+	{
+		FCombatSolver::FEngagementRecordBuild Out;
+		const uint8 Mask = 1 | 4 | 8; // +X, +Y, -Y
+		FCombatSolver::BuildEngagementRecord(A, B, Mask, Out);
+		TestEqual(TEXT("mob mode at 3 quadrants"), Out.Mode, static_cast<uint8>(2));
+		// A14 floor: Min(attackerAlive, Max(defenderAlive x factor, MaxMobSlots)).
+		const int32 Expected = FMath::Min(40,
+			FMath::Max(40 * FCombatCVars::MobPressureFactor(), FCombatCVars::MaxMobSlots()));
+		TestEqual(TEXT("mob pressure with the A14 floor"), Out.DesiredPressure, Expected);
+	}
+	// -- A14 floor resolution: 1 defender alive -> MaxMobSlots, not 3.
+	{
+		FCombatSolver::FUnitClusterNode Lone = B;
+		Lone.AliveCount = 1;
+		FCombatSolver::FEngagementRecordBuild Out;
+		FCombatSolver::BuildEngagementRecord(A, Lone, 1 | 4 | 8, Out);
+		TestEqual(TEXT("isolated knight floors at MaxMobSlots"), Out.DesiredPressure, FCombatCVars::MaxMobSlots());
+	}
+	// -- Cluster graph: two disjoint pairs vs one merged chain.
+	{
+		TArray<FIntPoint> Pairs;
+		Pairs.Add(FIntPoint(0, 1));
+		Pairs.Add(FIntPoint(2, 3));
+		Pairs.Add(FIntPoint(1, 2)); // chain merges everything
+		TArray<int32> Ids;
+		FCombatSolver::ClusterGraph(4, Pairs, Ids);
+		bool bOneCluster = Ids.Num() == 4;
+		for (int32 i = 0; i < 4 && bOneCluster; ++i)
+		{
+			bOneCluster = Ids[i] == Ids[0];
+		}
+		TestTrue(TEXT("chained contacts merge into one cluster"), bOneCluster);
+		Pairs.Reset();
+		Pairs.Add(FIntPoint(0, 1));
+		Pairs.Add(FIntPoint(2, 3));
+		FCombatSolver::ClusterGraph(4, Pairs, Ids);
+		TestTrue(TEXT("disjoint pairs stay separate clusters"), Ids[0] != Ids[2]);
+	}
+
+	return true;
 }
 
 #endif // WITH_DEV_AUTOMATION_TESTS

@@ -137,7 +137,8 @@ void UBattleDebugSubsystem::DumpMetrics()
 	LastMetrics.ArchetypeCount = ArchetypeCount;
 
 	UE_LOG(LogMassBattle, Display,
-	       TEXT("EXEC_RESULT BattleMetrics Frame=%d Archetypes=%d Units=%d UnitSyncMs=%.3f BookkeepingHash=%u OverlayHook=%d"),
+	       TEXT("EXEC_RESULT BattleMetrics Frame=%d Archetypes=%d Units=%d UnitSyncMs=%.3f BookkeepingHash=%u OverlayHook=%d CombatHashMs=%.3f"),
 	       LastMetrics.Frame, ArchetypeCount, LastMetrics.UnitCount,
-	       LastMetrics.UnitSyncMs, static_cast<uint32>(LastMetrics.RegistryHash32), BattleDebugShowOverlay);
+	       LastMetrics.UnitSyncMs, static_cast<uint32>(LastMetrics.RegistryHash32), BattleDebugShowOverlay,
+	       CombatHashMs);
 }

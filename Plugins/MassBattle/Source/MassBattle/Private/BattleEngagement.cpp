@@ -269,6 +269,85 @@ namespace FCombatSolver
 		}
 	}
 
+	void ClusterGraph(int32 NumNodes, const TArray<FIntPoint>& ContactPairs, TArray<int32>& OutClusterId)
+	{
+		OutClusterId.SetNumUninitialized(NumNodes);
+		for (int32 i = 0; i < NumNodes; ++i)
+		{
+			OutClusterId[i] = INDEX_NONE;
+		}
+		// Adjacency (deterministic: pairs arrive in a fixed order).
+		TMultiMap<int32, int32> Adj;
+		for (const FIntPoint& Pair : ContactPairs)
+		{
+			Adj.Add(Pair.X, Pair.Y);
+			Adj.Add(Pair.Y, Pair.X);
+		}
+		int32 NextCluster = 0;
+		TArray<int32, TInlineAllocator<64>> Queue;
+		for (int32 Seed = 0; Seed < NumNodes; ++Seed)
+		{
+			if (OutClusterId[Seed] != INDEX_NONE)
+			{
+				continue;
+			}
+			const int32 Cluster = NextCluster++;
+			OutClusterId[Seed] = Cluster;
+			Queue.Reset();
+			Queue.Add(Seed);
+			for (int32 Head = 0; Head < Queue.Num(); ++Head)
+			{
+				TArray<int32> Neighbors;
+				Adj.MultiFind(Queue[Head], Neighbors);
+				Neighbors.Sort();
+				for (int32 N : Neighbors)
+				{
+					if (OutClusterId[N] == INDEX_NONE)
+					{
+						OutClusterId[N] = Cluster;
+						Queue.Add(N);
+					}
+				}
+			}
+		}
+	}
+
+	void BuildEngagementRecord(const FUnitClusterNode& Attacker, const FUnitClusterNode& Defender,
+		uint8 DirectionMask, FEngagementRecordBuild& Out)
+	{
+		Out.Attacker = Attacker.Unit;
+		Out.Defender = Defender.Unit;
+		Out.FrontageStart = 0.f;
+		Out.FrontageEnd = 0.f;
+
+		int32 Mode = 0; // Frontal
+		const int32 QuadrantCount = ((DirectionMask & 1) ? 1 : 0) + ((DirectionMask & 2) ? 1 : 0)
+			+ ((DirectionMask & 4) ? 1 : 0) + ((DirectionMask & 8) ? 1 : 0);
+		if (QuadrantCount >= 3)
+		{
+			Mode = 2; // Mob: surrounded on >= 3 quadrants (isolated-defender case)
+		}
+		else
+		{
+			const FVector2D Rel = Attacker.AnchorM - Defender.AnchorM;
+			const float Rad = FMath::DegreesToRadians(Defender.YawDeg);
+			const FVector2D Forward(FMath::Cos(Rad), FMath::Sin(Rad));
+			const FVector2D Side(-FMath::Sin(Rad), FMath::Cos(Rad));
+			const float T = FVector2D::DotProduct(Rel, Side); // along-frontage coordinate
+			if (FMath::Abs(T) > Defender.HalfAlongM)
+			{
+				Mode = 1; // Flank: wraps a defended end
+			}
+			// Frontage segment: the attacker's extent clipped to the line.
+			const float Start = FMath::Max(-Defender.HalfAlongM, T - Attacker.HalfAlongM);
+			const float End = FMath::Min(Defender.HalfAlongM, T + Attacker.HalfAlongM);
+			Out.FrontageStart = Start;
+			Out.FrontageEnd = FMath::Max(Start, End);
+		}
+		Out.Mode = static_cast<uint8>(Mode);
+		Out.DesiredPressure = DesiredPressure(Mode, Attacker.AliveCount, Defender.AliveCount);
+	}
+
 	void RunAssignPass(TArray<FAssignSeekerState>& Seekers,
 		const TArray<FAssignDefenderState>& Defenders,
 		TArray<FAssignRecordView>& Records,

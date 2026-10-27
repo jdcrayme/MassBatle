@@ -624,6 +624,37 @@ int32 UUnitRegistrySubsystem::PruneDeadEngagements()
 	return Removed;
 }
 
+int32 UUnitRegistrySubsystem::FlagAllEngagementsDead()
+{
+	UE_MT_SCOPED_WRITE_ACCESS(AccessDetector);
+	int32 Flagged = 0;
+	for (TPair<FEngagementKey, FEngagementRecord>& Pair : Engagements)
+	{
+		if (Pair.Value.bDead == 0)
+		{
+			Pair.Value.bDead = 1;
+			++Flagged;
+		}
+	}
+	return Flagged;
+}
+
+void UUnitRegistrySubsystem::SetEngagedCount(FUnitHandle Handle, int32 Count)
+{
+	UE_MT_SCOPED_WRITE_ACCESS(AccessDetector);
+	if (FUnitRuntimeState* State = Units.Find(Handle))
+	{
+		State->EngagedCount = Count;
+	}
+}
+
+int32 UUnitRegistrySubsystem::GetEngagedCount(FUnitHandle Handle) const
+{
+	UE_MT_SCOPED_READ_ACCESS(AccessDetector);
+	const FUnitRuntimeState* State = Units.Find(Handle);
+	return State ? State->EngagedCount : 0;
+}
+
 TArray<FEngagementKey> UUnitRegistrySubsystem::GetSortedEngagementKeys() const
 {
 	UE_MT_SCOPED_READ_ACCESS(AccessDetector);

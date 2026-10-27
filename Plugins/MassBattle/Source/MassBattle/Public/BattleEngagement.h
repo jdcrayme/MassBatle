@@ -199,6 +199,47 @@ namespace FCombatSolver
 		float ReachByClassM[8] = { 0.5f, 0.7f, 1.6f, 2.2f, 2.8f, 0.7f, 0.7f, 0.7f };
 	};
 
+	// -- Cluster pass pure math (task 5; spec §4.2). The processors are thin
+	//    shims: gather unit bodies + contact pairs, call these, write records. --
+
+	/** Unit-level contact view for the cluster pass. */
+	struct FUnitClusterNode
+	{
+		FUnitHandle Unit;
+		FVector2D AnchorM = FVector2D::ZeroVector;
+		float YawDeg = 0.f;
+		float HalfAlongM = 0.f;   // frontage half-extent (files spread)
+		float HalfAcrossM = 0.f;  // rank half-extent
+		int32 AliveCount = 0;
+		uint8 bGarrisoned = 0;
+	};
+
+	/** Emitted engagement record for one direction (attacker -> defender). */
+	struct FEngagementRecordBuild
+	{
+		FUnitHandle Attacker;
+		FUnitHandle Defender;
+		uint8 Mode = 0;           // EEngagementMode
+		float FrontageStart = 0.f;
+		float FrontageEnd = 0.f;
+		int32 DesiredPressure = 0;
+	};
+
+	/** Flood-fill connected components over the unit contact graph (spec
+	 *  §4.2; nodes are indices into the unit array, pairs are contacting
+	 *  index pairs). Deterministic: lowest-index seed order, ascending BFS. */
+	MASSBATTLE_API void ClusterGraph(int32 NumNodes, const TArray<FIntPoint>& ContactPairs, TArray<int32>& OutClusterId);
+
+	/** Builds the engagement record for one direction of a contacting pair.
+	 *  Mode (spec §4.2): Mob when the defender's aggregated attacker directions
+	 *  span >= 3 quadrants (DirectionMask bits: +X=1, -X=2, +Y=4, -Y=8) --
+	 *  the isolated-defender mob case; else Frontal when the attacker stands
+	 *  opposite the defender's frontage interior (|t| <= HalfAlong), Flank when
+	 *  it wraps an end. Frontage = the attacker's along-frontage extent clipped
+	 *  to the defender's line (meters); [0,0] for Mob. */
+	MASSBATTLE_API void BuildEngagementRecord(const FUnitClusterNode& Attacker, const FUnitClusterNode& Defender,
+		uint8 DirectionMask, FEngagementRecordBuild& Out);
+
 	/** One assign pass over the mirrors (spec §4.4, elaborated): validation
 	 *  and releases top-of-pass (immediate -- vacated slots are visible to
 	 *  later seekers in the same tick, the <= 1 tick handoff EC5), then
