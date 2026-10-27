@@ -60,6 +60,40 @@ namespace
 		0,
 		TEXT("1 = skip the interval reflow + predictive swaps while a path is active and the block is dressed (phase 2 B3)."),
 		ECVF_Default);
+
+	// Phase 2 C master switch (F-1/F-2): TW progressive fall-in. Gates C2
+	// (sort-matching final assignment at layout re-decisions), C3 (the
+	// march->final target blend with the per-soldier handoff latch), C4's
+	// arrival-deletion (UnitLocomotion side) and C5 (generalized rest-facing,
+	// Integrate side). 0 keeps the pre-phase-2 pipeline byte-for-byte.
+	TAutoConsoleVariable<int32> GBattleMovementProgressiveFallIn(
+		TEXT("Battle.Movement.ProgressiveFallIn"),
+		0,
+		TEXT("1 = TW progressive fall-in: final slots from order time, target blend march->final, early handoff, no arrival re-decision (phase 2 C)."),
+		ECVF_Default);
+
+	// Remaining-path length at which the whole block starts blending into the
+	// final layout, m. Floored at 2x formation depth at the call site (deep
+	// formations get proportionally longer morphs; plan section 4.1).
+	// ERRATA (measured, phase 2): the plan's 12 m default only budgets the
+	// DEPTH term; a facing flip at arrival (the P1 repro, 90 deg) needs the
+	// FRONTAGE rotation to resolve during the approach -- corner walks of
+	// ~9 m at crowd-impeded lateral speed want ~17 s of march, so the default
+	// rides at 24 m. Owner-tunable.
+	TAutoConsoleVariable<float> GBattleMovementMorphDistance(
+		TEXT("Battle.Movement.MorphDistance"),
+		24.f,
+		TEXT("Remaining path length where the fall-in blend engages, m (phase 2 C3)."),
+		ECVF_Default);
+
+	// Per-soldier early handoff distance to the final slot, m (plan: 2x
+	// SlotReachEps). Within it a soldier locks his target to the final slot
+	// and settles while the rest still march.
+	TAutoConsoleVariable<float> GBattleMovementHandoffDist(
+		TEXT("Battle.Movement.HandoffDist"),
+		0.7f,
+		TEXT("Per-soldier early handoff distance to the final slot, m (phase 2 C3)."),
+		ECVF_Default);
 }
 
 UFormationSlotResolveProcessor::UFormationSlotResolveProcessor(const FObjectInitializer& ObjectInitializer)
@@ -121,7 +155,12 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 	}
 	const float DressBreakM = DressBreakCvar ? DressBreakCvar->GetFloat() : 1.8f;
 
-	ResolveQuery.ForEachEntityChunk(Context, [DT, bOverlay, DressBreakM](FMassExecutionContext& Context)
+	// Phase 2 C inputs (read once per Execute, captured by value like DT).
+	const bool bFallIn = GBattleMovementProgressiveFallIn.GetValueOnAnyThread() != 0;
+	const float MorphDistCvarM = GBattleMovementMorphDistance.GetValueOnAnyThread();
+	const float HandoffDistM = GBattleMovementHandoffDist.GetValueOnAnyThread();
+
+	ResolveQuery.ForEachEntityChunk(Context, [DT, bOverlay, DressBreakM, bFallIn, MorphDistCvarM, HandoffDistM](FMassExecutionContext& Context)
 	{
 		// Audit H4: per-thread scratch reused across chunks and frames
 		// (Reset/Init keep capacity) -- zero steady-state heap traffic from
@@ -315,7 +354,14 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 		// coherent slot identity, stable predictive swaps); the peel applies
 		// per entity at target-write time below. Open-order spacing (scale 1):
 		// the destination is a formed block, not a squeezed one.
-		const bool bFanIn = bHasPath && Formation.FanInDestValid != 0;
+		// Phase 2 C: under the master switch the frame stays armed across the
+		// path drop (C4 keeps it valid post-arrival), so targets are
+		// continuous across arrival -- the no-path anchor-formula layout at
+		// scale 1 coincides with the finals (AnchorPos == FinalAnchorPos,
+		// FacingYaw == FinalFacingYaw at arrival). Flag-off keeps the old
+		// bHasPath requirement byte-for-byte.
+		const bool bFanIn = !bFiling && Formation.FanInDestValid != 0
+			&& (bFallIn || bHasPath);
 		TArray<FVector2D>& FinalSlotPosM = TLFinalSlotPosM;
 		if (bFanIn)
 		{
@@ -328,6 +374,21 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 					Formation.FinalAnchorPos * 0.01f, Formation.FinalFacingYaw,
 					Rank, File, Formation.NumFiles, RankSpacingM, FileSpacingM);
 			}
+		}
+
+		// Phase 2 C3: unit-level blend weight from the remaining path, floored
+		// at 2x formation depth (deep formations morph over proportionally
+		// longer distances; plan section 4.1). Far away alpha ~= 0: exactly
+		// today's coherent path-frame block. Computed BEFORE the assignment
+		// block -- the blend-engagement edge triggers the scheduled final
+		// assignment there.
+		float AlphaUnit = 1.f;
+		if (bFallIn && bHasPath)
+		{
+			const float RemainingM = FMath::Max(0.f, PathM.TotalLength - Formation.PathS * 0.01f);
+			const int32 NumRanksLayout = FMath::Max(1, FMath::CeilToInt(static_cast<float>(Formation.NumSlots) / Formation.NumFiles));
+			const float DepthM = static_cast<float>(NumRanksLayout) * RankSpacingM;
+			AlphaUnit = FUnitLocomotion::FallInBlendAlpha(RemainingM, FMath::Max(MorphDistCvarM, 2.f * DepthM));
 		}
 
 		// ---- Batched reflow (arch §8.4): 0.5 s cadence or rank-gap trigger ----
@@ -375,6 +436,21 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 		// R-G4: reflow NEVER runs while filing a garrison interior path (the
 		// PassLocked column filing owns the shape; spec §4.4).
 		const bool bLayoutRedecision = Formation.Generation != Formation.AssignedGeneration;
+		// Phase 2 C: the SCHEDULED final assignment (Pottinger's scheduled
+		// slot positioning). While the unit marches (alpha == 0) the greedy
+		// march assignment owns the block -- march-coherent, churn-free. The
+		// first tick where the blend engages runs AssignFinal ONCE: from there
+		// every soldier walks a crossing-free final approach. With no path at
+		// all (in-place reform, post-arrival) the live anchor frame IS the
+		// final frame: AssignFinal owns assignment there -- but ONLY on layout
+		// re-decisions and rank gaps. ERRATA vs plan C2 (measured): routing
+		// the 0.5 s INTERVAL reflow to AssignFinal post-arrival re-sorts the
+		// settling crowd every half second (targets flip, nobody dresses --
+		// S5's worst entity moved at full servo speed forever); assignment
+		// stability after the scheduled swap is the whole TW contract.
+		const bool bBlendEngaged = bFallIn && bHasPath && AlphaUnit > KINDA_SMALL_NUMBER;
+		const bool bScheduledFinalDue = bBlendEngaged && Formation.bFinalAssignDone == 0;
+		const bool bFinalOwnedNoPath = bFallIn && !bFiling && bFanIn && !bHasPath;
 		// Phase 2 B3 march stickiness (F-7): while a path is active and the
 		// block is dressed, the interval reflow + predictive swaps are churn --
 		// skip them. The cooldown still decays, so a later tear reflows on the
@@ -382,7 +458,7 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 		const bool bMarchSticky = GBattleMovementMarchStickiness.GetValueOnAnyThread() != 0
 			&& FUnitLocomotion::MarchReflowSticky(bHasPath, Formation.MaxSlotErrorM, DressBreakM);
 		bool bIntervalReflowDue = false;
-		if (bMarchSticky && !bRankGap)
+		if ((bMarchSticky || bFinalOwnedNoPath) && !bRankGap)
 		{
 			Scheduler.Cooldown = FMath::Max(0.f, Scheduler.Cooldown - DT);
 		}
@@ -390,40 +466,60 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 		{
 			bIntervalReflowDue = Scheduler.ConsumeIfDue(DT, bRankGap);
 		}
-		if (!bFiling && (bLayoutRedecision || bIntervalReflowDue))
+		if (!bFiling && (bLayoutRedecision || bScheduledFinalDue || bIntervalReflowDue))
 		{
 			TArray<int32>& NewAssignment = TLNewAssignment;
-			const int32 MaxDisplacement = bLayoutRedecision
-				? Formation.NumSlots
-				: GBattleMovementMaxFileDisplacement.GetValueOnAnyThread();
-			FSlotAssigner::Assign(EntityPosM, SlotPosM, Formation.NumFiles, Assignment,
-				MaxDisplacement, NewAssignment);
-
-			// Predictive swaps (optional policy, arch §8.4): crossing servo
-			// projections within ~1 s swap slot indices. Skipped while filing
-			// (deterministic column shape through the choke).
-			if (!bFiling && GBattleMovementPredictiveSwaps.GetValueOnAnyThread() != 0)
+			const bool bUseFinalAssignment = bFinalOwnedNoPath
+				? (bLayoutRedecision || bIntervalReflowDue)
+				: (bFallIn && bFanIn && bHasPath && bScheduledFinalDue);
+			if (bUseFinalAssignment)
 			{
-				TArray<FVector2D>& VelM = TLFanInVelM;
-				VelM.Reset(NumEntities);
-				for (int32 i = 0; i < NumEntities; ++i)
+				// Crossing-free sort matching onto the FINAL layout (the
+				// blend is engaged, or no path exists and the live anchor
+				// frame IS the final frame).
+				FSlotAssigner::AssignFinal(EntityPosM, Formation.FinalAnchorPos * 0.01f,
+					Formation.FinalFacingYaw, Formation.NumSlots, Formation.NumFiles, NewAssignment);
+				if (bHasPath)
 				{
-					const FVector Vel = Context.GetFragmentView<FMassVelocityFragment>()[i].Value;
-					VelM.Add(FVector2D(Vel.X, Vel.Y) * 0.01f);
+					Formation.bFinalAssignDone = 1; // once per traversal
 				}
-				TArray<FIntPoint> Pairs;
-				FSlotAssigner::FindCrossingPairs(EntityPosM, VelM, NewAssignment, SlotPosM, 1.0f, 0.5f, Pairs);
-				FSlotAssigner::ApplyPredictiveSwaps(NewAssignment, Pairs, EntityPosM, SlotPosM);
+			}
+			else
+			{
+				const int32 MaxDisplacement = bLayoutRedecision
+					? Formation.NumSlots
+					: GBattleMovementMaxFileDisplacement.GetValueOnAnyThread();
+				FSlotAssigner::Assign(EntityPosM, SlotPosM, Formation.NumFiles, Assignment,
+					MaxDisplacement, NewAssignment);
+
+				// Predictive swaps (optional policy, arch §8.4): crossing servo
+				// projections within ~1 s swap slot indices. Skipped while filing
+				// (deterministic column shape through the choke).
+				if (!bFiling && GBattleMovementPredictiveSwaps.GetValueOnAnyThread() != 0)
+				{
+					TArray<FVector2D>& VelM = TLFanInVelM;
+					VelM.Reset(NumEntities);
+					for (int32 i = 0; i < NumEntities; ++i)
+					{
+						const FVector Vel = Context.GetFragmentView<FMassVelocityFragment>()[i].Value;
+						VelM.Add(FVector2D(Vel.X, Vel.Y) * 0.01f);
+					}
+					TArray<FIntPoint> Pairs;
+					FSlotAssigner::FindCrossingPairs(EntityPosM, VelM, NewAssignment, SlotPosM, 1.0f, 0.5f, Pairs);
+					FSlotAssigner::ApplyPredictiveSwaps(NewAssignment, Pairs, EntityPosM, SlotPosM);
+				}
 			}
 
 			// Adopt (audit L12: stamp the layout generation the slot was
 			// assigned under -- the field was written at spawn and never
-			// touched again before).
+			// touched again before). Phase 2 C3: handoff latches die with the
+			// old assignment.
 			TArrayView<FSlotAssignmentFragment> SlotsView = Context.GetMutableFragmentView<FSlotAssignmentFragment>();
 			for (int32 i = 0; i < NumEntities; ++i)
 			{
 				SlotsView[i].SlotIndex = NewAssignment[i];
 				SlotsView[i].Generation = Formation.Generation;
+				SlotsView[i].bFinalLocked = 0;
 			}
 			Assignment = MoveTemp(NewAssignment);
 			Formation.AssignedGeneration = Formation.Generation;
@@ -433,6 +529,7 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 		// ---- Write move targets + slot-error overlay (A3; M9-gated) ----
 		UBattleDebugSubsystem* Debug = bOverlay && Context.GetWorld() ? Context.GetWorld()->GetSubsystem<UBattleDebugSubsystem>() : nullptr;
 		TArrayView<FSlotTargetFragment> Targets = Context.GetMutableFragmentView<FSlotTargetFragment>();
+		TArrayView<FSlotAssignmentFragment> AssignFrags = Context.GetMutableFragmentView<FSlotAssignmentFragment>();
 		const float FanInHystM = GBattleMovementFanInHysteresis.GetValueOnAnyThread();
 		// Phase 2 B1: running max over the written targets (zero allocation).
 		// Measured against the target actually written (peel/blend included) --
@@ -446,17 +543,31 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 			{
 				continue;
 			}
-			// TW fan-in peel: the destination slot wins when it is the closer
-			// walk for THIS entity (straight-line, the TW rule). The deadband
-			// keeps the boundary from flip-flopping -- once an entity steps
-			// toward the final slot, that side only gets closer. Peeled
-			// entities already face the ordered arrival facing; the servo's
-			// per-state teammate avoidance covers the crossing streams, and
-			// the arrival facing snap in UnitLocomotion makes the post-arrival
-			// anchor frame coincide with the peeled targets.
+			// TW fan-in target selection. Two regimes:
+			//   flag OFF: the binary peel -- the destination slot wins when it
+			//     is the closer walk for THIS entity (deadband against
+			//     flip-flop). Pre-phase-2 behavior, byte-for-byte.
+			//   flag ON (C3): the progressive blend -- target = lerp(march,
+			//     final, alpha), alpha from the remaining path (whole block)
+			//     with the per-soldier handoff latch (early TW settle).
+			// PrevTargetPos was stamped pre-selection above: the feed-forward
+			// tracks the MOVING blended target, which is correct -- that is
+			// the slot the soldier walks to.
 			FVector2D TargetPosM = SlotPosM[Slot];
 			float TargetYawDeg = SlotYaw[Slot];
-			if (bFanIn && FanInHystM > 0.f)
+			if (bFallIn && bFanIn && HandoffDistM > 0.f)
+			{
+				const float DistFinalM = FVector2D::Distance(EntityPosM[i], FinalSlotPosM[Slot]);
+				AssignFrags[i].bFinalLocked = FUnitLocomotion::FallInHandoffLatch(
+					AssignFrags[i].bFinalLocked != 0, DistFinalM, HandoffDistM) ? 1 : 0;
+				const float Alpha = AssignFrags[i].bFinalLocked ? 1.f : AlphaUnit;
+				TargetPosM = FMath::Lerp(SlotPosM[Slot], FinalSlotPosM[Slot], Alpha);
+				// Facing blends shortest-arc from the (path-tangent) slot yaw
+				// to the final facing -- settled entities face the order.
+				TargetYawDeg = SlotYaw[Slot]
+					+ FMath::FindDeltaAngleDegrees(SlotYaw[Slot], Formation.FinalFacingYaw) * Alpha;
+			}
+			else if (bFanIn && FanInHystM > 0.f)
 			{
 				const float DistTravelM = FVector2D::Distance(EntityPosM[i], SlotPosM[Slot]);
 				const float DistFinalM = FVector2D::Distance(EntityPosM[i], FinalSlotPosM[Slot]);

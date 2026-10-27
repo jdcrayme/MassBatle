@@ -117,6 +117,10 @@ namespace
 
 		void Restore()
 		{
+			if (Saved.Num() != (int32)std::size(Cvars))
+			{
+				return; // Apply() never ran (no -Phase2Flags on the command line)
+			}
 			for (int32 i = 0; i < (int32)std::size(Cvars); ++i)
 			{
 				if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(Cvars[i]))
@@ -231,6 +235,10 @@ namespace
 				else if (AUnitInPlaceReformTest* S6 = Cast<AUnitInPlaceReformTest>(TestActor))
 				{
 					S6->BeginTest();
+				}
+				else if (AUnitFallInTest* S7 = Cast<AUnitFallInTest>(TestActor))
+				{
+					S7->BeginTest();
 				}
 				else if (AGarrisonScenarioBase* Garrison = Cast<AGarrisonScenarioBase>(TestActor))
 				{
@@ -481,6 +489,24 @@ bool FS6_InPlaceReform::RunTest(const FString& Parameters)
 	IFunctionalTestingModule::Get().MarkPendingActivation();
 	ADD_LATENT_AUTOMATION_COMMAND(FOpenBattleFuncMap(this));
 	ADD_LATENT_AUTOMATION_COMMAND(FRunBattleFuncTest(this, TEXT("S6_InPlaceReform"), TEXT("AUnitInPlaceReformTest")));
+	return true;
+}
+
+// Phase 2 P1 gate (the reported repro): TW progressive fall-in.
+IMPLEMENT_CUSTOM_COMPLEX_AUTOMATION_TEST(FS7_FallIn, FBattleFuncTestBase,
+	"Battle.Func.S7_FallIn", (EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter))
+
+void FS7_FallIn::GetTests(TArray<FString>& OutBeautifiedNames, TArray<FString>& OutTestCommands) const
+{
+	OutBeautifiedNames.Add(TEXT("S7_FallIn"));
+	OutTestCommands.Add(TEXT(""));
+}
+
+bool FS7_FallIn::RunTest(const FString& Parameters)
+{
+	IFunctionalTestingModule::Get().MarkPendingActivation();
+	ADD_LATENT_AUTOMATION_COMMAND(FOpenBattleFuncMap(this));
+	ADD_LATENT_AUTOMATION_COMMAND(FRunBattleFuncTest(this, TEXT("S7_FallIn"), TEXT("AUnitFallInTest")));
 	return true;
 }
 

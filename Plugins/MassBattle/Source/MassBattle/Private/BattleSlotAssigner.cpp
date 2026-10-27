@@ -73,6 +73,65 @@ namespace FSlotAssigner
 		}
 	}
 
+	void AssignFinal(const TArray<FVector2D>& EntityPositions, const FVector2D& FinalAnchor,
+		float FinalFacingDeg, int32 NumSlots, int32 NumFiles, TArray<int32>& OutSlotOf)
+	{
+		const int32 NumEntities = EntityPositions.Num();
+		OutSlotOf.Init(INDEX_NONE, NumEntities);
+		if (NumSlots <= 0 || NumFiles <= 0 || NumEntities == 0)
+		{
+			return;
+		}
+
+		// Order axes in the final facing frame. F = facing direction (rank
+		// depth axis, front is +F); L = the lateral axis in FILE-ASCENDING
+		// order -- the same rotation AnchorFormula applies to its layout
+		// offset (offset Y = file-ascending), so projections and layout agree
+		// bit-for-bit on which side is "left".
+		const float Rad = FMath::DegreesToRadians(FinalFacingDeg);
+		const FVector2D F(FMath::Cos(Rad), FMath::Sin(Rad));
+		const FVector2D L(-F.Y, F.X);
+
+		// Entities: front-most first (largest F projection), tie-break lateral
+		// ascending (matching file-ascending slot order), then roster index.
+		// Local buffer: AssignFinal runs at event rate (layout re-decisions),
+		// not per frame -- no scratch amortization needed.
+		TArray<int32> EntOrder;
+		EntOrder.Reserve(NumEntities);
+		for (int32 i = 0; i < NumEntities; ++i)
+		{
+			EntOrder.Add(i);
+		}
+		EntOrder.Sort([&](int32 A, int32 B)
+		{
+			const FVector2D DA = EntityPositions[A] - FinalAnchor;
+			const FVector2D DB = EntityPositions[B] - FinalAnchor;
+			const float FA = FVector2D::DotProduct(DA, F);
+			const float FB = FVector2D::DotProduct(DB, F);
+			if (!FMath::IsNearlyEqual(FA, FB, 1e-4f))
+			{
+				return FA > FB;
+			}
+			const float LA = FVector2D::DotProduct(DA, L);
+			const float LB = FVector2D::DotProduct(DB, L);
+			if (!FMath::IsNearlyEqual(LA, LB, 1e-4f))
+			{
+				return LA < LB;
+			}
+			return A < B;
+		});
+
+		// Slots in canonical order: rank-major, file-ascending IS sorted by
+		// (facing-projection descending, lateral ascending) -- rank r sits r
+		// spacings behind the front along F, files ascend along L. Pairing the
+		// i-th front-most entity with the i-th front-most slot leaves any
+		// surplus (casualty holes) at the REAR.
+		for (int32 i = 0; i < NumEntities; ++i)
+		{
+			OutSlotOf[EntOrder[i]] = FMath::Min(i, NumSlots - 1);
+		}
+	}
+
 	void FindCrossingPairs(const TArray<FVector2D>& Positions, const TArray<FVector2D>& Velocities,
 		const TArray<int32>& Assignment, const TArray<FVector2D>& SlotPositions,
 		float HorizonSeconds, float ThresholdMeters, TArray<FIntPoint>& OutPairs)

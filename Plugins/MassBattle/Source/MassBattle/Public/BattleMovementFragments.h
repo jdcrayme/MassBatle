@@ -137,6 +137,13 @@ struct FUnitFormationSharedFragment : public FMassSharedFragment
 	 *  hashed. */
 	UPROPERTY() float MaxSlotErrorM = 0.f;
 
+	/** Phase 2 C: one-shot gate for the SCHEDULED final assignment (Pottinger
+	 *  scheduled slot positioning). 0 = the march assignment (greedy,
+	 *  march-coherent) owns the unit; the first resolve tick where the blend
+	 *  engages runs AssignFinal ONCE (crossing-free final approaches) and sets
+	 *  this. Cleared at every order consumption. Never hashed. */
+	UPROPERTY() uint8 bFinalAssignDone = 0;
+
 	/** Arc-length position of the anchor along Path (cm; UnitLocomotion-owned). */
 	UPROPERTY() float PathS = 0.f;
 
@@ -212,6 +219,12 @@ struct FSlotAssignmentFragment : public FMassFragment
 	/** Linear slot id: rank * NumFiles + file (rank 0 = front). */
 	UPROPERTY() int32 SlotIndex = INDEX_NONE;
 	UPROPERTY() int32 Generation = 0;
+
+	/** Phase 2 C3 handoff latch: 1 once the entity came within the handoff
+	 *  distance of its final slot (its target is then locked to the final
+	 *  slot -- the early TW settle). Cleared whenever the layout re-assigns
+	 *  (new slots, old latch is meaningless). Diagnostic: never hashed. */
+	UPROPERTY() uint8 bFinalLocked = 0;
 };
 
 /** Servo target written by FormationSlotResolve (arch §4 row 6: "move targets").

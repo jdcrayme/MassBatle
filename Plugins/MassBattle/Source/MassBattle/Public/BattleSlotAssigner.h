@@ -24,6 +24,16 @@ namespace FSlotAssigner
 		int32 NumFiles, const TArray<int32>& PreviousAssignment, int32 MaxFileDisplacement,
 		TArray<int32>& OutAssignment);
 
+	/** Phase 2 C2 (F-1/F-2): crossing-free final assignment by sort matching
+	 *  -- the i-th front-most entity takes the i-th front-most slot. Order
+	 *  axis = the FINAL facing; tie-breaks: lateral coordinate (file order),
+	 *  then roster index (determinism). O(n log n); projection-monotone, so
+	 *  no two soldiers' final approaches cross in the facing axis. Surplus
+	 *  slots (casualty holes) are the REAR-most ones -- frontage holds, same
+	 *  as the reflow semantics. OutSlotOf[EntityIdx] = SlotIdx. */
+	MASSBATTLE_API void AssignFinal(const TArray<FVector2D>& EntityPositions, const FVector2D& FinalAnchor,
+		float FinalFacingDeg, int32 NumSlots, int32 NumFiles, TArray<int32>& OutSlotOf);
+
 	/** Pairs (i, j), i < j, whose constant-velocity projections over
 	 *  HorizonSeconds come within ThresholdMeters of each other (covers both
 	 *  angled crossings and head-on/parallel convergence, which a pure

@@ -79,4 +79,15 @@ namespace FUnitLocomotion
 	 *  interval reflow + predictive swaps are churn, not information. Rank-gap
 	 *  and layout re-decision triggers bypass this at the call site. */
 	MASSBATTLE_API bool MarchReflowSticky(bool bHasPath, float MaxSlotErrorM, float DressBreakM);
+
+	/** Phase 2 C3 progressive fall-in: unit-level blend weight from the
+	 *  remaining path length. 0 far away (coherent path-frame block), 1 at the
+	 *  path end (the block IS the final layout). Monotone nondecreasing as
+	 *  the remaining length shrinks. */
+	MASSBATTLE_API float FallInBlendAlpha(float RemainingPathM, float MorphDistanceM);
+
+	/** Phase 2 C3 per-soldier handoff latch with hysteresis: latch once within
+	 *  HandoffDistM of the final slot; unlatch only past 1.5x (avoidance
+	 *  nudges must not flip the target regime at the boundary). */
+	MASSBATTLE_API bool FallInHandoffLatch(bool bLocked, float DistFinalSlotM, float HandoffDistM);
 }

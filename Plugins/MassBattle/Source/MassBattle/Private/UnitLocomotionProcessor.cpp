@@ -98,6 +98,17 @@ namespace
 		6.f,
 		TEXT("Pass-decision commit threshold, m: the constriction must be within this arc distance of the anchor to commit (audit H2)."),
 		ECVF_Default);
+	// Phase 2 C master switch (defined beside the blend in
+	// FormationSlotResolveProcessor.cpp; TAutoConsoleVariable in one TU,
+	// FindConsoleVariable in readers -- the ServoProcessor pattern).
+	int32 GetProgressiveFallIn()
+	{
+		if (const IConsoleVariable* Cvar = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Movement.ProgressiveFallIn")))
+		{
+			return Cvar->GetInt();
+		}
+		return 0;
+	}
 }
 
 UUnitLocomotionProcessor::UUnitLocomotionProcessor(const FObjectInitializer& ObjectInitializer)
@@ -468,6 +479,9 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 			// order that owned it (garrison approach paths would otherwise
 			// peel entities toward the previous march's end).
 			Formation.FanInDestValid = 0;
+			// Phase 2 C: a new traversal re-arms the scheduled final
+			// assignment (the blend-start re-decision, FormationSlotResolve).
+			Formation.bFinalAssignDone = 0;
 
 			const bool bGarrisonOrder = Order->Type == FUnitOrder::EType::Garrison
 				|| Order->Type == FUnitOrder::EType::ExitGarrison;
@@ -1104,20 +1118,43 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 					// Safety net for the audit H2 re-deploy: a path that ends
 					// inside a corridor never sees the past-exit scan clear --
 					// arrival closes the traversal unconditionally.
+					bool bRestoredFiles = false;
 					if (Formation.GarrisonMode == EGarrisonMode::None
 						&& Formation.FieldFilesSaved > 0 && Formation.NumFiles != Formation.FieldFilesSaved)
 					{
 						Formation.NumFiles = Formation.FieldFilesSaved;
 						Formation.PassLocked = 0;
+						bRestoredFiles = true;
 					}
 					Formation.FacingYaw = Order->FacingYaw;
-					UE_LOG(LogMassBattle, Display,
-						TEXT("EXEC_RESULT ArriveRefront Unit=%u:%u Facing=%.1f Files=%d"),
-						Unit.Index, Unit.Serial, Formation.FacingYaw, Formation.NumFiles);
 					Formation.Path.NumPoints = 0;
 					Formation.Path.TotalLength = 0.f;
 					Formation.PathS = 0.f;
-					++Formation.Generation;
+					// Phase 2 C4 (F-2): under the fall-in regime there is NO
+					// layout re-decision at arrival -- the assignment was made
+					// at consumption (sort matching) and the blend has already
+					// converged the targets onto the final slots; the finals
+					// frame stays armed so targets are continuous across the
+					// path drop. The ONE exception is the H2 safety-net width
+					// restore above: it re-parameterizes the layout, so it
+					// keeps its re-slot even under the master switch.
+					if (GetProgressiveFallIn() != 0)
+					{
+						if (bRestoredFiles)
+						{
+							++Formation.Generation;
+						}
+						UE_LOG(LogMassBattle, Display,
+							TEXT("EXEC_RESULT ArriveFallIn Unit=%u:%u Facing=%.1f Files=%d Restored=%d"),
+							Unit.Index, Unit.Serial, Formation.FacingYaw, Formation.NumFiles, bRestoredFiles ? 1 : 0);
+					}
+					else
+					{
+						UE_LOG(LogMassBattle, Display,
+							TEXT("EXEC_RESULT ArriveRefront Unit=%u:%u Facing=%.1f Files=%d"),
+							Unit.Index, Unit.Serial, Formation.FacingYaw, Formation.NumFiles);
+						++Formation.Generation;
+					}
 				}
 				else if (Formation.GarrisonPhase == EGarrisonPhase::Approach && RemainingCm <= 1.f)
 				{

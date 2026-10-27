@@ -30,6 +30,34 @@ namespace
 		}
 		return 0.35f;
 	}
+
+	// Phase 2 C5 (F-8): the R-G5 rest-facing generalizes to field entities
+	// under the fall-in master switch (defined beside the blend in
+	// FormationSlotResolveProcessor.cpp) -- within SlotReachEps and slow, an
+	// entity rotates to its slot yaw (the TW settle look) instead of keeping
+	// the walk heading. The garrison Z servo stays gated on garrison mode.
+	int32 GetProgressiveFallIn()
+	{
+		if (const IConsoleVariable* Cvar = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Movement.ProgressiveFallIn")))
+		{
+			return Cvar->GetInt();
+		}
+		return 0;
+	}
+
+	// Settle-facing rate (rad/s) for the rest-facing rotation. ERRATA vs plan
+	// C5 ("at the facing rate"): the shared FacingDeltaRate (0.35 rad/s) is
+	// the BLOCK refront cap -- at 20 deg/s a man turning 180 deg needs 9 s and
+	// the settle window times out (S7 measured: offYaw 27/40 at 5 s). An
+	// individual pivot is ~1 s in M2TW; 2 rad/s is the measured-fit default.
+	float GetSettleYawRate()
+	{
+		if (const IConsoleVariable* Cvar = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Movement.SettleYawRate")))
+		{
+			return Cvar->GetFloat();
+		}
+		return 2.f;
+	}
 }
 
 UIntegrateProcessor::UIntegrateProcessor(const FObjectInitializer& ObjectInitializer)
@@ -84,10 +112,15 @@ void UIntegrateProcessor::Execute(FMassEntityManager& EntityManager, FMassExecut
 	// garrisoned entities AT their post rotate to the post facing (R-G5).
 	const float DT = Context.GetDeltaTimeSeconds();
 	const float FacingDeltaRate = GetFacingDeltaRate();
-	IntegrateQuery.ForEachEntityChunk(Context, [DT, FacingDeltaRate](FMassExecutionContext& Context)
+	const float SettleYawRate = GetSettleYawRate();
+	const bool bRestFacingAll = GetProgressiveFallIn() != 0;
+	IntegrateQuery.ForEachEntityChunk(Context, [DT, FacingDeltaRate, SettleYawRate, bRestFacingAll](FMassExecutionContext& Context)
 	{
 		const FUnitFormationSharedFragment& Formation = *Context.GetSharedFragmentPtr<FUnitFormationSharedFragment>();
 		const bool bGarrisoned = Formation.GarrisonMode != EGarrisonMode::None;
+		// Rest-facing runs for garrisoned entities (R-G5, always) and -- under
+		// the phase 2 C master switch -- for field entities too (F-8).
+		const bool bRestFacing = bGarrisoned || bRestFacingAll;
 		auto Transforms = Context.GetMutableFragmentView<FTransformFragment>();
 		const auto Velocities = Context.GetFragmentView<FMassVelocityFragment>();
 		const auto Targets = Context.GetFragmentView<FSlotTargetFragment>();
@@ -116,15 +149,16 @@ void UIntegrateProcessor::Execute(FMassEntityManager& EntityManager, FMassExecut
 				const float YawDeg = FMath::RadiansToDegrees(FMath::Atan2(Vel.Y, Vel.X));
 				Transform.SetRotation(FQuat(FRotator(0.f, YawDeg, 0.f)));
 			}
-			else if (bGarrisoned)
+			else if (bRestFacing)
 			{
-				// R-G5 rest-facing: at the post (within SlotReachEps), rotate
-				// to the post yaw at the commanded facing rate (deterministic).
+				// R-G5 rest-facing (generalized, phase 2 C5): at the slot
+				// (within SlotReachEps), rotate to the slot yaw at the
+				// commanded facing rate (deterministic).
 				const FVector P = Transform.GetTranslation();
 				if (FVector2D::DistSquared(FVector2D(P.X, P.Y), Targets[i].TargetPos) <= FMath::Square(SlotReachCm))
 				{
 					const float CurYaw = Transform.Rotator().Yaw;
-					const float NewYaw = FUnitLocomotion::AdvanceFacing(CurYaw, Targets[i].TargetYaw, FacingDeltaRate, DT);
+					const float NewYaw = FUnitLocomotion::AdvanceFacing(CurYaw, Targets[i].TargetYaw, SettleYawRate, DT);
 					if (!FMath::IsNearlyEqual(CurYaw, NewYaw, 1e-4f))
 					{
 						Transform.SetRotation(FQuat(FRotator(0.f, NewYaw, 0.f)));

@@ -84,4 +84,22 @@ namespace FUnitLocomotion
 	{
 		return bHasPath && MaxSlotErrorM < DressBreakM;
 	}
+
+	float FallInBlendAlpha(const float RemainingPathM, const float MorphDistanceM)
+	{
+		return FMath::Clamp(1.f - RemainingPathM / FMath::Max(MorphDistanceM, KINDA_SMALL_NUMBER), 0.f, 1.f);
+	}
+
+	bool FallInHandoffLatch(const bool bLocked, const float DistFinalSlotM, const float HandoffDistM)
+	{
+		if (!bLocked && DistFinalSlotM <= HandoffDistM)
+		{
+			return true;
+		}
+		if (bLocked && DistFinalSlotM > HandoffDistM * 1.5f)
+		{
+			return false;
+		}
+		return bLocked;
+	}
 }

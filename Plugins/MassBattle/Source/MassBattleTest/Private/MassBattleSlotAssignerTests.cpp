@@ -6,6 +6,7 @@
 #include "Misc/AutomationTest.h"
 
 #include "BattleSlotAssigner.h"
+#include "BattlePathFrameLayout.h"
 #include "BattleRngRegistry.h"
 
 #include "Engine/World.h"
@@ -344,6 +345,140 @@ bool FSlots_BatchedReflowIdempotent::RunTest(const FString& Parameters)
 		TestTrue(TEXT("assign-twice: identical assignment (audit L19)"), bIdentical);
 	}
 
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlots_AssignFinal,
+	"Battle.Unit.Slots.AssignFinal",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FSlots_AssignFinal::RunTest(const FString& Parameters)
+{
+	UWorld* World = MakeSlotTestWorld();
+	UBattleRngSubsystem* Rng = World->GetSubsystem<UBattleRngSubsystem>();
+	if (!TestNotNull(TEXT("rng"), Rng))
+	{
+		World->DestroyWorld(false);
+		return false;
+	}
+	Rng->Seed(20261027);
+	FRandomStream& Stream = Rng->GetStream(TEXT("Slots.Gate"));
+
+	// 14-file x 3-rank (the plan's reference unit), spacing 1.2 m, final
+	// anchor at origin facing east (90 deg).
+	constexpr int32 NumFiles = 14;
+	constexpr int32 NumSlots = 42;
+	const FVector2D FinalAnchor(0.f, 0.f);
+	const float FinalFacing = 90.f;
+	auto FinalSlotPos = [NumFiles](int32 Slot)
+	{
+		const int32 Rank = Slot / NumFiles;
+		const int32 File = Slot % NumFiles;
+		return FPathFrameLayout::AnchorFormula(FVector2D::ZeroVector, 90.f, Rank, File, NumFiles, 1.2f, 1.2f);
+	};
+
+	for (int32 Trial = 0; Trial < 8; ++Trial)
+	{
+		// Entities scattered ahead of and around the destination (a unit
+		// converging from the west, the marching side).
+		TArray<FVector2D> EntityPos;
+		for (int32 i = 0; i < NumSlots; ++i)
+		{
+			EntityPos.Add(FVector2D(Stream.FRandRange(-30.f, 5.f), Stream.FRandRange(-20.f, 20.f)));
+		}
+		TArray<int32> Out;
+		FSlotAssigner::AssignFinal(EntityPos, FinalAnchor, FinalFacing, NumSlots, NumFiles, Out);
+
+		// Bijection.
+		TSet<int32> Used;
+		bool bBijection = true;
+		for (int32 Slot : Out)
+		{
+			bBijection = bBijection && Slot >= 0 && Slot < NumSlots && !Used.Contains(Slot);
+			Used.Add(Slot);
+		}
+		TestTrue(FString::Printf(TEXT("trial %d: bijection"), Trial), bBijection && Used.Num() == NumSlots);
+
+		// Crossing-freedom: sort entities by final-facing projection
+		// descending; their slots' facing-projections must be non-increasing
+		// (the plan's projection-monotone property -- no two soldiers' final
+		// approaches cross in the facing axis).
+		TArray<int32> ByFront;
+		for (int32 i = 0; i < NumSlots; ++i)
+		{
+			ByFront.Add(i);
+		}
+		ByFront.Sort([&](int32 A, int32 B)
+		{
+			return EntityPos[A].Y > EntityPos[B].Y; // facing 90 deg: F = +Y
+		});
+		bool bMonotone = true;
+		float PrevSlotProj = FLT_MAX;
+		for (int32 E : ByFront)
+		{
+			const float SlotProj = FinalSlotPos(Out[E]).Y;
+			if (SlotProj > PrevSlotProj + KINDA_SMALL_NUMBER)
+			{
+				bMonotone = false;
+			}
+			PrevSlotProj = SlotProj;
+		}
+		TestTrue(FString::Printf(TEXT("trial %d: projection-monotone (no crossing approaches)"), Trial), bMonotone);
+
+		// Determinism: a repeated call with identical inputs is identical.
+		TArray<int32> Out2;
+		FSlotAssigner::AssignFinal(EntityPos, FinalAnchor, FinalFacing, NumSlots, NumFiles, Out2);
+		bool bIdentical = true;
+		for (int32 i = 0; i < NumSlots; ++i)
+		{
+			bIdentical = bIdentical && Out[i] == Out2[i];
+		}
+		TestTrue(FString::Printf(TEXT("trial %d: deterministic repeat"), Trial), bIdentical);
+	}
+
+	// Casualty holes are the REAR-most slots: 30 of 42 entities -> ranks 0..1
+	// full (28 slots) + 2 of rank 2's FRONT files; rank 2's rear files empty.
+	{
+		const int32 NumEntities = 30;
+		TArray<FVector2D> EntityPos;
+		for (int32 i = 0; i < NumEntities; ++i)
+		{
+			EntityPos.Add(FVector2D(-20.f + (i % 14) * 1.2f, -10.f + (i / 14) * 1.2f));
+		}
+		TArray<int32> Out;
+		FSlotAssigner::AssignFinal(EntityPos, FinalAnchor, FinalFacing, NumSlots, NumFiles, Out);
+		int32 MaxUsed = -1;
+		TSet<int32> Used;
+		for (int32 Slot : Out)
+		{
+			Used.Add(Slot);
+			MaxUsed = FMath::Max(MaxUsed, Slot);
+		}
+		TestEqual(TEXT("casualty holes: front-filled contiguous block"), Used.Num(), NumEntities);
+		TestEqual(TEXT("casualty holes: used set is exactly slots [0, N)"), MaxUsed, NumEntities - 1);
+	}
+
+	// The plan's anchor property: a soldier already standing ON a final slot
+	// keeps that slot -- he stops, and the formation forms around him.
+	{
+		TArray<FVector2D> EntityPos;
+		TArray<FVector2D> SlotPos;
+		for (int32 i = 0; i < 4; ++i)
+		{
+			SlotPos.Add(FPathFrameLayout::AnchorFormula(FinalAnchor, FinalFacing, 0, i, 4, 1.2f, 1.2f));
+			EntityPos.Add(SlotPos[i]); // dressed on the final front rank
+		}
+		// Perturb one soldier half a file off -- he must keep his file.
+		EntityPos[2] += FVector2D(0.6f, 0.f);
+		TArray<int32> Out;
+		FSlotAssigner::AssignFinal(EntityPos, FinalAnchor, FinalFacing, 4, 4, Out);
+		for (int32 i = 0; i < 4; ++i)
+		{
+			TestEqual(FString::Printf(TEXT("dressed soldier %d keeps his slot"), i), Out[i], i);
+		}
+	}
+
+	World->DestroyWorld(false);
 	return true;
 }
 

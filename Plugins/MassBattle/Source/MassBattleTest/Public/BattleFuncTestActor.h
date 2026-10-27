@@ -307,11 +307,13 @@ private:
 };
 
 // ---------------------------------------------------------------------------
-// S5_MarchRefront (A2 march-then-refront): a 40-man unit marches 80 m under a
-// commanded frontage (files 10, facing 135 deg -- 135 deg OFF the straight
-// path). Asserts: en-route facing rides the path tangent (no early refront);
-// on arrival the block re-lays (path dropped) and the facing settles to the
-// commanded value; files applied; coherent + separated; zero escalations.
+// S5_MarchRefront (phase 2 re-scope): a 40-man unit marches 80 m under a
+// commanded frontage (files 10, facing 135 deg) WITH the fall-in master
+// switch on -- the pre-phase-2 assertions (EarlyRefront/OffTangent) encoded
+// the superseded rigid-then-refront contract and are replaced by: per-entity
+// monotone approach to the final slots, a bounded anchor-arrival -> settled
+// time, settled facing ~= commanded, files applied, coherent, zero
+// escalations.
 // ---------------------------------------------------------------------------
 UCLASS()
 class MASSBATTLETEST_API AUnitMarchRefrontTest : public AFunctionalTest
@@ -331,10 +333,20 @@ private:
 	enum class EPhase : int32 { Spawn, March, Settle, Assert, Done };
 	EPhase Phase = EPhase::Spawn;
 	int32 TicksInPhase = 0;
-	int32 EarlyRefrontViolations = 0;
-	int32 OffTangentViolations = 0;
 	int32 MarchCoherenceViolations = 0;
 	int32 FacingSettledTicks = 0;
+
+	// Phase 2 monotone-approach probe (per roster entity, final slots at the
+	// ordered anchor/facing): after first coming within the handoff distance,
+	// distance-to-final-slot must never grow > 0.25 m.
+	TArray<float> MinDistFinalM;
+	TArray<bool> HandedOff;
+	TArray<int32> LastSlot;      // assignment-change detector for the monotone probe
+	TArray<int32> ExcursionTicks; // persistence counter for the monotone probe
+	int32 MonotonicityViolations = 0;
+	FString FirstMonotonicityDesc;
+	int32 AnchorArrivalTick = -1;
+	int32 AllSettledTick = -1;
 
 	UPROPERTY() TObjectPtr<AUnitActor> Unit;
 };
@@ -368,6 +380,49 @@ private:
 
 	UPROPERTY() TObjectPtr<AUnitActor> Unit;
 	FVector2D AnchorBefore = FVector2D::ZeroVector;
+};
+
+// ---------------------------------------------------------------------------
+// S7_FallIn (phase 2 P1, the reported repro): a 40-man unit marches 60 m with
+// a commanded arrival facing 90 deg off the path and CommandedFiles = 10.
+// TW progressive fall-in under Battle.Movement.ProgressiveFallIn: every
+// soldier owns his final slot from order time. Asserts: (a) monotone
+// approach -- once within 0.7 m of his final slot, no entity's distance to it
+// grows > 0.25 m; (b) anchor-arrival -> all-settled <= 3 s; (c) zero unstuck
+// escalations; (d) final geometry: every entity within 0.35 m of its final
+// slot and its yaw within 5 deg of the commanded facing.
+// ---------------------------------------------------------------------------
+UCLASS()
+class MASSBATTLETEST_API AUnitFallInTest : public AFunctionalTest
+{
+	GENERATED_BODY()
+
+public:
+	AUnitFallInTest();
+
+	void BeginTest();
+	void CompleteTest(EFunctionalTestResult TestResult, const FString& Message);
+	virtual void StartTest() override;
+	virtual void Tick(float DeltaSeconds) override;
+	virtual bool IsReady_Implementation() override { return true; }
+
+private:
+	enum class EPhase : int32 { Spawn, March, Settle, Assert, Done };
+	EPhase Phase = EPhase::Spawn;
+	int32 TicksInPhase = 0;
+
+	// Per-entity final-slot tracking (roster order; sized at first sample).
+	TArray<float> MinDistFinalM;
+	TArray<bool> HandedOff;
+	TArray<int32> LastSlot;      // assignment-change detector for the monotone probe
+	TArray<int32> ExcursionTicks; // persistence counter for the monotone probe
+	int32 MonotonicityViolations = 0;
+	FString FirstMonotonicityDesc;
+	int32 AnchorArrivalTick = -1;
+	int32 SettledTicks = 0;
+	bool bSettledInBudget = false; // all-settled within 180 ticks of arrival
+
+	UPROPERTY() TObjectPtr<AUnitActor> Unit;
 };
 
 // ---------------------------------------------------------------------------

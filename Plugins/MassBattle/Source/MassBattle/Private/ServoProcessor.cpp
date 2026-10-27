@@ -184,6 +184,9 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 	const float MaxAccel = GBattleMovementMaxAccel.GetValueOnAnyThread();
 	const bool bFeedForward = GBattleMovementFeedForward.GetValueOnAnyThread() != 0;
 	const bool bMemberClamp = GBattleMovementMemberClamp.GetValueOnAnyThread() != 0;
+	const bool bFallInServo = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Movement.ProgressiveFallIn"))
+		? IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Movement.ProgressiveFallIn"))->GetInt() != 0
+		: false;
 
 	// ---- Unit-vs-unit OBB contact (arch §8.6, Phase 1 scale: 8 units) ----
 	// One body per unit from the formation fragment; pairs resolved to
@@ -298,7 +301,7 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 	}
 
 	const IConsoleVariable* WalkCvar = WalkSpeedCvar;
-	ServoQuery.ForEachEntityChunk(Context, [DT, MaxAccel, bFeedForward, bMemberClamp, Debug, &Snapshot, &ShoveVel, &ShoveW, &HandleToSnapshot, &BlockPartners, WalkCvar](FMassExecutionContext& Context)
+	ServoQuery.ForEachEntityChunk(Context, [DT, MaxAccel, bFeedForward, bMemberClamp, bFallInServo, Debug, &Snapshot, &ShoveVel, &ShoveW, &HandleToSnapshot, &BlockPartners, WalkCvar](FMassExecutionContext& Context)
 	{
 		const FUnitFormationSharedFragment& Formation = *Context.GetSharedFragmentPtr<FUnitFormationSharedFragment>();
 		const FUnitStatsSharedFragment* Stats = Context.GetSharedFragmentPtr<FUnitStatsSharedFragment>();
@@ -370,6 +373,30 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 			{
 				DesiredVel = FUnitServo::ComputeServoVelocity(PosM, SlotPosM,
 					FUnitServoConstants::Tau, MaxSpeedM, FUnitServoConstants::CatchupBoost);
+			}
+
+			// Phase 2 C3 settle (the plan's §4.1 flow: settled = stop and turn
+			// to the slot facing). Inside the slot's arrival basin the
+			// commanded speed ramps to zero: the pure pursuit form still
+			// commands ~1 m/s at SlotReachEps, so entities micro-orbit the
+			// slot forever -- velocity heading never drops below the rest eps
+			// and per-entity facing never settles (measured: S7 offYaw 38/40).
+			if (bFallInServo)
+			{
+				const float DistM = FVector2D::Distance(PosM, SlotPosM);
+				constexpr float BasinR = 2.f * FUnitServoConstants::SlotReachEps;
+				if (DistM < BasinR)
+				{
+					// HARD stop inside SlotReachEps (not a ramp): any residual
+					// commanded speed keeps the velocity above the rest eps and
+					// the settle rotation never accumulates (measured: ramp
+					// forms leave offYaw at 38-40 of 40). The accel clamp makes
+					// the stop smooth; entities coast to rest within the eps
+					// disk and C5's rest-facing owns them from there.
+					DesiredVel = DistM < FUnitServoConstants::SlotReachEps
+						? FVector2D::ZeroVector
+						: DesiredVel * FMath::Clamp(DistM / BasinR, 0.f, 1.f);
+				}
 			}
 
 			// A1 per-state avoidance weights (§4.5): HoldSlot none;

@@ -335,4 +335,46 @@ bool FSpeedLimits_StragglerPaceAndStickiness::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSpeedLimits_FallInBlend,
+	"Battle.Unit.SpeedLimits.FallInBlend",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FSpeedLimits_FallInBlend::RunTest(const FString& Parameters)
+{
+	// Phase 2 C3 blend alpha: 0 far away, 1 at the path end, monotone
+	// nondecreasing as the remaining length shrinks.
+	constexpr float Morph = 12.f;
+	TestEqual(TEXT("far away: alpha 0"), FUnitLocomotion::FallInBlendAlpha(200.f, Morph), 0.f);
+	TestEqual(TEXT("at the morph distance: alpha 0"), FUnitLocomotion::FallInBlendAlpha(Morph, Morph), 0.f);
+	TestTrue(TEXT("half way: alpha 0.5"), FMath::IsNearlyEqual(FUnitLocomotion::FallInBlendAlpha(Morph * 0.5f, Morph), 0.5f, 1e-6f));
+	TestEqual(TEXT("at arrival: alpha 1"), FUnitLocomotion::FallInBlendAlpha(0.f, Morph), 1.f);
+	TestEqual(TEXT("overshoot clamp: alpha 1"), FUnitLocomotion::FallInBlendAlpha(-5.f, Morph), 1.f);
+
+	float Prev = -1.f;
+	bool bMonotone = true;
+	for (int32 i = 0; i <= 20; ++i)
+	{
+		const float Remaining = 24.f * (1.f - static_cast<float>(i) / 20.f);
+		const float Alpha = FUnitLocomotion::FallInBlendAlpha(Remaining, Morph);
+		if (Alpha < Prev - KINDA_SMALL_NUMBER)
+		{
+			bMonotone = false;
+		}
+		Prev = Alpha;
+	}
+	TestTrue(TEXT("alpha monotone nondecreasing while approaching"), bMonotone);
+
+	// Handoff latch hysteresis: latches at/below the handoff distance, stays
+	// latched inside the band, unlatches only past 1.5x.
+	constexpr float Handoff = 0.7f;
+	TestEqual(TEXT("outside: unlatched"), FUnitLocomotion::FallInHandoffLatch(false, 1.0f, Handoff), false);
+	TestEqual(TEXT("at handoff: latch"), FUnitLocomotion::FallInHandoffLatch(false, Handoff, Handoff), true);
+	TestEqual(TEXT("inside: latch"), FUnitLocomotion::FallInHandoffLatch(false, 0.3f, Handoff), true);
+	TestEqual(TEXT("drift inside band: stays latched"), FUnitLocomotion::FallInHandoffLatch(true, 0.9f, Handoff), true);
+	TestEqual(TEXT("at 1.5x boundary: stays latched"), FUnitLocomotion::FallInHandoffLatch(true, 1.05f, Handoff), true);
+	TestEqual(TEXT("past 1.5x: unlatch"), FUnitLocomotion::FallInHandoffLatch(true, 1.1f, Handoff), false);
+
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS
