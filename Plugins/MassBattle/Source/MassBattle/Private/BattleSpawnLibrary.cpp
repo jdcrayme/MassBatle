@@ -80,6 +80,10 @@ bool FBattleRowStats::FromEdu(const FEduUnit& Row, FBattleRowStats& OutStats, FS
 	{
 		OutStats.Lethality = FCString::Atof(*Pri->Values[9]);
 	}
+	if (Armour->Values.Num() > 2)
+	{
+		OutStats.Shield = FCString::Atof(*Armour->Values[2]); // frontal-arc defense
+	}
 	if (Health->Values.Num() > 1 && OutStats.bCavalry)
 	{
 		OutStats.MountHP = FCString::Atoi(*Health->Values[1]); // mount pool, cavalry rows only

@@ -9,6 +9,8 @@
 #include "BattleRegistry.h"
 #include "BattleSave.h"
 #include "BattleSpawnLibrary.h"
+#include "BattleEngagement.h"
+#include "BattleMelee.h"
 #include "BattleStateHash.h"
 #include "BattleFragments.h"
 #include "BattleCombatFragments.h"
@@ -548,16 +550,127 @@ bool FCombat_HashTerms::RunTest(const FString& Parameters)
 // T2.1-T2.3 unit gates (tasks 3-4 own the bodies)
 // ---------------------------------------------------------------------------
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FHitChanceGoldenSkeleton,
+// ---------------------------------------------------------------------------
+// T2.1 (task 3): the resolution seam golden table. Any diff against these
+// CHECKED-IN literals is a conscious formula review (A6/ADR-26). Covers: the
+// contested curve + clamps, the sector quantizer + arc bands (frontal/flank/
+// rear/boundaries), AP halving, cycle stagger determinism, charge decay, and
+// the bounded knockback.
+// ---------------------------------------------------------------------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FHitChanceGolden,
 	"Battle.Unit.Combat.HitChance",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
-bool FHitChanceGoldenSkeleton::RunTest(const FString& Parameters)
+bool FHitChanceGolden::RunTest(const FString& Parameters)
 {
-	// T2.1 (task 3): hit-chance formula + arc bands + AP + clamps locked to a
-	// golden table; any diff = conscious formula review.
-	AddError(TEXT("skeleton: T2.1 golden lands with task 3 (BattleMelee seam)"));
-	return false;
+	// -- Contested curve: P = A / (A + D), clamped [Floor, Cap] = [0.05, 0.95].
+	TestEqual(TEXT("golden (6,4) = 0.6"), FMeleeMath::HitChance(6.f, 4.f), 0.6f);
+	TestEqual(TEXT("golden (1,1) = 0.5"), FMeleeMath::HitChance(1.f, 1.f), 0.5f);
+	TestEqual(TEXT("golden (3,1) = 0.75"), FMeleeMath::HitChance(3.f, 1.f), 0.75f);
+	TestEqual(TEXT("golden (1,3) = 0.25"), FMeleeMath::HitChance(1.f, 3.f), 0.25f);
+	// Clamps: 0 attack bottoms at the floor; overwhelming attack caps.
+	TestEqual(TEXT("floor at 0 attack"), FMeleeMath::HitChance(0.f, 10.f), 0.05f);
+	TestEqual(TEXT("cap at 20v1 (0.95238 -> 0.95)"), FMeleeMath::HitChance(20.f, 1.f), 0.95f);
+	TestEqual(TEXT("cap at 5v0"), FMeleeMath::HitChance(5.f, 0.f), 0.95f);
+	// Both-zero: the curve denominator guard -> 0 -> floor.
+	TestEqual(TEXT("both zero -> floor"), FMeleeMath::HitChance(0.f, 0.f), 0.05f);
+
+	// -- Sector quantizer (floor buckets of 256/SectorCount; boundaries owned
+	//    by the higher bucket). SectorCount 8: bucket = angle / 32.
+	TestEqual(TEXT("angle 0 -> sector 0"), FCombatSolver::SectorIndexFromAngle(0, 8), 0);
+	TestEqual(TEXT("angle 31 -> sector 0"), FCombatSolver::SectorIndexFromAngle(31, 8), 0);
+	TestEqual(TEXT("boundary 32 -> sector 1"), FCombatSolver::SectorIndexFromAngle(32, 8), 1);
+	TestEqual(TEXT("angle 128 -> sector 4"), FCombatSolver::SectorIndexFromAngle(128, 8), 4);
+	TestEqual(TEXT("angle 255 -> sector 7"), FCombatSolver::SectorIndexFromAngle(255, 8), 7);
+	// Round-trip: a sector center always quantizes back to its sector.
+	for (int32 Sector = 0; Sector < 8; ++Sector)
+	{
+		const uint8 Center = FCombatSolver::SectorCenterAngle(Sector, 8);
+		TestEqual(FString::Printf(TEXT("sector %d center round-trips"), Sector),
+			FCombatSolver::SectorIndexFromAngle(Center, 8), Sector);
+	}
+
+	// -- Arc bands (8 sectors; centers 22.5/67.5/112.5/157.5/202.5/247.5/292.5/
+	//    337.5 deg): frontal = {0,7}, flank = {1,2,5,6}, rear = {3,4}.
+	struct FBandRow { int32 Sector; float Skill; float Shield; };
+	const FBandRow Bands[] = {
+		{ 0, 1.00f, 1.f }, // frontal
+		{ 1, 0.75f, 0.f }, // flank
+		{ 2, 0.75f, 0.f }, // flank
+		{ 3, 0.50f, 0.f }, // rear
+		{ 4, 0.50f, 0.f }, // rear
+		{ 5, 0.75f, 0.f }, // flank
+		{ 6, 0.75f, 0.f }, // flank
+		{ 7, 1.00f, 1.f }, // frontal
+	};
+	for (const FBandRow& Row : Bands)
+	{
+		TestEqual(FString::Printf(TEXT("golden skill band sector %d"), Row.Sector),
+			FMeleeMath::SkillArcMult(Row.Sector, 8), Row.Skill);
+		TestEqual(FString::Printf(TEXT("golden shield band sector %d"), Row.Sector),
+			FMeleeMath::ShieldArcWindow(Row.Sector, 8), Row.Shield);
+	}
+	// Sector-count independence of the angular windows: 12 sectors, the dead-
+	// ahead sector stays frontal, the opposite sector stays rear.
+	TestEqual(TEXT("12 sectors: sector 0 frontal"), FMeleeMath::SkillArcMult(0, 12), 1.f);
+	TestEqual(TEXT("12 sectors: opposite sector rear"), FMeleeMath::SkillArcMult(6, 12), 0.5f);
+	TestEqual(TEXT("12 sectors: shield only frontal"), FMeleeMath::ShieldArcWindow(6, 12), 0.f);
+
+	// -- AP halving.
+	TestEqual(TEXT("armor normal"), FMeleeMath::ArmorMultiplier(false), 1.f);
+	TestEqual(TEXT("armor AP halves"), FMeleeMath::ArmorMultiplier(true), 0.5f);
+
+	// -- Cycle stagger: deterministic, in [0, Interval), scattered.
+	const float Off7 = FMeleeMath::StaggeredPhaseOffset(7u, 1.5f);
+	TestEqual(TEXT("golden offset(7, 1.5)"), Off7, 0.00189975f);
+	TestEqual(TEXT("golden offset(1, 1.5)"), FMeleeMath::StaggeredPhaseOffset(1u, 1.5f), 1.35660334f);
+	TestEqual(TEXT("golden offset(2, 1.5)"), FMeleeMath::StaggeredPhaseOffset(2u, 1.5f), 1.21318379f);
+	TestEqual(TEXT("offset(0) = 0"), FMeleeMath::StaggeredPhaseOffset(0u, 1.5f), 0.f);
+	TestTrue(TEXT("repeat-call equality"),
+		FMath::IsNearlyEqual(FMeleeMath::StaggeredPhaseOffset(1234u, 2.f), FMeleeMath::StaggeredPhaseOffset(1234u, 2.f)));
+	bool bInRange = true;
+	bool bScattered = !FMath::IsNearlyEqual(FMeleeMath::StaggeredPhaseOffset(1u, 1.5f), FMeleeMath::StaggeredPhaseOffset(2u, 1.5f));
+	for (uint32 H = 0; H < 256u; ++H)
+	{
+		const float Off = FMeleeMath::StaggeredPhaseOffset(H, 1.5f);
+		bInRange = bInRange && Off >= 0.f && Off < 1.5f;
+	}
+	TestTrue(TEXT("offsets within [0, interval)"), bInRange);
+	TestTrue(TEXT("offsets scatter across handles"), bScattered);
+	// Recovery window: 0.4 fraction of the interval.
+	TestEqual(TEXT("recovery window"), FMeleeMath::RecoveryWindow(1.5f), 0.6f);
+
+	// -- Charge decay (BaseCharge 4, window 5 s, golden-locked constants).
+	TestEqual(TEXT("charge full at impact"), FMeleeMath::ChargeBonusRemaining(FMeleeMath::BaseChargeBonus(), 0.f, 5.f), 4.f);
+	TestEqual(TEXT("charge half-decayed"), FMeleeMath::ChargeBonusRemaining(4.f, 2.5f, 5.f), 2.f);
+	TestEqual(TEXT("charge expired at window"), FMeleeMath::ChargeBonusRemaining(4.f, 5.f, 5.f), 0.f);
+	TestEqual(TEXT("charge stays 0 after window"), FMeleeMath::ChargeBonusRemaining(4.f, 7.f, 5.f), 0.f);
+
+	// -- Knockback: linear above the threshold, bounded.
+	TestEqual(TEXT("knockback zero below threshold"), FMeleeMath::KnockbackImpulse(3.5f, 4.f), 0.f);
+	TestEqual(TEXT("knockback zero at threshold"), FMeleeMath::KnockbackImpulse(4.f, 4.f), 0.f);
+	TestEqual(TEXT("golden knockback at 6 m/s"), FMeleeMath::KnockbackImpulse(6.f, 4.f), 1.2f);
+	TestEqual(TEXT("knockback clamped"), FMeleeMath::KnockbackImpulse(10.f, 4.f), 2.5f);
+
+	// -- Composite HP: mount drains first, then the rider.
+	{
+		float Rider = 1.f;
+		int16 Mount = 0;
+		FMeleeMath::DrainCompositePool(Rider, Mount, 1.f);
+		TestEqual(TEXT("foot: hit kills"), Rider, 0.f);
+		Rider = 1.f; Mount = 1;
+		FMeleeMath::DrainCompositePool(Rider, Mount, 1.f);
+		TestEqual(TEXT("cavalry: first hit takes the mount"), Mount, static_cast<int16>(0));
+		TestEqual(TEXT("cavalry: rider survives first hit"), Rider, 1.f);
+		FMeleeMath::DrainCompositePool(Rider, Mount, 1.f);
+		TestEqual(TEXT("cavalry: second hit kills"), Rider, 0.f);
+		Rider = 1.f; Mount = 2;
+		FMeleeMath::DrainCompositePool(Rider, Mount, 2.f);
+		TestEqual(TEXT("cavalry: 2-damage hit drains both pools"), Rider, 1.f);
+	}
+
+	return true;
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBudgetCoverageSkeleton,

@@ -35,6 +35,7 @@ struct FBattleRowStats
 	bool bArmorPiercing = false;
 	float Lethality = 1.f;      // multiplies the hit chance (spec §4.8)
 	int32 MountHP = 0;          // stat_health mount pool (0 for foot)
+	float Shield = 0.f;         // stat_pri_armour shield value (frontal-arc defense, EC6)
 
 	// capability tags (arch §3.2) derived from category/class
 	bool bInfantry = false;

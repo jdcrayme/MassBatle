@@ -81,6 +81,24 @@ struct FCombatAttackerView
 
 namespace FCombatSolver
 {
+	// -- ContactAngle conventions (ONE value, TWO consumers, spec §4.5) --
+	//
+	// ContactAngle is stored 0-255 (full circle around the defender). Angle 0
+	// is the defender's facing direction; the angle grows CLOCKWISE (viewed
+	// from above, standard UE +Z-down planar convention) from facing toward
+	// the attacker's approach direction (attacker - defender). The defense
+	// arc bands (BattleMelee) and the contact-ring steering (servo, task 6)
+	// both read this ONE quantized value; nothing re-derives the angle.
+
+	/** Quantizes a 0-255 angle into [0, SectorCount) buckets (floor division:
+	 *  the bucket owns [k*256/SectorCount, (k+1)*256/SectorCount); boundaries
+	 *  pinned by the T2.1 golden). */
+	MASSBATTLE_API int32 SectorIndexFromAngle(uint8 ContactAngle, int32 SectorCount);
+
+	/** Center of a sector as a 0-255 angle (round-trips through
+	 *  SectorIndexFromAngle for odd/even sector counts). */
+	MASSBATTLE_API uint8 SectorCenterAngle(int32 SectorIndex, int32 SectorCount);
+
 	/** Per-defender attack-slot budget (spec §4.5, arch §7.3 verbatim):
 	 *  lerp(MaxMobSlots, FormedSlots, Coverage), + SecondRankBonus for
 	 *  spear-class attackers, clamped >= 1. FAILURE STUB: returns 0. */

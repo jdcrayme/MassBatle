@@ -1,36 +1,105 @@
-// BattleMelee.cpp -- task-0 resolution stubs (bodies + golden tables land in
-// task 3; failure sentinels per the brief task-0 step 2).
+// BattleMelee.cpp -- melee resolution seam (task 3; constants golden-locked
+// by T2.1, see FMeleeMathConstants in the header).
 #include "BattleMelee.h"
+#include "BattleEngagement.h"
+#include "HAL/IConsoleManager.h"
 
 namespace FMeleeMath
 {
-	float HitChance(float /*Attack*/, float /*Defense*/)
+	float HitChance(float Attack, float Defense)
 	{
-		return -1.f; // failure sentinel: valid hit chance is [0,1]
+		Attack = FMath::Max(Attack, 0.f);
+		Defense = FMath::Max(Defense, 0.f);
+		float P = Attack / FMath::Max(Attack + Defense, FMeleeMathConstants::ContestedEpsilon);
+		P = FMath::Clamp(P, FCombatCVars::HitChanceFloor(), FCombatCVars::HitChanceCap());
+		return P;
 	}
 
-	float SkillArcMult(int32 /*SectorIndexFromFacing*/, int32 /*SectorCount*/)
+	namespace
 	{
-		return -1.f; // failure sentinel: valid multiplier is (0, 1]
+		/** MID-BUCKET center angle of a sector, normalized to [-180, 180):
+		 *  sector k owns [k, k+1) buckets of 360/Count degrees (the floor
+		 *  quantization in SectorIndexFromAngle), so its center is (k + 0.5)
+		 *  steps. Must stay consistent with FCombatSolver::SectorCenterAngle
+		 *  (the one-value-two-consumers contract, spec §4.5). */
+		float SectorCenterDeg(int32 SectorIndexFromFacing, int32 SectorCount)
+		{
+			const int32 Count = FMath::Max(1, SectorCount);
+			const int32 Wrapped = ((SectorIndexFromFacing % Count) + Count) % Count;
+			const float Center = (static_cast<float>(Wrapped) + 0.5f) * (360.f / static_cast<float>(Count));
+			float Normalized = FMath::Fmod(Center + 180.f, 360.f) - 180.f;
+			if (Normalized < -180.f)
+			{
+				Normalized += 360.f;
+			}
+			return Normalized;
+		}
 	}
 
-	float ShieldArcWindow(int32 /*SectorIndexFromFacing*/, int32 /*SectorCount*/)
+	float SkillArcMult(int32 SectorIndexFromFacing, int32 SectorCount)
 	{
-		return -1.f; // failure sentinel: valid window is [0,1]
+		const float AbsDeg = FMath::Abs(SectorCenterDeg(SectorIndexFromFacing, SectorCount));
+		if (AbsDeg <= FMeleeMathConstants::FrontalArcDeg)
+		{
+			return FMeleeMathConstants::SkillMultFrontal;
+		}
+		if (AbsDeg >= FMeleeMathConstants::RearArcDeg)
+		{
+			return FMeleeMathConstants::SkillMultRear;
+		}
+		return FMeleeMathConstants::SkillMultFlank;
 	}
 
-	float StaggeredPhaseOffset(uint32 /*EntityHandleIndex*/, float /*AttackInterval*/)
+	float ShieldArcWindow(int32 SectorIndexFromFacing, int32 SectorCount)
 	{
-		return -1.f; // failure sentinel: valid offset is [0, AttackInterval)
+		const float AbsDeg = FMath::Abs(SectorCenterDeg(SectorIndexFromFacing, SectorCount));
+		return AbsDeg <= FMeleeMathConstants::FrontalArcDeg ? 1.f : 0.f;
 	}
 
-	float ChargeBonusRemaining(float /*BaseCharge*/, float /*ImpactAgeSeconds*/, float /*DecayWindow*/)
+	float ArmorMultiplier(bool bArmorPiercing)
 	{
-		return -1.f; // failure sentinel: valid bonus is >= 0
+		return bArmorPiercing ? FMeleeMathConstants::ArmorMultiplierAP : FMeleeMathConstants::ArmorMultiplierNormal;
 	}
 
-	float KnockbackImpulse(float /*ImpactSpeedMps*/, float /*SpeedThresholdMps*/)
+	float StaggeredPhaseOffset(uint32 EntityHandleIndex, float AttackInterval)
 	{
-		return -1.f; // failure sentinel: valid impulse is >= 0
+		// Integer hash scatter (multiply-xor), deterministic per handle.
+		uint32 H = EntityHandleIndex * 2654435761u;
+		H ^= H >> 16;
+		const float Frac = static_cast<float>(H & 0xFFFFu) / 65535.f;
+		return Frac * FMath::Max(0.f, AttackInterval);
+	}
+
+	float RecoveryWindow(float AttackInterval)
+	{
+		return FMeleeMathConstants::RecoveryFraction * FMath::Max(0.f, AttackInterval);
+	}
+
+	float ChargeBonusRemaining(float BaseCharge, float ImpactAgeSeconds, float DecayWindow)
+	{
+		if (DecayWindow <= 0.f || ImpactAgeSeconds >= DecayWindow)
+		{
+			return 0.f;
+		}
+		return FMath::Max(0.f, BaseCharge * (1.f - ImpactAgeSeconds / DecayWindow));
+	}
+
+	float KnockbackImpulse(float ImpactSpeedMps, float SpeedThresholdMps)
+	{
+		const float Above = FMath::Max(0.f, ImpactSpeedMps - SpeedThresholdMps);
+		return FMath::Min(Above * FMeleeMathConstants::KnockbackPerSpeed, FMeleeMathConstants::KnockbackMaxMps);
+	}
+
+	void DrainCompositePool(float& RiderHP, int16& MountHP, float Damage)
+	{
+		const float In = FMath::Max(0.f, Damage);
+		const float MountDamage = FMath::Min(static_cast<float>(MountHP), In);
+		MountHP = static_cast<int16>(static_cast<float>(MountHP) - MountDamage);
+		RiderHP = FMath::Max(0.f, RiderHP - (In - MountDamage));
+	}
+
+	float BaseChargeBonus()
+	{
+		return FMeleeMathConstants::BaseChargeBonus;
 	}
 }

@@ -44,6 +44,7 @@ struct FBaseStatsFragment : public FMassFragment
 	UPROPERTY() float MeleeDefense = 0.f;
 	UPROPERTY() float RangedAttack = 0.f;
 	UPROPERTY() float Armor = 0.f;
+	UPROPERTY() float Shield = 0.f;
 	UPROPERTY() float MoraleBase = 0.f;
 	UPROPERTY() float ChargeDistance = 0.f;
 };

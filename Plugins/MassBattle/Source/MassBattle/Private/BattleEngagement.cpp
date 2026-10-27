@@ -128,6 +128,19 @@ namespace FCombatCVars
 // -- Task-0 solver stubs (bodies land in task 4; failure sentinels) --
 namespace FCombatSolver
 {
+	int32 SectorIndexFromAngle(uint8 ContactAngle, int32 SectorCount)
+	{
+		const int32 Count = FMath::Max(1, SectorCount);
+		return (static_cast<int32>(ContactAngle) * Count) / 256;
+	}
+
+	uint8 SectorCenterAngle(int32 SectorIndex, int32 SectorCount)
+	{
+		const int32 Count = FMath::Max(1, SectorCount);
+		const int32 Center = ((2 * SectorIndex + 1) * 256) / (2 * Count);
+		return static_cast<uint8>(Center & 0xFF);
+	}
+
 	int32 SlotBudget(const FCombatDefenderView& /*Defender*/, float /*Coverage*/, const FCombatAttackerView& /*Attacker*/)
 	{
 		return 0; // failure sentinel: 0 is never a valid budget (spec: >= 1)
