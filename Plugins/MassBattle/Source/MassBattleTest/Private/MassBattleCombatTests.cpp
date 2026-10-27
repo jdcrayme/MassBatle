@@ -180,11 +180,11 @@ bool FCombat_RecordLifecycle::RunTest(const FString& Parameters)
 
 	FCombatCoverageTable& Coverage = Registry->GetCoverageScratch();
 	const uint32 Tick = 1234;
-	TestTrue(TEXT("coverage store"), Coverage.Store(D1, 0.75f, Tick) != INDEX_NONE);
+	TestTrue(TEXT("coverage store"), Coverage.Store(D1, 0.75f, 0u, Tick) != INDEX_NONE);
 	const int32 Fresh = Coverage.Find(D1, Tick);
 	TestTrue(TEXT("coverage fresh hit"), Fresh != INDEX_NONE && FMath::IsNearlyEqual(Coverage.Values[Fresh], 0.75f));
 	TestEqual(TEXT("coverage stale tick misses"), Coverage.Find(D1, Tick + 1), INDEX_NONE);
-	Coverage.Store(D1, 0.5f, Tick + 1);
+	Coverage.Store(D1, 0.5f, 0u, Tick + 1);
 	const int32 Updated = Coverage.Find(D1, Tick + 1);
 	TestTrue(TEXT("coverage update"), Updated != INDEX_NONE && FMath::IsNearlyEqual(Coverage.Values[Updated], 0.5f));
 

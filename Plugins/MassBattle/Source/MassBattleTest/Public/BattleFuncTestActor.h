@@ -426,6 +426,38 @@ private:
 };
 
 // ---------------------------------------------------------------------------
+// Phase 2 task 6 combat smoke: two units ordered into contact form pairs and
+// press the ring (the assign-pass wiring's end-to-end evidence; the T2 gates
+// are task 7/8's fuller scenarios). Enables the combat cvars locally, restores
+// on completion.
+// ---------------------------------------------------------------------------
+UCLASS()
+class MASSBATTLETEST_API ACombatSmokeTest : public AFunctionalTest
+{
+	GENERATED_BODY()
+
+public:
+	ACombatSmokeTest();
+
+	void BeginTest();
+	void CompleteTest(EFunctionalTestResult TestResult, const FString& Message);
+	virtual void StartTest() override;
+	virtual void Tick(float DeltaSeconds) override;
+	virtual bool IsReady_Implementation() override { return true; }
+	virtual void Destroyed() override;
+
+private:
+	enum class EPhase : int32 { Spawn, Engage, Assert, Done };
+	EPhase Phase = EPhase::Spawn;
+	int32 TicksInPhase = 0;
+	UPROPERTY() TObjectPtr<AUnitActor> UnitA;
+	UPROPERTY() TObjectPtr<AUnitActor> UnitB;
+	int32 SavedCombatCvars[4] = {};
+	void SetCombatCvars();
+	void RestoreCombatCvars();
+};
+
+// ---------------------------------------------------------------------------
 // S-scenario actor factory registry -- deterministic, reflection-free class
 // lookup for the automation harness (FindObject with /Script/ paths and
 // TObjectIterator both failed to resolve fresh C++ classes in -game processes

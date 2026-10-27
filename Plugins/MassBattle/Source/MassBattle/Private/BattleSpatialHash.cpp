@@ -129,6 +129,31 @@ void UBattleSpatialHashSubsystem::RebuildImpl(TArray<FBattleHashEntry>&& Entries
 	}
 }
 
+int32 UBattleSpatialHashSubsystem::FindSlotFor(FMassEntityHandle Entity) const
+{
+	int32 Lo = 0;
+	int32 Hi = SortedEntries.Num() - 1;
+	while (Lo <= Hi)
+	{
+		const int32 Mid = (Lo + Hi) / 2;
+		const FMassEntityHandle& MidEntity = SortedEntries[Mid].Entity;
+		if (MidEntity == Entity)
+		{
+			return Mid;
+		}
+		if (MidEntity.Index < Entity.Index ||
+			(MidEntity.Index == Entity.Index && MidEntity.SerialNumber < Entity.SerialNumber))
+		{
+			Lo = Mid + 1;
+		}
+		else
+		{
+			Hi = Mid - 1;
+		}
+	}
+	return INDEX_NONE;
+}
+
 void UBattleSpatialHashSubsystem::QueryCircle(const FVector2D& CenterM, float RadiusM, TArray<FBattleHashEntry>& OutEntries) const
 {
 	const int32 MinX = FMath::Max(0, FMath::FloorToInt((CenterM.X - RadiusM - OriginM.X) / CellSizeM));

@@ -164,6 +164,7 @@ struct FCombatCoverageTable
 		Keys.SetNumUninitialized(Pow2);
 		Values.Init(0.f, Pow2);
 		Stamps.Init(0u, Pow2);
+		Masks.Init(0u, Pow2);
 		Reset();
 	}
 
@@ -174,11 +175,12 @@ struct FCombatCoverageTable
 			Keys[i] = FMassEntityHandle();
 			Values[i] = 0.f;
 			Stamps[i] = 0u;
+			Masks[i] = 0u;
 		}
 	}
 
 	/** Insert-or-update; returns the slot index. */
-	int32 Store(FMassEntityHandle Key, float Value, uint32 Tick)
+	int32 Store(FMassEntityHandle Key, float Value, uint8 CoveredMask, uint32 Tick)
 	{
 		if (!Key.IsValid() || Keys.Num() == 0)
 		{
@@ -191,6 +193,7 @@ struct FCombatCoverageTable
 			{
 				Keys[Slot] = Key;
 				Values[Slot] = Value;
+				Masks[Slot] = CoveredMask;
 				Stamps[Slot] = Tick;
 				return static_cast<int32>(Slot);
 			}
@@ -198,6 +201,9 @@ struct FCombatCoverageTable
 		}
 		return INDEX_NONE;
 	}
+
+	/** Covered-sector mask at a slot (valid only after a fresh Find). */
+	uint8 GetMask(int32 Slot) const { return Masks.IsValidIndex(Slot) ? Masks[Slot] : 0u; }
 
 	/** Coverage for Key if stamped at Tick; INDEX_NONE when absent/stale. */
 	int32 Find(FMassEntityHandle Key, uint32 Tick) const
@@ -225,6 +231,10 @@ struct FCombatCoverageTable
 	TArray<FMassEntityHandle> Keys;
 	TArray<float> Values;
 	TArray<uint32> Stamps;
+	/** Covered-sector mask (same-unit living neighbors; bits +X/-X/+Y/-Y
+	 *  quadrants are the cluster pass's; THIS mask is SectorCount buckets,
+	 *  bit k = sector k occupied) -- stamped by the tally pass with Value. */
+	TArray<uint8> Masks;
 };
 
 /**

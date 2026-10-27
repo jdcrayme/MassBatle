@@ -70,6 +70,17 @@ struct FCombatPairFragment : public FMassFragment
 	/** Charge bonus remaining (§4.9): seeded by the charge impact, decays over
 	 *  ChargeDecayWindow, applies to attack rolls while positive. */
 	UPROPERTY() float ChargeBonusRemaining = 0.f;
+	/** Press-ring servo point, CENTIMETERS (A12): the assign pass computes it
+	 *  each tick from the target transform + ContactAngle + ring radius; the
+	 *  servo uses it as the combat target while the entity is paired or
+	 *  pressing. Derived from hashed terms (target pos + angle) -- never
+	 *  hashed itself (spec §3.4's term list). */
+	UPROPERTY() FVector2D RingPosCm = FVector2D::ZeroVector;
+	/** 1 = RingPosCm carries this tick's press point (combat override active). */
+	UPROPERTY() uint8 bRingValid = 0;
+	/** Failed-seek backoff, ticks (1-3, jittered; spec §4.4). Transient pacing
+	 *  -- not a hashed term (spec §3.4's list). */
+	UPROPERTY() uint8 BackoffTicks = 0;
 };
 
 /** Charge state machine per-entity fields (spec §4.9, worker-written by the

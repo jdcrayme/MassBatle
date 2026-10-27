@@ -248,6 +248,10 @@ namespace
 				{
 					S8b->BeginTest();
 				}
+				else if (ACombatSmokeTest* Combat = Cast<ACombatSmokeTest>(TestActor))
+				{
+					Combat->BeginTest();
+				}
 				// T0.9: apply + assert the test-mode contract at scenario start
 				// (roadmap B.0: assert ACTIVE engine settings, not CVars being
 				// set; the -game process does not seed the contract on its own).
@@ -581,6 +585,27 @@ bool FS8b_MultiUnitGarrison::RunTest(const FString& Parameters)
 	IFunctionalTestingModule::Get().MarkPendingActivation();
 	ADD_LATENT_AUTOMATION_COMMAND(FOpenBattleFuncMap(this));
 	ADD_LATENT_AUTOMATION_COMMAND(FRunBattleFuncTest(this, TEXT("S8b_MultiUnitGarrison"), TEXT("AUnitMultiUnitGarrisonTest")));
+	return true;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2 task 6 combat smoke (the assign-pass wiring's end-to-end evidence).
+// ---------------------------------------------------------------------------
+
+IMPLEMENT_CUSTOM_COMPLEX_AUTOMATION_TEST(FCombatSmoke, FBattleFuncTestBase,
+	"Battle.Func.CombatSmoke", (EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter))
+
+void FCombatSmoke::GetTests(TArray<FString>& OutBeautifiedNames, TArray<FString>& OutTestCommands) const
+{
+	OutBeautifiedNames.Add(TEXT("CombatSmoke"));
+	OutTestCommands.Add(TEXT(""));
+}
+
+bool FCombatSmoke::RunTest(const FString& Parameters)
+{
+	IFunctionalTestingModule::Get().MarkPendingActivation();
+	ADD_LATENT_AUTOMATION_COMMAND(FOpenBattleFuncMap(this));
+	ADD_LATENT_AUTOMATION_COMMAND(FRunBattleFuncTest(this, TEXT("CombatSmoke"), TEXT("ACombatSmokeTest")));
 	return true;
 }
 

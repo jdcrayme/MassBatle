@@ -462,10 +462,17 @@ namespace FCombatSolver
 
 			// -- Candidate selection: mob = circle-query scan (nearest with an
 			// exposed-sector preference); laned = in-lane scan (data, not
-			// proximity; the processor's defender table pre-filters the unit).
+			// proximity). The lane is a PREFERENCE, not a hard filter: face-
+			// to-face formations mirror each other's file buckets, and width
+			// mismatches subdivide slices unevenly -- a hard equality strands
+			// whole files (measured 2026-10-27). Lane-matched candidates win;
+			// otherwise the nearest in-slice-unit defender takes the seeker.
 			const FAssignDefenderState* Chosen = nullptr;
+			const FAssignDefenderState* LaneMatch = nullptr;
 			float ChosenDistSq = 0.f;
+			float LaneDistSq = 0.f;
 			uint8 ChosenAngle = 255;
+			uint8 LaneAngle = 255;
 			for (int32 DIdx = 0; DIdx < Defenders.Num(); ++DIdx)
 			{
 				const FAssignDefenderState& D = Defenders[DIdx];
@@ -477,10 +484,6 @@ namespace FCombatSolver
 				if (DistSq > FMath::Square(Context.SeekRadiusM))
 				{
 					continue;
-				}
-				if (Record.Mode != 2 && D.LaneIndex != S.LaneIndex)
-				{
-					continue; // laned scan stays in the file's slice
 				}
 				// Per-defender budget check BEFORE angle picking.
 				const FCombatDefenderView DefenderView{ D.PosM, D.Spacing, D.Unit, D.Entity };
@@ -503,16 +506,28 @@ namespace FCombatSolver
 				{
 					continue; // every sector at share this pass
 				}
-				if (!Chosen || DistSq < ChosenDistSq)
+				const bool bLaneMatch = Record.Mode != 2 && D.LaneIndex == S.LaneIndex;
+				if (bLaneMatch)
+				{
+					if (!LaneMatch || DistSq < LaneDistSq)
+					{
+						LaneMatch = &D;
+						LaneDistSq = DistSq;
+						LaneAngle = Angle;
+					}
+				}
+				else if (!Chosen || DistSq < ChosenDistSq)
 				{
 					Chosen = &D;
 					ChosenDistSq = DistSq;
 					ChosenAngle = Angle;
-					if (Record.Mode != 2)
-					{
-						break; // laned: first in-slice candidate wins (slot order)
-					}
 				}
+			}
+			if (LaneMatch)
+			{
+				Chosen = LaneMatch;
+				ChosenDistSq = LaneDistSq;
+				ChosenAngle = LaneAngle;
 			}
 
 			if (!Chosen)

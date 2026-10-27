@@ -243,6 +243,40 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 		{
 			return;
 		}
+		// Phase 2 (A4, arch §6.2 layering): an attack order is the unit-AI
+		// layer's intent to close with the target unit -- the movement layer
+		// executes it as a march to the target's CURRENT anchor. Synthesized
+		// per tick (a moving target re-plans naturally on arrival-replan
+		// paths); the combat press ring takes over once records form.
+		FUnitOrder AttackAsMoveStorage;
+		if (Order->Type == FUnitOrder::EType::AttackUnit || Order->Type == FUnitOrder::EType::AttackMove)
+		{
+			AttackAsMoveStorage = *Order;
+			AttackAsMoveStorage.Type = FUnitOrder::EType::Move;
+			bool bTargetAnchorFound = false;
+			if (Order->TargetUnit.IsValid())
+			{
+				if (const TArray<FMassEntityHandle>* TargetRoster = Registry->FindRoster(Order->TargetUnit);
+					TargetRoster && TargetRoster->Num() > 0)
+				{
+					if (UMassEntitySubsystem* Entities = GetWorld()->GetSubsystem<UMassEntitySubsystem>())
+					{
+						if (const FUnitFormationSharedFragment* TargetFormation =
+							Entities->GetMutableEntityManager().GetSharedFragmentDataPtr<FUnitFormationSharedFragment>((*TargetRoster)[0]))
+						{
+							AttackAsMoveStorage.AnchorPos = TargetFormation->AnchorPos;
+							bTargetAnchorFound = true;
+						}
+					}
+				}
+			}
+			if (!bTargetAnchorFound)
+			{
+				// No valid target (dead / gone): hold where we stand.
+				AttackAsMoveStorage.AnchorPos = Formation.AnchorPos;
+			}
+			Order = &AttackAsMoveStorage;
+		}
 
 		// ---- Order consumption: (re)plan on a new order serial ----
 		const uint32 Serial = Registry->GetOrderSerial(Unit);

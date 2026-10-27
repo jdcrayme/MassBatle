@@ -165,6 +165,7 @@ namespace FCombatSolver
 		FUnitHandle Unit;
 		FVector2D PosM = FVector2D::ZeroVector;
 		float Spacing = 0.f;
+		float YawDeg = 0.f;            // defender facing (ring-point math)
 		float Coverage = 0.f;          // stamped fresh by the tally pass
 		uint16 CoveredMask = 0;        // same-unit living-neighbor sectors
 		uint8 LaneIndex = 0;

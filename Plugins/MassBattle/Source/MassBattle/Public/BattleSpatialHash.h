@@ -56,6 +56,10 @@ public:
 	/** O(live entries): the handle-sorted entry array (debug/dump consumers). */
 	const TArray<FBattleHashEntry>& GetSortedEntries() const { return SortedEntries; }
 
+	/** Slot index of one entity in the sorted arrays (binary search);
+	 *  INDEX_NONE when absent. */
+	int32 FindSlotFor(FMassEntityHandle Entity) const;
+
 	/** Entry position in meters (parallel array to SortedEntries). */
 	const TArray<FVector2D>& GetEntryPositionsM() const { return EntryPositionsM; }
 

@@ -1,5 +1,6 @@
 #include "ServoProcessor.h"
 #include "BattleFragments.h"
+#include "BattleCombatFragments.h"
 #include "BattleMovementFragments.h"
 #include "BattleServo.h"
 #include "BattleUnitContact.h"
@@ -77,6 +78,11 @@ void UServoProcessor::ConfigureQueries(const TSharedRef<FMassEntityManager>& Ent
 	// Phase 2 A2: the member clamp reads the unit's SpeedMult (stats fragment
 	// travels on every battle entity; chunk grouping is per unit already).
 	ServoQuery.AddSharedRequirement<FUnitStatsSharedFragment>(EMassFragmentAccess::ReadOnly);
+	// Phase 2 A12: combat pair states drive the movement state + target (the
+	// ONLY existing-processor consumption point, brief A12).
+	ServoQuery.AddRequirement<FCombatPairFragment>(EMassFragmentAccess::ReadOnly);
+	ServoQuery.AddRequirement<FCombatIntentFragment>(EMassFragmentAccess::ReadOnly);
+	ServoQuery.AddRequirement<FChargeFragment>(EMassFragmentAccess::ReadOnly);
 
 	// Frame snapshot: every battle entity's position/velocity/state, all
 	// read-only (safe to run to completion before the servo chunks). Phase 1
@@ -308,6 +314,9 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 		const auto Targets = Context.GetFragmentView<FSlotTargetFragment>();
 		const auto Transforms = Context.GetFragmentView<FTransformFragment>();
 		const auto Owners = Context.GetFragmentView<FOwnerUnitFragment>();
+		const auto CombatPairs = Context.GetFragmentView<FCombatPairFragment>();
+		const auto CombatIntents = Context.GetFragmentView<FCombatIntentFragment>();
+		const auto ChargeStates = Context.GetFragmentView<FChargeFragment>();
 		auto States = Context.GetMutableFragmentView<FMovementStateFragment>();
 		auto ServoStates = Context.GetMutableFragmentView<FServoStateFragment>();
 		auto Velocities = Context.GetMutableFragmentView<FMassVelocityFragment>();
@@ -354,7 +363,41 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 			const FVector2D PosM(P.X * 0.01f, P.Y * 0.01f);
 			const FVector2D SlotPosM = FVector2D(Targets[i].TargetPos) * 0.01f;
 			const FVector2D OldVelM(Velocities[i].Value.X * 0.01f, Velocities[i].Value.Y * 0.01f);
-			const EBattleMovementState State = States[i].State;
+			EBattleMovementState State = States[i].State;
+
+			// Phase 2 A12: combat pair states OWN the movement state + target
+			// while the entity carries a live press ring (the assign pass
+			// tracks the target each tick). Seeking -> CrossField toward the
+			// press point; Pressing -> PressRing; Striking/Recovering -> hold
+			// at contact (HoldSlot weights; compression owns crowding). The
+			// charge override (state only; task 7 seeds the impact) comes last.
+			FVector2D ServoTargetM = SlotPosM;
+			bool bCombatOverride = false;
+			if (CombatPairs[i].bRingValid != 0
+				&& (CombatIntents[i].TargetUnit.IsValid() || CombatIntents[i].bAutoEngage != 0))
+			{
+				ServoTargetM = FVector2D(CombatPairs[i].RingPosCm) * 0.01f;
+				bCombatOverride = true;
+				switch (CombatPairs[i].State)
+				{
+				case ECombatPairState::Seeking:
+					State = EBattleMovementState::CrossField;
+					break;
+				case ECombatPairState::Pressing:
+					State = EBattleMovementState::PressRing;
+					break;
+				case ECombatPairState::Striking:
+				case ECombatPairState::Recovering:
+				default:
+					State = EBattleMovementState::HoldSlot;
+					break;
+				}
+			}
+			if (ChargeStates[i].DistanceTraveled > 0.f && ChargeStates[i].bConnected == 0)
+			{
+				State = EBattleMovementState::Charge; // no avoidance (phase-1 weight)
+				bCombatOverride = true;
+			}
 
 			// §8.3 servo (velocity control, ADR-07). Phase 2 A1: the
 			// feed-forward form adds the slot's own velocity (Reynolds
@@ -366,12 +409,13 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 				const FVector2D PrevSlotPosM = Targets[i].bPrevValid
 					? FVector2D(Targets[i].PrevTargetPos) * 0.01f
 					: SlotPosM; // first write: no slot motion yet
-				DesiredVel = FUnitServo::ComputeServoVelocityFF(PosM, SlotPosM, PrevSlotPosM,
+				DesiredVel = FUnitServo::ComputeServoVelocityFF(PosM, ServoTargetM,
+					bCombatOverride ? ServoTargetM : PrevSlotPosM,
 					FUnitServoConstants::Tau, MaxSpeedM, FUnitServoConstants::CatchupBoost, DT);
 			}
 			else
 			{
-				DesiredVel = FUnitServo::ComputeServoVelocity(PosM, SlotPosM,
+				DesiredVel = FUnitServo::ComputeServoVelocity(PosM, ServoTargetM,
 					FUnitServoConstants::Tau, MaxSpeedM, FUnitServoConstants::CatchupBoost);
 			}
 
@@ -385,9 +429,9 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 			// center and trips the separation gates (funcon S6 measured
 			// 0.293 m). The cap keeps the pursuit's exact-center convergence
 			// (v -> pursuit -> 0) with a damped final meter.
-			if (bFallInServo)
+			if (bFallInServo && !bCombatOverride) // the press ring is not a settle basin
 			{
-				const float DistM = FVector2D::Distance(PosM, SlotPosM);
+				const float DistM = FVector2D::Distance(PosM, ServoTargetM);
 				constexpr float BasinR = 2.f * FUnitServoConstants::SlotReachEps;
 				if (DistM < BasinR)
 				{
@@ -402,14 +446,15 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 			// A1 per-state avoidance weights (§4.5): HoldSlot none;
 			// ManeuverToSlot medium teammates-only; CrossField full.
 			float Weight = 0.f;
-			if (State == EBattleMovementState::ManeuverToSlot)
+			if (State == EBattleMovementState::ManeuverToSlot || State == EBattleMovementState::PressRing)
 			{
-				Weight = 0.5f;
+				Weight = 0.5f; // PressRing: RVO within the mob radius only (§8.3)
 			}
 			else if (State == EBattleMovementState::CrossField)
 			{
 				Weight = 1.0f;
 			}
+			// Charge / HoldSlot / Flee: none (charge has phase-1 no-avoidance).
 
 			const uint32 MyHandle = Context.GetEntity(i).Index;
 			const FUnitHandle MyOwner = Owners[i].Owner;
@@ -540,7 +585,7 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 
 			// Ladder bookkeeping (§8.5): slow + away from slot escalates.
 			const float SpeedM = NewVelM.Size();
-			const float DistToSlotM = FVector2D::Distance(PosM, SlotPosM);
+			const float DistToSlotM = FVector2D::Distance(PosM, ServoTargetM);
 			const bool bNearSlot = DistToSlotM < FUnitServoConstants::SlotReachEps;
 			const bool bSlow = SpeedM < FUnitServoConstants::StuckSpeedEps;
 			float Timer = ServoStates[i].LowSpeedTime;
@@ -631,6 +676,10 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 			}
 			ServoStates[i].LowSpeedTime = Timer;
 			ServoStates[i].LadderLevel = NewLevel;
+			if (bCombatOverride)
+			{
+				States[i].State = State; // the pair state owns the movement state
+			}
 			if (NewLevel == 0)
 			{
 				ServoStates[i].bUnitAIHandoff = 0; // recovered: handoff withdrawn
@@ -641,6 +690,7 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 			// teammate (an overlap frozen there can never resolve; rotation
 			// re-dress transients must shed contact under ManeuverToSlot's
 			// teammate avoidance first), and leave it if contact appears.
+			if (!bCombatOverride)
 			{
 				bool bTouchingTeammate = false;
 				if (State == EBattleMovementState::ManeuverToSlot || State == EBattleMovementState::HoldSlot)

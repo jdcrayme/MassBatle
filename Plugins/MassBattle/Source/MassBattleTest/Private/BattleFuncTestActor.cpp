@@ -1,5 +1,6 @@
 #include "BattleFuncTestActor.h"
 #include "BattleFragments.h"
+#include "BattleCombatFragments.h"
 #include "UnitActor.h"
 #include "BattleRegistry.h"
 #include "BattleSpawnLibrary.h"
@@ -4337,4 +4338,215 @@ namespace
 	const FBattleFuncTestRegistry::FRegistrar GRegS9(TEXT("AUnitTrenchGarrisonTest"), &MakeTrenchGarrisonTest);
 	const FBattleFuncTestRegistry::FRegistrar GRegS10(TEXT("AUnitWallGarrisonTest"), &MakeWallGarrisonTest);
 	const FBattleFuncTestRegistry::FRegistrar GRegS8b(TEXT("AUnitMultiUnitGarrisonTest"), &MakeMultiUnitGarrisonTest);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2 task 6 combat smoke (the assign-pass wiring's end-to-end evidence).
+// Two units ordered into contact: pairs form, attackers press the ring. The
+// combat cvars ride locally (restored on completion) -- the rest of the func
+// suite stays flags-off.
+// ---------------------------------------------------------------------------
+namespace
+{
+	constexpr const TCHAR* CombatSmokeCvars[] = {
+		TEXT("Battle.Combat.SpatialHash"),
+		TEXT("Battle.Combat.Clusters"),
+		TEXT("Battle.Combat.Tally"),
+		TEXT("Battle.Combat.Assign"),
+	};
+}
+
+ACombatSmokeTest::ACombatSmokeTest()
+{
+	TimeLimit = 90.f;
+}
+
+void ACombatSmokeTest::BeginTest()
+{
+	// Manager-less start (the S-scenario pattern): enable ticking explicitly
+	// (the engine manager does this in its own BeginTest path) -- skipping it
+	// leaves the actor unticked (measured 2026-10-27).
+	SetActorTickEnabled(true);
+	PrimaryActorTick.bCanEverTick = true;
+	bIsRunning = true;
+	Result = EFunctionalTestResult::Running;
+}
+
+void ACombatSmokeTest::CompleteTest(EFunctionalTestResult TestResult, const FString& Message)
+{
+	RestoreCombatCvars();
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT CombatSmoke %s %s"),
+		TestResult == EFunctionalTestResult::Succeeded ? TEXT("PASS") : TEXT("FAIL"), *Message);
+	Result = TestResult;
+	bIsRunning = false;
+}
+
+void ACombatSmokeTest::SetCombatCvars()
+{
+	for (int32 i = 0; i < 4; ++i)
+	{
+		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(CombatSmokeCvars[i]))
+		{
+			SavedCombatCvars[i] = C->GetInt();
+			C->Set(1, ECVF_SetByCode);
+		}
+	}
+}
+
+void ACombatSmokeTest::RestoreCombatCvars()
+{
+	for (int32 i = 0; i < 4; ++i)
+	{
+		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(CombatSmokeCvars[i]))
+		{
+			C->Set(SavedCombatCvars[i], ECVF_SetByCode);
+		}
+	}
+}
+
+void ACombatSmokeTest::Destroyed()
+{
+	RestoreCombatCvars();
+	Super::Destroyed();
+}
+
+void ACombatSmokeTest::StartTest()
+{
+	Super::StartTest();
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("no world"));
+		return;
+	}
+	DestroyOtherUnitActors(World);
+	UBattleTestSettings::ApplyTestMode();
+	SetCombatCvars();
+	if (UBattleDebugSubsystem* Debug = World->GetSubsystem<UBattleDebugSubsystem>())
+	{
+		Debug->ResetDiagnostics();
+	}
+	if (UBattleCostGridSubsystem* CostGrid = World->GetSubsystem<UBattleCostGridSubsystem>())
+	{
+		CostGrid->ResetToFlat();
+	}
+
+	FActorSpawnParameters Params;
+	Params.ObjectFlags |= RF_Transient;
+	UnitA = World->SpawnActor<AUnitActor>(FVector(-1200.f, 0.f, 100.f), FRotator(0.f, 0.f, 0.f), Params);
+	UnitB = World->SpawnActor<AUnitActor>(FVector(1200.f, 0.f, 100.f), FRotator(0.f, 180.f, 0.f), Params);
+	if (UnitA)
+	{
+		UnitA->EduRowIndex = 0;
+		UnitA->SoldierCount = 12;
+		FBattleSpawnResult R;
+		FString E;
+		if (!UnitA->SpawnEntities(R, E)) { UnitA = nullptr; }
+	}
+	if (UnitB)
+	{
+		UnitB->EduRowIndex = 0;
+		UnitB->SoldierCount = 12;
+		FBattleSpawnResult R;
+		FString E;
+		if (!UnitB->SpawnEntities(R, E)) { UnitB = nullptr; }
+	}
+	if (!UnitA || !UnitB)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("spawn failed"));
+		return;
+	}
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT CombatSmoke Spawned A(-12,0) f=0 B(12,0) f=180 (12 men each)"));
+	Phase = EPhase::Engage;
+	TicksInPhase = 0;
+}
+
+void ACombatSmokeTest::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+	if (!IsRunning() || Phase == EPhase::Done)
+	{
+		return;
+	}
+	UWorld* World = GetWorld();
+	UUnitRegistrySubsystem* Registry = World ? World->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	if (!Registry)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("registry missing"));
+		return;
+	}
+	++TicksInPhase;
+
+	if (Phase == EPhase::Engage)
+	{
+		if (TicksInPhase == 10)
+		{
+			// Face-off at 24 m: both attack; the movement layer marches them
+			// together (attack-as-move synthesis), records form at contact,
+			// pairs assign, waiters press the ring.
+			const bool bA = Registry->IssueAttackUnitOrder(UnitA->GetUnitHandle(), UnitB->GetUnitHandle());
+			const bool bB = Registry->IssueAttackUnitOrder(UnitB->GetUnitHandle(), UnitA->GetUnitHandle());
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT CombatSmoke orders A=%d B=%d"), bA ? 1 : 0, bB ? 1 : 0);
+		}
+		if (TicksInPhase > 400)
+		{
+			Phase = EPhase::Assert;
+			TicksInPhase = 0;
+		}
+	}
+	else if (Phase == EPhase::Assert)
+	{
+		if (TicksInPhase == 1)
+		{
+			BattleExec::CombatDumpPairs(TArray<FString>(), World);
+		}
+		const FEngagementRecord* Rec = Registry->FindEngagement(UnitA->GetUnitHandle(), UnitB->GetUnitHandle());
+		if (Rec && TicksInPhase > 120)
+		{
+			UMassEntitySubsystem* Entities = World->GetSubsystem<UMassEntitySubsystem>();
+			const TArray<FMassEntityHandle>* Roster = Registry->FindRoster(UnitA->GetUnitHandle());
+			int32 Paired = 0;
+			int32 Ringing = 0;
+			if (Entities && Roster)
+			{
+				for (const FMassEntityHandle& E : *Roster)
+				{
+					const FMassEntityView View(Entities->GetMutableEntityManager(), E);
+					if (const FCombatPairFragment* Pair = View.GetFragmentDataPtr<FCombatPairFragment>())
+					{
+						Paired += Pair->Target.IsValid() ? 1 : 0;
+						Ringing += (Pair->bRingValid != 0) ? 1 : 0;
+					}
+				}
+			}
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT CombatSmoke Evidence contact=1 paired=%d/12 ringing=%d/12 pressure=%d"),
+				Paired, Ringing, Rec->DesiredPressure);
+			if (Paired > 0 && Ringing > 0)
+			{
+				CompleteTest(EFunctionalTestResult::Succeeded,
+					FString::Printf(TEXT("pairs=%d ring=%d"), Paired, Ringing));
+			}
+			else
+			{
+				CompleteTest(EFunctionalTestResult::Error,
+					FString::Printf(TEXT("contact without pairs (paired=%d ringing=%d)"), Paired, Ringing));
+			}
+			Phase = EPhase::Done;
+		}
+		else if (TicksInPhase > 2400)
+		{
+			CompleteTest(EFunctionalTestResult::Error, TEXT("no contact formed (40 s budget)"));
+			Phase = EPhase::Done;
+		}
+	}
+}
+
+namespace
+{
+	AFunctionalTest* MakeCombatSmokeTest(UWorld* World)
+	{
+		return World->SpawnActor<ACombatSmokeTest>();
+	}
+	const FBattleFuncTestRegistry::FRegistrar GRegCombatSmoke(TEXT("ACombatSmokeTest"), &MakeCombatSmokeTest);
 }
