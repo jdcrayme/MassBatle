@@ -48,6 +48,32 @@ bool FContact_OBBOverlapGolden::RunTest(const FString& Parameters)
 	C.YawDeg = 90.f;
 	TestTrue(TEXT("T-crossing overlaps"), FUnitContact::OverlapDepth(A, C) > 0.f);
 
+	// Audit M2: oblique elongated formations. Two near-parallel 24 m
+	// frontages (half-across 12) at 0 vs 5 deg, offset diagonally -- the
+	// cases where the old 2-axis (center-delta) SAT failed:
+	//  - offset (2,2): genuinely overlapping, but only by 0.874 m along the
+	//    5-deg box's front axis; the old code reported ~14.8 m of depth
+	//    (spurious facing lock + over-triggered shove zone).
+	//  - offset (3,5): SEPARATED (5-deg front axis separates by 0.61 m);
+	//    the old code reported ~13 m of phantom overlap.
+	FUnitOBB D;
+	D.Center = FVector2D::ZeroVector;
+	D.HalfAlongFacing = 1.f;
+	D.HalfAcrossFacing = 12.f;
+	D.YawDeg = 0.f;
+	FUnitOBB E = D;
+	E.YawDeg = 5.f;
+	{
+		E.Center = FVector2D(2.f, 2.f);
+		const float Depth = FUnitContact::OverlapDepth(D, E);
+		TestTrue(FString::Printf(TEXT("oblique shallow overlap is tight (got %.3f, audit M2)"), Depth),
+			Depth > 0.f && Depth <= 1.0f);
+	}
+	{
+		E.Center = FVector2D(3.f, 5.f);
+		TestEqual(TEXT("oblique separated -> depth 0 (audit M2)"), FUnitContact::OverlapDepth(D, E), 0.f);
+	}
+
 	// Point containment: inside, outside, corner.
 	TestTrue(TEXT("point inside"), FUnitContact::ContainsPoint(A, FVector2D(0.5f, 3.f)));
 	TestFalse(TEXT("point outside"), FUnitContact::ContainsPoint(A, FVector2D(3.f, 0.f)));

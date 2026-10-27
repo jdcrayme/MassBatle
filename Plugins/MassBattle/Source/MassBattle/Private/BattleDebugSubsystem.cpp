@@ -37,6 +37,7 @@ void UBattleDebugSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 void UBattleDebugSubsystem::ResetDiagnostics()
 {
 	LadderEscalations = 0;
+	MorphDecisions = 0;
 	GarrisonFilings = 0;
 	GarrisonFilingTicksTotal = 0;
 	GarrisonQueueWaits = 0;

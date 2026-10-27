@@ -177,7 +177,7 @@ bool FSlots_PredictiveSwapTerminates::RunTest(const FString& Parameters)
 	FSlotAssigner::FindCrossingPairs(Positions, Velocities, Assignment, Slots, 1.0f, 0.5f, Pairs);
 	TestEqual(TEXT("converging pair detected"), Pairs.Num(), 1);
 
-	FSlotAssigner::ApplyPredictiveSwaps(Assignment, Pairs);
+	FSlotAssigner::ApplyPredictiveSwaps(Assignment, Pairs, Positions, Slots);
 	TestEqual(TEXT("swapped: entity 0 takes slot 1"), Assignment[0], 1);
 	TestEqual(TEXT("swapped: entity 1 takes slot 0"), Assignment[1], 0);
 
@@ -219,7 +219,7 @@ bool FSlots_PredictiveSwapTerminates::RunTest(const FString& Parameters)
 			}
 			TArray<FIntPoint> ManyPairs;
 			FSlotAssigner::FindCrossingPairs(P, V, A, S, 1.0f, 0.5f, ManyPairs);
-			FSlotAssigner::ApplyPredictiveSwaps(A, ManyPairs);
+			FSlotAssigner::ApplyPredictiveSwaps(A, ManyPairs, P, S);
 			TSet<int32> Used;
 			for (int32 Slot : A)
 			{
@@ -230,6 +230,67 @@ bool FSlots_PredictiveSwapTerminates::RunTest(const FString& Parameters)
 		World->DestroyWorld(false);
 		return true;
 	}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlots_SwapFixpoint,
+	"Battle.Unit.Slots.SwapFixpoint",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FSlots_SwapFixpoint::RunTest(const FString& Parameters)
+{
+	// Audit M3: apply the detected swaps, then RE-DETECT -- a guarded apply
+	// must reach a fixpoint (no new crossing pair is swap-improving after the
+	// pass), and a shared-entity chain like (0,1),(1,2) must not execute a
+	// later pair on a stale guard promise.
+	{
+		// Head-on converging pair: one swap, re-detect finds nothing.
+		TArray<FVector2D> Positions = { FVector2D(4.f, 0.f), FVector2D(1.f, 0.f) };
+		TArray<FVector2D> Velocities = { FVector2D(-3.f, 0.f), FVector2D(3.f, 0.f) };
+		TArray<FVector2D> Slots = { FVector2D(0.f, 0.f), FVector2D(5.f, 0.f) };
+		TArray<int32> Assignment = { 0, 1 };
+		TArray<FIntPoint> Pairs;
+		FSlotAssigner::FindCrossingPairs(Positions, Velocities, Assignment, Slots, 1.0f, 0.5f, Pairs);
+		TestEqual(TEXT("pair detected"), Pairs.Num(), 1);
+		FSlotAssigner::ApplyPredictiveSwaps(Assignment, Pairs, Positions, Slots);
+		TArray<FIntPoint> ReDetected;
+		// Swapped slots: entity 0 now walks to slot 1 (east), entity 1 to
+		// slot 0 (west) -- they are DIVERGING; no further swap is improving.
+		FSlotAssigner::FindCrossingPairs(Positions, Velocities, Assignment, Slots, 1.0f, 0.5f, ReDetected);
+		TestEqual(TEXT("re-detect to empty after apply (audit M3 fixpoint)"), ReDetected.Num(), 0);
+	}
+	{
+		// Shared-entity chain (0,1),(1,2): the second pair shares entity 1
+		// with the first. With used-once semantics at most one of them
+		// applies; in any case the assignment stays a bijection and every
+		// applied swap was guard-checked against the CURRENT assignment.
+		TArray<FVector2D> Positions = { FVector2D(8.f, 0.f), FVector2D(4.f, 0.f), FVector2D(0.f, 0.f) };
+		TArray<FVector2D> Velocities = { FVector2D(-3.f, 0.f), FVector2D(-3.f, 0.f), FVector2D(3.f, 0.f) };
+		TArray<FVector2D> Slots = { FVector2D(0.f, 0.f), FVector2D(4.f, 0.f), FVector2D(8.f, 0.f) };
+		TArray<int32> Assignment = { 0, 1, 2 };
+		TArray<FIntPoint> Pairs;
+		FSlotAssigner::FindCrossingPairs(Positions, Velocities, Assignment, Slots, 1.0f, 0.5f, Pairs);
+		FSlotAssigner::ApplyPredictiveSwaps(Assignment, Pairs, Positions, Slots);
+		TSet<int32> Used;
+		for (const int32 Slot : Assignment)
+		{
+			if (Slot >= 0)
+			{
+				Used.Add(Slot);
+			}
+		}
+		TestEqual(TEXT("chain keeps the bijection"), Used.Num(), 3);
+		// No swap-created trek: with the guard re-checked at apply time and
+		// each entity used once, every entity ends at a slot at least as
+		// close as the one it started on (swaps only fire when BOTH parties
+		// strictly improve against the then-current assignment).
+		for (int32 E = 0; E < 3; ++E)
+		{
+			TestTrue(FString::Printf(TEXT("chain entity %d not trekked (audit M3)"), E),
+				FVector2D::DistSquared(Positions[E], Slots[Assignment[E]])
+				<= FVector2D::DistSquared(Positions[E], Slots[E]) + KINDA_SMALL_NUMBER);
+		}
+	}
+	return true;
+}
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlots_BatchedReflowIdempotent,
 	"Battle.Unit.Slots.BatchedReflowIdempotent",

@@ -341,7 +341,7 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 				}
 				TArray<FIntPoint> Pairs;
 				FSlotAssigner::FindCrossingPairs(EntityPosM, VelM, NewAssignment, SlotPosM, 1.0f, 0.5f, Pairs);
-				FSlotAssigner::ApplyPredictiveSwaps(NewAssignment, Pairs);
+				FSlotAssigner::ApplyPredictiveSwaps(NewAssignment, Pairs, EntityPosM, SlotPosM);
 			}
 
 			// Adopt.

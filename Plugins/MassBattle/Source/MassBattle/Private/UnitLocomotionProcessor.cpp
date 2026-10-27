@@ -54,12 +54,23 @@ namespace
 		0.1f,
 		TEXT("Speed-limit hysteresis fraction (rises need this margin)."),
 		ECVF_Default);
+
+	// Audit H2: the T1.7 pass decision commits when the constriction is this
+	// close to the anchor (the lead rank at the mouth) -- not on first sight
+	// anywhere inside the 15 m scan-ahead. 6 m gives the batched reflow ~4 s
+	// at walk speed to re-dress the block into the committed column.
+	TAutoConsoleVariable<float> GBattleMovementPassMouthThreshold(
+		TEXT("Battle.Movement.PassMouthThreshold"),
+		6.f,
+		TEXT("Pass-decision commit threshold, m: the constriction must be within this arc distance of the anchor to commit (audit H2)."),
+		ECVF_Default);
 }
 
 UUnitLocomotionProcessor::UUnitLocomotionProcessor(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 	, LocomotionQuery(*this)
 	, UnitBodyQuery(*this)
+	, CavalryQuery(*this)
 {
 	bAutoRegisterWithProcessingPhases = true;
 	SetProcessingPhase(EMassProcessingPhase::PrePhysics);
@@ -80,6 +91,11 @@ void UUnitLocomotionProcessor::ConfigureQueries(const TSharedRef<FMassEntityMana
 	// interpenetrating): one chunk per unit, read-only.
 	UnitBodyQuery.AddSharedRequirement<FUnitFormationSharedFragment>(EMassFragmentAccess::ReadOnly);
 	UnitBodyQuery.AddRequirement<FOwnerUnitFragment>(EMassFragmentAccess::ReadOnly);
+
+	// Same grouping, cavalry rosters only (§8.6 mobility-advantage input).
+	CavalryQuery.AddSharedRequirement<FUnitFormationSharedFragment>(EMassFragmentAccess::ReadOnly);
+	CavalryQuery.AddRequirement<FOwnerUnitFragment>(EMassFragmentAccess::ReadOnly);
+	CavalryQuery.AddTagRequirement<FCavalryTag>(EMassFragmentPresence::All);
 }
 
 void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionContext& Context)
@@ -149,6 +165,18 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 	const float FacingDeltaRate = GBattleMovementFacingDeltaRate.GetValueOnGameThread();
 	const float Hysteresis = GBattleMovementSpeedHysteresis.GetValueOnGameThread();
 
+	// §8.6 mobility input (audit H3): the set of cavalry-owned units (units
+	// are class-uniform, so chunk membership is the unit's class).
+	TSet<FUnitHandle> CavalryUnits;
+	CavalryQuery.ForEachEntityChunk(Context, [&CavalryUnits](FMassExecutionContext& Context)
+	{
+		const auto Owners = Context.GetFragmentView<FOwnerUnitFragment>();
+		if (Owners.Num() > 0)
+		{
+			CavalryUnits.Add(Owners[0].Owner);
+		}
+	});
+
 	// ---- Per-unit locomotion (§8.2: the unit is the locomotor) ----
 	LocomotionQuery.ForEachEntityChunk(Context, [&, DT, WalkSpeed, FacingDeltaRate, Hysteresis, CostGrid, Garrison, Registry, bGarrisonEnabled](FMassExecutionContext& Context)
 	{
@@ -178,6 +206,16 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 			Formation.Path.NumPoints = 0;
 			Formation.Path.TotalLength = 0.f;
 			const int32 Count = FMath::Min(Plan.Points.Num(), MaxBattlePathPoints);
+			if (Plan.Points.Num() > MaxBattlePathPoints)
+			{
+				// Audit M5: truncation must be loud -- a silent tail drop
+				// strands the unit short of the goal with no diagnostic.
+				UE_LOG(LogMassBattle, Warning,
+					TEXT("EXEC_RESULT PlanPath TRUNCATED Unit=%u:%u Plan=%d Stored=%d (%.1fm lost)"),
+					Formation.OwnerUnit.Index, Formation.OwnerUnit.Serial,
+					Plan.Points.Num(), Count,
+					Plan.TotalLength - Plan.CumulativeS[Count - 1]);
+			}
 			Formation.Path.NumPoints = Count;
 			float S = 0.f;
 			for (int32 i = 0; i < Count; ++i)
@@ -222,7 +260,13 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 			{
 				FBattlePathPlanner::Smooth(CostGrid->GetGrid(), 1.0f, Plan);
 				FBattlePlannedPath Resampled;
-				FBattlePathPlanner::Resample(Plan, 2.0f, Resampled);
+				// Adaptive spacing (audit M5): a fixed 2 m resample silently
+				// truncates at MaxBattlePathPoints (~126 m) and strands the unit
+				// mid-order; scale the spacing with the plan length so the longest
+				// tile-spanning order still fits the fragment.
+				const float ResampleSpacingM = FMath::Max(2.0f,
+					Plan.TotalLength / static_cast<float>(MaxBattlePathPoints - 1));
+				FBattlePathPlanner::Resample(Plan, ResampleSpacingM, Resampled);
 				PolylineFromPlan(Resampled);
 				return true;
 			}
@@ -366,6 +410,24 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 			Formation.PlannedOrderSerial = Serial;
 			Formation.PathS = 0.f;
 			Formation.PassLocked = 0; // new order = new pass (T1.7 commit rule is per traversal)
+			Formation.PassMorphCount = 0;
+			// A new traversal re-opens the width: restore the field frontage a
+			// previous pass morphed away (audit H2 -- a 20-file unit that once
+			// passed a gap must not stay a 3-file column forever). Garrisoned
+			// units are excluded: their column width is FSM-owned (ingress
+			// saved the field files it narrowed from).
+			if (Formation.GarrisonMode == EGarrisonMode::None
+				&& Formation.FieldFilesSaved > 0 && Formation.NumFiles != Formation.FieldFilesSaved)
+			{
+				UE_LOG(LogMassBattle, Display,
+					TEXT("EXEC_RESULT PassDecision Unit=%u:%u REDEPLOY files %d->%d (new order)"),
+					Unit.Index, Unit.Serial, Formation.NumFiles, Formation.FieldFilesSaved);
+				Formation.NumFiles = Formation.FieldFilesSaved;
+				++Formation.Generation;
+			}
+			// New traversal, open-order spacing (audit H2; compression recovers
+			// at 10%/s otherwise, which would drag the old squeeze into it).
+			Formation.SpacingScale = 1.f;
 			// Fan-in destination frame: only a successful field-Move plan
 			// re-arms it (below) -- a stale destination must never outlive the
 			// order that owned it (garrison approach paths would otherwise
@@ -705,6 +767,73 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 			CommandedSpeedM = Order->CommandedSpeed > 0.f ? Order->CommandedSpeed : WalkSpeed;
 		}
 
+		// Formation body extents (meters) -- shared by the §8.6 contact scan,
+		// the pass-decision width, and the Min3 outer radius.
+		const int32 NumRanks = FMath::Max(1, FMath::CeilToInt(static_cast<float>(Formation.NumSlots) / Formation.NumFiles));
+		const float HalfFrontageM = (Formation.NumFiles * Formation.FileSpacing * 0.5f) * 0.01f;
+		const float HalfDepthM = (NumRanks * Formation.RankSpacing * 0.5f) * 0.01f;
+
+		// ---- §8.2 hard rule: no facing change while interpenetrating ----
+		// R-G3: skipped entirely for garrisoned units (their field OBB is
+		// meaningless and interior crowding is servo+compression).
+		const bool bGarrisoned = Formation.GarrisonMode != EGarrisonMode::None;
+		bool bInterpenetrating = false;
+		// §8.6 (audit H3): PassThrough policy active for this unit THIS tick --
+		// gates the ~55% anchor speed and the 0.40 compression floor. Resolved
+		// BEFORE the speed limit so the factor enters the Min3 (multiplying
+		// after ComputeUnitSpeedLimit wrote a dead local and the anchor
+		// proceeded at full commanded speed while interpenetrating).
+		bool bPassThroughActive = false;
+		if (!bGarrisoned)
+		{
+			const float RadMy = FMath::DegreesToRadians(Formation.FacingYaw);
+			const FVector2D FrontMy(FMath::Cos(RadMy), FMath::Sin(RadMy));
+			FUnitOBB MyBody;
+			MyBody.Center = Formation.AnchorPos * 0.01f - FrontMy * HalfDepthM; // centroid
+			MyBody.YawDeg = Formation.FacingYaw;
+			MyBody.HalfAlongFacing = HalfDepthM;
+			MyBody.HalfAcrossFacing = HalfFrontageM;
+			const bool bSelfCavalry = CavalryUnits.Contains(Unit);
+			for (int32 BodyIdx = 0; BodyIdx < UnitBodies.Num(); ++BodyIdx)
+			{
+				if (BodyUnits[BodyIdx] == Unit)
+				{
+					continue; // self
+				}
+				if (FUnitContact::Interpenetrating(MyBody, UnitBodies[BodyIdx]))
+				{
+					bInterpenetrating = true;
+					// Phase 1 same-team fixtures (hostile is Phase 2); the
+					// moving unit holds right-of-way over standing bodies.
+					const bool bOtherCavalry = CavalryUnits.Contains(BodyUnits[BodyIdx]);
+					const bool bAdvantage = bSelfCavalry && !bOtherCavalry;
+					if (FUnitContact::ResolvePolicy(/*bFriendly*/ true, bAdvantage, /*bRightOfWay*/ true)
+						== FUnitContact::EContactPolicy::PassThrough)
+					{
+						bPassThroughActive = true;
+					}
+					// Contact probe (audit H3 wiring evidence): first 3 ticks per
+					// unit, then every 240th, with the resolved policy and the
+					// post-Min3 limit.
+					static TMap<FUnitHandle, int32> ProbeTicks;
+					int32& TickCount = ProbeTicks.FindOrAdd(Unit);
+					++TickCount;
+					if (TickCount <= 3 || TickCount % 240 == 0)
+					{
+						UE_LOG(LogMassBattle, Display,
+							TEXT("EXEC_RESULT PassThroughProbe Unit=%u:%u tick=%d anchorX=%.2f selfCav=%d otherCav=%d policy=%d limit=%.1f"),
+							Unit.Index, Unit.Serial, TickCount, Formation.AnchorPos.X * 0.01f,
+							bSelfCavalry ? 1 : 0, bOtherCavalry ? 1 : 0,
+							bPassThroughActive ? 1 : 0, Formation.SpeedLimit);
+					}
+				}
+			}
+		}
+		if (bPassThroughActive && CommandedSpeedM > 0.f)
+		{
+			CommandedSpeedM *= FUnitContact::PassThroughSpeedFactor;
+		}
+
 		FBattlePlannedPath PathM;
 		const bool bHasPath = FPathFrameLayout::FromFragment(Formation.Path, PathM);
 
@@ -718,9 +847,6 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 
 		// Unit outer radius from the formed body; turn radius from path
 		// curvature at the anchor (straight path -> huge -> caps inactive).
-		const int32 NumRanks = FMath::Max(1, FMath::CeilToInt(static_cast<float>(Formation.NumSlots) / Formation.NumFiles));
-		const float HalfFrontageM = (Formation.NumFiles * Formation.FileSpacing * 0.5f) * 0.01f;
-		const float HalfDepthM = (NumRanks * Formation.RankSpacing * 0.5f) * 0.01f;
 		LimitIn.OuterRadius = FMath::Sqrt(HalfFrontageM * HalfFrontageM + HalfDepthM * HalfDepthM);
 		LimitIn.PathRadiusOfAnchor = bHasPath
 			? FUnitLocomotion::PathRadiusAt(PathM, Formation.PathS * 0.01f, 3.0f)
@@ -733,34 +859,6 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 		const float NewLimitM = FUnitLocomotion::ApplyHysteresis(CurrentLimitM, RawLimitM, Hysteresis);
 		CurrentLimit = NewLimitM * 100.f;
 
-		// ---- §8.2 hard rule: no facing change while interpenetrating ----
-		// R-G3: skipped entirely for garrisoned units (their field OBB is
-		// meaningless and interior crowding is servo+compression).
-		const bool bGarrisoned = Formation.GarrisonMode != EGarrisonMode::None;
-		bool bInterpenetrating = false;
-		if (!bGarrisoned)
-		{
-			const float RadMy = FMath::DegreesToRadians(Formation.FacingYaw);
-			const FVector2D FrontMy(FMath::Cos(RadMy), FMath::Sin(RadMy));
-			FUnitOBB MyBody;
-			MyBody.Center = Formation.AnchorPos * 0.01f - FrontMy * HalfDepthM; // centroid
-			MyBody.YawDeg = Formation.FacingYaw;
-			MyBody.HalfAlongFacing = HalfDepthM;
-			MyBody.HalfAcrossFacing = HalfFrontageM;
-			for (int32 BodyIdx = 0; BodyIdx < UnitBodies.Num(); ++BodyIdx)
-			{
-				if (BodyUnits[BodyIdx] == Unit)
-				{
-					continue; // self
-				}
-				if (FUnitContact::Interpenetrating(MyBody, UnitBodies[BodyIdx]))
-				{
-					bInterpenetrating = true;
-					break;
-				}
-			}
-		}
-
 		// ---- Narrow-pass decision (arch §8.6, T1.7): field paths only --
 		//      garrison interior paths PRE-COMMIT the column (PassLocked = 1
 		//      at adoption, F7); a grid-width scan is meaningless indoors. ----
@@ -769,6 +867,7 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 			const float ScanAheadM = 15.f;
 			const float FrontM = Formation.PathS * 0.01f;
 			float PassWidthM = FLT_MAX;
+			float MinWidthArcM = FLT_MAX; // arc distance to the NARROWEST sample (audit H2: the mouth)
 			FVector2D PathPos;
 			FVector2D PathTan;
 			for (float Ahead = 2.f; Ahead <= ScanAheadM; Ahead += 1.5f)
@@ -777,14 +876,23 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 				{
 					const float W = FUnitPassGeometry::MeasureClearWidth(
 						CostGrid->GetGrid(), PathPos, FVector2D(-PathTan.Y, PathTan.X), 40.f);
-					PassWidthM = FMath::Min(PassWidthM, W);
+					if (W < PassWidthM)
+					{
+						PassWidthM = W;
+						MinWidthArcM = Ahead;
+					}
 				}
 			}
 			const float FormationWidthM = HalfFrontageM * 2.f; // files across the facing
-			// Decide (and commit) only once a genuine narrowing is within the
-			// scan window -- an all-clear scan must keep scanning, not lock a
-			// no-op decision before the corridor is even visible.
-			if (PassWidthM < FormationWidthM * 0.99f)
+			// Decide (and commit) only once a genuine narrowing is inside the
+			// scan window AND the anchor has closed to within the mouth
+			// threshold of it (audit H2): committing on first sight at 15 m
+			// locks the decision before the corridor is even near -- and locks
+			// the WRONG traversal when the plan skirts a distant gap it will
+			// never enter. The comment above always claimed "commits once the
+			// lead rank nears the mouth"; the threshold is what implements it.
+			const float MouthThresholdM = GBattleMovementPassMouthThreshold.GetValueOnGameThread();
+			if (PassWidthM < FormationWidthM * 0.99f && MinWidthArcM <= MouthThresholdM)
 			{
 				const FUnitPassGeometry::FPassDecision Decision = FUnitPassGeometry::DecideSqueezeOrMorph(
 					PassWidthM, FormationWidthM, Formation.FileSpacing * 0.01f);
@@ -793,7 +901,13 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 					UE_LOG(LogMassBattle, Display,
 						TEXT("EXEC_RESULT PassDecision Unit=%u:%u MORPH files %d->%d (pass %.1fm)"),
 						Unit.Index, Unit.Serial, Formation.NumFiles, Decision.MorphFiles, PassWidthM);
+					Formation.FieldFilesSaved = Formation.NumFiles; // audit H2: the pre-pass frontage, restored past the exit
 					Formation.NumFiles = Decision.MorphFiles;
+					++Formation.PassMorphCount;
+					if (Debug)
+					{
+						Debug->RecordMorphDecision();
+					}
 					++Formation.Generation; // layout re-parameterization re-slots via the normal reflow
 				}
 				else if (!Decision.bMorph)
@@ -802,16 +916,26 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 						TEXT("EXEC_RESULT PassDecision Unit=%u:%u SQUEEZE scale=%.2f (pass %.1fm)"),
 						Unit.Index, Unit.Serial, Decision.SqueezeScale, PassWidthM);
 				}
-				Formation.PassLocked = 1; // commits once the lead rank nears the mouth
+				Formation.PassLocked = 1;
 			}
 		}
 
 		// Compression model (§8.2): spacing scale advances toward the pass
 		// demand while squeezing and recovers at ~10%/s afterwards. Garrison
 		// interior phases skip the corridor scan (no meaningful grid widths).
+		// NOTE the asymmetric semantics (audit nit): the path branch scales
+		// file LATERALS only; the no-path anchor branch (CompressedSlot)
+		// scales the full layout offset including rank depth.
 		if (bHasPath && !bGarrisoned)
 		{
 			float TargetScale = 1.f;
+			bool bPastExit = false;
+			// The corridor is judged against the PRE-MORPH field width: a
+			// morphed 3-file column would read the very gap it is entering
+			// as "wide enough" and re-deploy inside the wall (the pre-fix
+			// morph/redeploy flip-flop).
+			const int32 FieldFiles = Formation.FieldFilesSaved > 0 ? Formation.FieldFilesSaved : Formation.NumFiles;
+			const float FieldWidthM = FieldFiles * Formation.FileSpacing * 0.01f;
 			if (Formation.PassLocked)
 			{
 				// While inside the pass corridor, hold the locked squeeze scale.
@@ -822,31 +946,68 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 				{
 					const float W = FUnitPassGeometry::MeasureClearWidth(
 						CostGrid->GetGrid(), PathPos, FVector2D(-PathTan.Y, PathTan.X), 40.f);
-					const float FormationWidthM = HalfFrontageM * 2.f;
-					if (W < FormationWidthM * FUnitCompression::CompressionFloor * 0.99f)
+					if (W < FieldWidthM * FUnitCompression::CompressionFloor * 0.99f)
 					{
 						TargetScale = FUnitPassGeometry::DecideSqueezeOrMorph(
-							W, FormationWidthM, Formation.FileSpacing * 0.01f).SqueezeScale;
+							W, FieldWidthM, Formation.FileSpacing * 0.01f).SqueezeScale;
+					}
+					else if (W >= FieldWidthM * 0.99f)
+					{
+						// No constriction ahead: re-deploy width only PAST exit
+						// clearance (arch §8.6, audit H2) -- the ENTIRE corridor
+						// the formation occupies, from its tail to 8 m ahead of
+						// the anchor, must be clear at the field width. A
+						// backward-only scan cannot see a constriction the unit
+						// is still approaching (that was the morph/redeploy
+						// flip-flop), so the window spans both.
+						const float DepthM = NumRanks * Formation.RankSpacing * 0.01f;
+						bPastExit = true;
+						for (float Back = DepthM + 2.f; Back >= -ScanAheadM && bPastExit; Back -= 2.f)
+						{
+							if (FPathFrameLayout::SampleAt(PathM, Formation.PathS * 0.01f - Back, PathPos, PathTan))
+							{
+								const float WB = FUnitPassGeometry::MeasureClearWidth(
+									CostGrid->GetGrid(), PathPos, FVector2D(-PathTan.Y, PathTan.X), 40.f);
+								if (WB < FieldWidthM * 0.99f)
+								{
+									bPastExit = false;
+								}
+							}
+						}
 					}
 				}
 			}
+			if (bPastExit)
+			{
+				// Past exit clearance: re-open the traversal lock (squeeze and
+				// morph alike) and restore the pre-pass frontage if a morph
+				// narrowed it. Runs once -- PassLocked gates this branch.
+				if (Formation.FieldFilesSaved > 0 && Formation.NumFiles != Formation.FieldFilesSaved)
+				{
+					UE_LOG(LogMassBattle, Display,
+						TEXT("EXEC_RESULT PassDecision Unit=%u:%u REDEPLOY files %d->%d (past exit)"),
+						Unit.Index, Unit.Serial, Formation.NumFiles, Formation.FieldFilesSaved);
+					Formation.NumFiles = Formation.FieldFilesSaved;
+				}
+				Formation.PassLocked = 0;
+				Formation.SpacingScale = 1.f;
+				++Formation.Generation; // force the unbounded re-slot into the open layout
+			}
 			Formation.SpacingScale = FUnitCompression::AdvanceSpacingScale(
-				Formation.SpacingScale, TargetScale, DT);
+				Formation.SpacingScale, TargetScale, DT,
+				/*FloorScale*/ bPassThroughActive ? FUnitContact::PassThroughCompressionFloor
+												  : FUnitCompression::CompressionFloor);
 		}
 		else
 		{
 			// No field path (arrived / stopped / garrison interior): recover
-			// toward open-order spacing.
+			// toward open-order spacing. The §8.6 pass-through floor applies
+			// here too while a pass-through policy is active (cavalry packed
+			// deeper through a standing formation, audit H3).
 			Formation.SpacingScale = FUnitCompression::AdvanceSpacingScale(
-				Formation.SpacingScale, 1.f, DT);
-		}
-
-		// §8.6 pass-through: the anchor proceeds at ~55% speed while
-		// interpenetrating another unit (no facing change -- the §8.2 lock
-		// above already holds during contact).
-		if (bInterpenetrating && LimitIn.CommandedSpeed > 0.f)
-		{
-			LimitIn.CommandedSpeed *= FUnitContact::PassThroughSpeedFactor;
+				Formation.SpacingScale, 1.f, DT,
+				/*FloorScale*/ bPassThroughActive ? FUnitContact::PassThroughCompressionFloor
+												  : FUnitCompression::CompressionFloor);
 		}
 
 		// ---- Anchor progression + facing cap (A2 refront-at-destination) ----
@@ -883,6 +1044,15 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 					// would re-orbit already-dressed entities around the
 					// anchor. In-place refronts (degenerate plan, no path)
 					// keep the slow sweep in the no-path branch below.
+					// Safety net for the audit H2 re-deploy: a path that ends
+					// inside a corridor never sees the past-exit scan clear --
+					// arrival closes the traversal unconditionally.
+					if (Formation.GarrisonMode == EGarrisonMode::None
+						&& Formation.FieldFilesSaved > 0 && Formation.NumFiles != Formation.FieldFilesSaved)
+					{
+						Formation.NumFiles = Formation.FieldFilesSaved;
+						Formation.PassLocked = 0;
+					}
 					Formation.FacingYaw = Order->FacingYaw;
 					UE_LOG(LogMassBattle, Display,
 						TEXT("EXEC_RESULT ArriveRefront Unit=%u:%u Facing=%.1f Files=%d"),

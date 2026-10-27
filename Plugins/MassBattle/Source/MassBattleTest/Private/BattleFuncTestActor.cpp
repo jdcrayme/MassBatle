@@ -3,6 +3,7 @@
 #include "UnitActor.h"
 #include "BattleRegistry.h"
 #include "BattleSpawnLibrary.h"
+#include "BattleEduParser.h"
 #include "MassEntitySubsystem.h"
 #include "MassEntityManager.h"
 #include "MassEntityQuery.h"
@@ -825,6 +826,82 @@ void AUnitMarchWheelTest::Tick(float DeltaSeconds)
 		return true;
 	};
 
+	// Audit H1/M14: per-tick mid-march coherence. An entity outside its
+	// unit's TRAVELING body envelope (+5 m slack for servo/avoidance noise)
+	// while PathS is strictly inside the path is a violation. Sampled every
+	// 4th tick: the H1 defect (every slot projected at the path terminus)
+	// sends entities 25+ m ahead of the block for whole seconds -- a 4-tick
+	// sampling period cannot miss it, and the M14 transient shedding during
+	// the wheel shows up the same way instead of hiding in the bounded
+	// settle below.
+	auto SampleMidMarchCoherence = [this, World]() -> void
+	{
+		int32 Violations = 0;
+		for (int32 U = 0; U < Units.Num(); ++U)
+		{
+			const FUnitFormationSharedFragment* F = FindFormation(World, Units[U]->GetUnitHandle());
+			if (!F || !F->Path.IsValid())
+			{
+				continue;
+			}
+			// Strictly inside the traversal: the last 10 m are excluded --
+			// the TW fan-in peel legitimately streams front-rank entities
+			// into the destination layout as the anchor closes on it.
+			if (F->PathS <= 0.f || F->PathS >= F->Path.TotalLength - 1000.f)
+			{
+				continue;
+			}
+			TArray<FVector2D> PosM;
+			GatherEntityPositions(World, Units[U]->GetUnitHandle(), PosM);
+			const int32 NumRanks = FMath::Max(1, FMath::CeilToInt(static_cast<float>(F->NumSlots) / F->NumFiles));
+			const float Rad = FMath::DegreesToRadians(F->FacingYaw);
+			const FVector2D Front(FMath::Cos(Rad), FMath::Sin(Rad));
+			const float HalfRanksM = static_cast<float>(NumRanks - 1) * F->RankSpacing * 0.5f * 0.01f;
+			const FVector2D BodyCenter = F->AnchorPos * 0.01f - Front * HalfRanksM;
+			const float LimitAlong = HalfRanksM + F->RankSpacing * 0.5f * 0.01f + 5.f;
+			const float LimitSide = (F->NumFiles * F->FileSpacing * 0.5f) * 0.01f + 5.f;
+			for (const FVector2D& P : PosM)
+			{
+				const FVector2D Delta = (P - BodyCenter);
+				const float SignedAlong = FVector2D::DotProduct(Delta, Front);
+				const float Along = FMath::Abs(SignedAlong);
+				const float Side = FMath::Abs(FVector2D::DotProduct(Delta, FVector2D(-Front.Y, Front.X)));
+				if (Along > LimitAlong || Side > LimitSide)
+				{
+					++Violations;
+					MaxAnyOvershootM = FMath::Max(MaxAnyOvershootM,
+						FMath::Max(Along - LimitAlong, Side - LimitSide));
+					if (SignedAlong > LimitAlong)
+					{
+						// Ahead of the front: the H1 terminus-streaming signature.
+						MaxAheadOvershootM = FMath::Max(MaxAheadOvershootM, SignedAlong - LimitAlong);
+					}
+					if (FirstViolationDesc.IsEmpty())
+					{
+						FirstViolationDesc = FString::Printf(
+							TEXT("u=%d anchor=(%.1f,%.1f) facing=%.0f pathS=%.1f/%.1f ent=(%.1f,%.1f) along=%.1f/%.1f side=%.1f/%.1f"),
+							U, F->AnchorPos.X * 0.01f, F->AnchorPos.Y * 0.01f, F->FacingYaw,
+							F->PathS * 0.01f, F->Path.TotalLength * 0.01f, P.X, P.Y,
+							Along, LimitAlong, Side, LimitSide);
+					}
+				}
+			}
+		}
+		if (Violations > MaxMidMarchViolations)
+		{
+			MaxMidMarchViolations = Violations;
+		}
+		if (Phase == EPhase::March && Violations > MaxViolationsMarch)
+		{
+			MaxViolationsMarch = Violations;
+		}
+		if (Phase == EPhase::Wheel && Violations > MaxViolationsWheel)
+		{
+			MaxViolationsWheel = Violations;
+		}
+		++MidMarchSamples;
+	};
+
 	if (Phase == EPhase::March)
 	{
 		if (TicksInPhase == 1)
@@ -856,6 +933,10 @@ void AUnitMarchWheelTest::Tick(float DeltaSeconds)
 			CompleteTest(EFunctionalTestResult::Error, TEXT("march phase timed out"));
 			return;
 		}
+		else if ((TicksInPhase & 3) == 0)
+		{
+			SampleMidMarchCoherence();
+		}
 	}
 	else if (Phase == EPhase::Wheel)
 	{
@@ -886,6 +967,10 @@ void AUnitMarchWheelTest::Tick(float DeltaSeconds)
 		{
 			CompleteTest(EFunctionalTestResult::Error, TEXT("wheel phase timed out"));
 			return;
+		}
+		else if ((TicksInPhase & 3) == 0)
+		{
+			SampleMidMarchCoherence();
 		}
 	}
 	else if (Phase == EPhase::Assert)
@@ -970,6 +1055,33 @@ void AUnitMarchWheelTest::Tick(float DeltaSeconds)
 		{
 			AddError(FString::Printf(TEXT("T1.5 FAIL: %d unstuck escalations (expected 0)"), Escalations));
 			bOk = false;
+		}
+
+		// T1.5d (audit H1/M14): mid-march formation coherence -- the block
+		// rides the anchor for the WHOLE traversal, not just at the settle.
+		UE_LOG(LogMassBattle, Display,
+			TEXT("EXEC_RESULT S1MidMarch samples=%d maxViolations=%d aheadOvershoot=%.2fm anyOvershoot=%.2fm march=%d wheel=%d first=%s"),
+			MidMarchSamples, MaxMidMarchViolations, MaxAheadOvershootM, MaxAnyOvershootM,
+			MaxViolationsMarch, MaxViolationsWheel, *FirstViolationDesc);
+		if (MidMarchSamples == 0)
+		{
+			AddError(TEXT("T1.5 FAIL: no mid-march coherence samples taken (sampling broken)"));
+			bOk = false;
+		}
+		else
+		{
+			if (MaxAheadOvershootM > 1.0f)
+			{
+				AddError(FString::Printf(TEXT("T1.5 FAIL: entities %.2f m AHEAD of the traveling envelope mid-march (audit H1, expected <= 1.0)"),
+					MaxAheadOvershootM));
+				bOk = false;
+			}
+			if (MaxAnyOvershootM > 6.0f)
+			{
+				AddError(FString::Printf(TEXT("T1.5 FAIL: mid-march envelope overshoot %.2f m in some direction (audit M14, expected <= 6.0)"),
+					MaxAnyOvershootM));
+				bOk = false;
+			}
 		}
 
 		// T1.5b: separation -- min pairwise distance across all entities
@@ -1181,6 +1293,24 @@ void AUnitOrderSmokeTest::Tick(float DeltaSeconds)
 // S2_PassThrough (T1.6)
 // ---------------------------------------------------------------------------
 
+// Inline cavalry row for the S2 mover (the shipped EDU fixture is
+// infantry-only; §8.6 needs a mobility-advantaged mover for PassThrough).
+static const TCHAR* CavalryEduSnippet = TEXT("\n")
+	TEXT("type Test Cavalry\n")
+	TEXT("dictionary Test_Cavalry\n")
+	TEXT("category cavalry\n")
+	TEXT("class light\n")
+	TEXT("soldier Peasant, 40, 0, 1\n")
+	TEXT("attributes sea_faring\n")
+	TEXT("formation 1.2, 1.2, 2.4, 2.4, 3, square\n")
+	TEXT("stat_health 1, 1\n")
+	TEXT("stat_pri 1, 2, no, 0, 0, melee, simple, other, 10, 0.2, 0.2\n")
+	TEXT("stat_pri_armour 0, 1, 0, flesh\n")
+	TEXT("stat_mental 2, low, untrained\n")
+	TEXT("stat_charge_dist 30\n")
+	TEXT("stat_cost 1, 100, 90, 40, 60, 90\n")
+	TEXT("ownership slave, england\n");
+
 AUnitPassThroughTest::AUnitPassThroughTest()
 {
 	TimeLimit = 300.f;
@@ -1228,7 +1358,14 @@ void AUnitPassThroughTest::StartTest()
 		Debug->ResetDiagnostics();
 	}
 
-	auto SpawnAt = [this, World](const FVector& Loc, const TCHAR* Name) -> AUnitActor*
+	// Audit H3/M15 baseline: escalations before the pass starts, so the
+	// during-pass budget (T1.6a) is judged against the contact window only.
+	if (UBattleDebugSubsystem* DebugSink = World->GetSubsystem<UBattleDebugSubsystem>())
+	{
+		EscalationsAtPassStart = DebugSink->GetLadderEscalations();
+	}
+
+	auto SpawnInfantryAt = [World](const FVector& Loc) -> AUnitActor*
 	{
 		FActorSpawnParameters Params;
 		Params.ObjectFlags |= RF_Transient;
@@ -1247,15 +1384,41 @@ void AUnitPassThroughTest::StartTest()
 		return Actor;
 	};
 
+	// The mover is CAVALRY (roadmap B.3 S2: "cavalry through infantry"): the
+	// §8.6 policy table gives a mobility-advantaged mover PassThrough; an
+	// infantry mover resolves Block (crowd, no shove) and never passes. The
+	// shipped EDU fixture is infantry-only, so the mover spawns from an inline
+	// cavalry row -- the TG.4 cavalry-fixture pattern.
+	FEduParseError CavErr;
+	TArray<FEduUnit> MoverRows;
+	if (!FBattleEduParser::Parse(CavalryEduSnippet, MoverRows, CavErr) || MoverRows.Num() == 0)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("cavalry mover fixture failed to parse"));
+		return;
+	}
+	FUnitSpawnSpec CavSpec;
+	CavSpec.EduRowIndex = 0;
+	CavSpec.SoldierCount = 40;
+	CavSpec.UnitName = TEXT("S2_Mover");
+	CavSpec.SpawnPos = FVector2D(-2500.f, 0.f);
+	FBattleSpawnResult MoverResult;
+	FString MoverError;
+	if (!UBattleSpawnLibrary::SpawnUnitFromEduRow(World, CavSpec, MoverRows[0], MoverResult, MoverError)
+		|| !MoverResult.Unit.IsValid())
+	{
+		CompleteTest(EFunctionalTestResult::Error, FString::Printf(TEXT("cavalry mover spawn failed: %s"), *MoverError));
+		return;
+	}
+	MoverHandle = MoverResult.Unit;
+
 	// Mover starts 25 m west of the standee; its path goes through the standee.
-	Mover = SpawnAt(FVector(-2500.f, 0.f, 100.f), TEXT("Mover"));
-	Standee = SpawnAt(FVector(0.f, 0.f, 100.f), TEXT("Standee"));
-	if (!Mover || !Standee)
+	Standee = SpawnInfantryAt(FVector(0.f, 0.f, 100.f));
+	if (!MoverHandle.IsValid() || !Standee)
 	{
 		CompleteTest(EFunctionalTestResult::Error, TEXT("spawn failed"));
 		return;
 	}
-	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S2_PassThrough Spawned mover=(-25,0) standee=(0,0)"));
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S2_PassThrough Spawned mover=(-25,0) CAVALRY standee=(0,0) infantry"));
 	Phase = EPhase::March;
 	TicksInPhase = 0;
 }
@@ -1282,11 +1445,11 @@ void AUnitPassThroughTest::Tick(float DeltaSeconds)
 		if (TicksInPhase == 1)
 		{
 			// March 45 m east: through the standee's formation center.
-			Registry->IssueMoveOrder(Mover->GetUnitHandle(), FVector2D(2000.f, 0.f), 0.f);
+			Registry->IssueMoveOrder(MoverHandle, FVector2D(2000.f, 0.f), 0.f);
 			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S2_PassThrough March order issued"));
 			return;
 		}
-		const FUnitFormationSharedFragment* Formation = FindFormation(World, Mover->GetUnitHandle());
+		const FUnitFormationSharedFragment* Formation = FindFormation(World, MoverHandle);
 		if (Formation && FVector2D::DistSquared(Formation->AnchorPos, FVector2D(2000.f, 0.f)) <= FMath::Square(150.f))
 		{
 			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S2_PassThrough pass complete ticks=%d escalationsSoFar=%d"),
@@ -1299,6 +1462,20 @@ void AUnitPassThroughTest::Tick(float DeltaSeconds)
 		{
 			CompleteTest(EFunctionalTestResult::Error, TEXT("pass time unbounded (march phase timed out)"));
 			return;
+		}
+		else if (Formation)
+		{
+			// Audit H3: sample the §8.2 speed limit while the anchor is inside
+			// the contact band. The OBBs overlap while |anchorX| <= 2.4 m
+			// (sum of the 1.2 m half-depths); the band sits INSIDE that window
+			// so every sampled tick is a contact tick -- the ring between the
+			// overlap edge and the old 3 m band legitimately reads full speed.
+			const float AnchorXm = Formation->AnchorPos.X * 0.01f;
+			if (FMath::Abs(AnchorXm) <= 1.5f)
+			{
+				MaxContactLimitCm = FMath::Max(MaxContactLimitCm, Formation->SpeedLimit);
+				++ContactSamples;
+			}
 		}
 	}
 	else if (Phase == EPhase::Settle)
@@ -1347,18 +1524,44 @@ void AUnitPassThroughTest::Tick(float DeltaSeconds)
 	{
 		bool bOk = true;
 
-		// T1.6a: no pairwise stalls -- zero NEW escalations after the pass
-		// (escalations DURING contact are the ladder doing its job on shoved
-		// entities; a stall would keep escalating after the pass ends).
-		const int32 Escalations = Debug->GetLadderEscalations() - EscalationsAtPassEnd;
-		if (Escalations != 0)
+		// T1.6a (audit M15): no pairwise stalls. Post-pass: zero NEW
+		// escalations (a stall keeps escalating after the pass ends).
+		// During-pass: an explicit disclosed budget instead of the old
+		// blanket exemption -- contact-phase escalations above this mean the
+		// ladder is fighting the pass, not doing its job.
+		const int32 PostPassEscalations = Debug->GetLadderEscalations() - EscalationsAtPassEnd;
+		if (PostPassEscalations != 0)
 		{
-			AddError(FString::Printf(TEXT("T1.6 FAIL: %d post-pass escalations (stall proxy, expected 0)"), Escalations));
+			AddError(FString::Printf(TEXT("T1.6 FAIL: %d post-pass escalations (stall proxy, expected 0)"), PostPassEscalations));
+			bOk = false;
+		}
+		constexpr int32 DuringPassEscalationBudget = 12;
+		const int32 DuringPassEscalations = EscalationsAtPassEnd - EscalationsAtPassStart;
+		if (DuringPassEscalations > DuringPassEscalationBudget)
+		{
+			AddError(FString::Printf(TEXT("T1.6 FAIL: %d during-pass escalations (budget %d, audit M15)"),
+				DuringPassEscalations, DuringPassEscalationBudget));
 			bOk = false;
 		}
 
-		// T1.6b: pass time bounded (the march phase completed within its cap).
-		// Evidenced by reaching this phase at all; the tick count is logged.
+		// T1.6a2 (audit H3): the pass-through policy actually binds -- the
+		// anchor's speed limit inside the contact band must reflect the 0.55
+		// factor. Walk 1.4 m/s -> ~0.77 m/s (77 cm/s); 1.0 m/s admits
+		// hysteresis rise + member-speed rounding without a dead multiply.
+		UE_LOG(LogMassBattle, Display,
+			TEXT("EXEC_RESULT S2ContactSamples count=%d maxLimit=%.1fcm/s"),
+			ContactSamples, MaxContactLimitCm);
+		if (ContactSamples == 0)
+		{
+			AddError(TEXT("T1.6 FAIL: no contact-band speed samples (band or sampling broken)"));
+			bOk = false;
+		}
+		else if (MaxContactLimitCm > 100.f)
+		{
+			AddError(FString::Printf(TEXT("T1.6 FAIL: contact-band speed limit %.1f cm/s unthrottled (audit H3, expected <= 100)"),
+				MaxContactLimitCm));
+			bOk = false;
+		}
 
 		// T1.6c: wake re-dressed -- the standee's formation is coherent and
 		// separated after the bounded settle.
@@ -1433,8 +1636,8 @@ void AUnitPassThroughTest::Tick(float DeltaSeconds)
 				bOk = false;
 			}
 			UE_LOG(LogMassBattle, Display,
-				TEXT("EXEC_RESULT S2Assert escalations=%d strays=%d minSep=%.3fm ok=%d"),
-				Escalations, Strays, MinSep, bOk ? 1 : 0);
+				TEXT("EXEC_RESULT S2Assert postPassEsc=%d duringPassEsc=%d contactLimit=%.1f strays=%d minSep=%.3fm ok=%d"),
+				PostPassEscalations, DuringPassEscalations, MaxContactLimitCm, Strays, MinSep, bOk ? 1 : 0);
 		}
 
 		Phase = EPhase::Done;
@@ -1494,9 +1697,10 @@ void AUnitSqueezeMorphTest::StartTest()
 		Debug->ResetDiagnostics();
 	}
 
-	// A5 stamp override (no authored map): a wall at x in [0,3] m with TWO
-	// gaps -- narrow 8 m at y in [-20,-12] (morph side), wide 16 m at
-	// y in [12,28] (squeeze side).
+	// A5 stamp override (no authored map): ONE wall with ONE 8 m gap
+	// (y in [-20,-12]; measures ~4.5 m on the 3 m grid -> morph). Audit H5:
+	// the roadmap B.3 S3 contract is two units through ONE pass -- the old
+	// two-gaps layout had no follower and could not produce queue pressure.
 	UBattleCostGridSubsystem* CostGrid = World->GetSubsystem<UBattleCostGridSubsystem>();
 	if (!CostGrid)
 	{
@@ -1504,14 +1708,10 @@ void AUnitSqueezeMorphTest::StartTest()
 		return;
 	}
 	CostGrid->ResetToFlat();
-	// 3 m-thick wall, two gaps: 8 m at y in [-20,-12] (morph side), 22 m at
-	// y in [8,30] (squeeze side -- 22 m measures ~16 m on the 3 m grid, above
-	// the 14.4 m squeeze threshold).
 	CostGrid->StampImpassable(FVector2D(0.f, -129.f), FVector2D(3.f, -20.f));
-	CostGrid->StampImpassable(FVector2D(0.f, -12.f), FVector2D(3.f, 8.f));
-	CostGrid->StampImpassable(FVector2D(0.f, 30.f), FVector2D(3.f, 129.f));
+	CostGrid->StampImpassable(FVector2D(0.f, -12.f), FVector2D(3.f, 129.f));
 
-	auto SpawnAt = [this, World](const FVector& Loc) -> AUnitActor*
+	auto SpawnAt = [World](const FVector& Loc) -> AUnitActor*
 	{
 		FActorSpawnParameters Params;
 		Params.ObjectFlags |= RF_Transient;
@@ -1530,19 +1730,19 @@ void AUnitSqueezeMorphTest::StartTest()
 		return Actor;
 	};
 
-	Narrow = SpawnAt(FVector(-4000.f, -1600.f, 100.f)); // aims at the 8 m gap
-	Wide = SpawnAt(FVector(-4000.f, 1900.f, 100.f));    // aims at the 22 m gap
-	if (!Narrow || !Wide)
+	Leader = SpawnAt(FVector(-4000.f, -1600.f, 100.f));   // aims at the gap
+	Follower = SpawnAt(FVector(-6500.f, -1600.f, 100.f)); // 25 m behind (both columns are ~17 m deep)
+	if (!Leader || !Follower)
 	{
 		CompleteTest(EFunctionalTestResult::Error, TEXT("spawn failed"));
 		return;
 	}
-	if (const FUnitFormationSharedFragment* F = FindFormation(World, Narrow->GetUnitHandle()))
+	if (const FUnitFormationSharedFragment* F = FindFormation(World, Leader->GetUnitHandle()))
 	{
-		NarrowFilesAtSpawn = F->NumFiles;
+		FilesAtSpawn = F->NumFiles;
 	}
-	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S3_SqueezeMorph Spawned narrow=(-40,-16) wide=(-40,20) files=%d"),
-		NarrowFilesAtSpawn);
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S3_PassQueue Spawned leader=(-40,-16) follower=(-65,-16) files=%d"),
+		FilesAtSpawn);
 	Phase = EPhase::March;
 	TicksInPhase = 0;
 }
@@ -1564,29 +1764,87 @@ void AUnitSqueezeMorphTest::Tick(float DeltaSeconds)
 	}
 	++TicksInPhase;
 
-	auto Arrived = [this, &Registry](const TObjectPtr<AUnitActor>& Unit, float GoalY) -> bool
+	// Follower front-of-formation X (cm): the rearmost blocker is the
+	// leader's TAIL, so the queue station is judged against the leader's
+	// tail, not the wall line (a morphed 40-man column is ~17 m deep -- a
+	// follower behind it stands far from the mouth by geometry).
+	auto FollowerFrontXCm = [this, World]() -> float
 	{
-		const FUnitFormationSharedFragment* F = FindFormation(GetWorld(), Unit->GetUnitHandle());
-		return F && FVector2D::DistSquared(F->AnchorPos, FVector2D(4000.f, GoalY)) <= FMath::Square(200.f);
+		TArray<FVector2D> PosM;
+		GatherEntityPositions(World, Follower->GetUnitHandle(), PosM);
+		float MaxX = -FLT_MAX;
+		for (const FVector2D& P : PosM)
+		{
+			MaxX = FMath::Max(MaxX, P.X);
+		}
+		return MaxX * 100.f;
 	};
 
 	if (Phase == EPhase::March)
 	{
 		if (TicksInPhase == 1)
 		{
-			// Both cross to the far side (+80 m east) through their gaps.
-			Registry->IssueMoveOrder(Narrow->GetUnitHandle(), FVector2D(4000.f, -1600.f), 90.f);
-			Registry->IssueMoveOrder(Wide->GetUnitHandle(), FVector2D(4000.f, 1900.f), 90.f);
-			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S3_SqueezeMorph March orders issued"));
+			// Leader walks through at the default speed; the follower is
+			// COMMANDED FASTER (2.0 m/s) so it closes on the leader and is
+			// forced to queue (same speed -> it would trail forever and
+			// never exercise the queue pressure at all).
+			// Separated goals: the follower parks 26 m north of the leader so
+			// the two bodies never coincide at rest -- a shared goal anchored
+			// both OBBs on the same point and the resulting permanent Block
+			// overlap jammed the follower's rear column at level 4 forever.
+			Registry->IssueMoveOrder(Leader->GetUnitHandle(), FVector2D(4000.f, -1600.f), 90.f);
+			Registry->IssueMoveOrder(Follower->GetUnitHandle(), FVector2D(4000.f, 1000.f), 90.f, 2.0f);
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S3_PassQueue March orders issued"));
 			return;
 		}
-		if (Arrived(Narrow, -1600.f) && Arrived(Wide, 1900.f))
+
+		const FUnitFormationSharedFragment* FL = FindFormation(World, Leader->GetUnitHandle());
+		const FUnitFormationSharedFragment* FF = FindFormation(World, Follower->GetUnitHandle());
+		if (FL)
 		{
-			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S3_SqueezeMorph both crossed ticks=%d"), TicksInPhase);
+			if (FL->PathS > 0.f)
+			{
+				MinLeaderFilesSeen = FMath::Min(MinLeaderFilesSeen, FL->NumFiles);
+				MaxLeaderMorphs = FMath::Max(MaxLeaderMorphs, static_cast<int32>(FL->PassMorphCount));
+			}
+			// Leader occupies the corridor while its anchor is inside the
+			// wall band (+/- margins for the 3 m wall and the approach).
+			const float LeaderAnchorX = FL->AnchorPos.X;
+			if (LeaderAnchorX >= -600.f && LeaderAnchorX <= 1000.f)
+			{
+				const float FrontX = FollowerFrontXCm();
+				MaxFollowerFrontXCm = FMath::Max(MaxFollowerFrontXCm, static_cast<int32>(FrontX));
+				// Station-keeping: the follower's front may not push deeper
+				// into the leader's body than a 1.5 m tolerance past its tail
+				// (pre-audit it GRINDS THROUGH, shoving the column aside).
+				const float LeaderTailXCm = LeaderAnchorX
+					- (FMath::CeilToInt(static_cast<float>(FL->NumSlots) / FL->NumFiles) - 1) * FL->RankSpacing;
+				const float BeyondTailCm = FrontX - LeaderTailXCm;
+				MaxFollowerFrontBeyondTailCm = FMath::Max(MaxFollowerFrontBeyondTailCm, static_cast<int32>(BeyondTailCm));
+				if (BeyondTailCm <= 150.f)
+				{
+					++QueueObservedTicks;
+				}
+			}
+		}
+		if (FF)
+		{
+			MaxFollowerMorphs = FMath::Max(MaxFollowerMorphs, static_cast<int32>(FF->PassMorphCount));
+		}
+
+		const bool bLeaderArrived = FL &&
+			FVector2D::DistSquared(FL->AnchorPos, FVector2D(4000.f, -1600.f)) <= FMath::Square(200.f);
+		const bool bFollowerArrived = FF &&
+			FVector2D::DistSquared(FF->AnchorPos, FVector2D(4000.f, 1000.f)) <= FMath::Square(200.f);
+		if (bLeaderArrived && bFollowerArrived && FollowerFrontXCm() > 600.f)
+		{
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT S3_PassQueue both crossed ticks=%d queueTicks=%d maxFront=%.2fm maxBeyondTail=%.2fm"),
+				TicksInPhase, QueueObservedTicks, MaxFollowerFrontXCm * 0.01f, MaxFollowerFrontBeyondTailCm * 0.01f);
 			Phase = EPhase::Settle;
 			TicksInPhase = 0;
 		}
-		else if (TicksInPhase > 4000)
+		else if (TicksInPhase > 12000)
 		{
 			CompleteTest(EFunctionalTestResult::Error, TEXT("crossing timed out"));
 			return;
@@ -1594,12 +1852,16 @@ void AUnitSqueezeMorphTest::Tick(float DeltaSeconds)
 	}
 	else if (Phase == EPhase::Settle)
 	{
-		// Bounded re-dress past the exit.
-		auto Coherent = [this, &Registry](const TObjectPtr<AUnitActor>& Unit) -> bool
+		// Bounded re-dress past the exit (both units re-expanded to the
+		// open frontage by the audit H2 re-deploy). Coherence AND separation:
+		// a formation still in transit can be inside its body bounds while a
+		// pair of re-dressing entities briefly shares ground -- the assert
+		// phase judges the SETTLED state (audit M14 semantics).
+		auto Coherent = [this, World](const TObjectPtr<AUnitActor>& Unit) -> bool
 		{
-			const FUnitFormationSharedFragment* F = FindFormation(GetWorld(), Unit->GetUnitHandle());
+			const FUnitFormationSharedFragment* F = FindFormation(World, Unit->GetUnitHandle());
 			TArray<FVector2D> PosM;
-			GatherEntityPositions(GetWorld(), Unit->GetUnitHandle(), PosM);
+			GatherEntityPositions(World, Unit->GetUnitHandle(), PosM);
 			if (!F)
 			{
 				return false;
@@ -1611,20 +1873,25 @@ void AUnitSqueezeMorphTest::Tick(float DeltaSeconds)
 			const FVector2D BodyCenter = F->AnchorPos * 0.01f - Front * HalfRanksM;
 			const float LimitAlong = HalfRanksM + F->RankSpacing * 0.5f * 0.01f + 3.f;
 			const float LimitSide = (F->NumFiles * F->FileSpacing * 0.5f) * 0.01f + 3.f;
-			for (const FVector2D& P : PosM)
+			float MinSq = FLT_MAX;
+			for (int32 i = 0; i < PosM.Num(); ++i)
 			{
-				const FVector2D Delta = (P - BodyCenter);
+				const FVector2D Delta = (PosM[i] - BodyCenter);
 				if (FMath::Abs(FVector2D::DotProduct(Delta, Front)) > LimitAlong
 					|| FMath::Abs(FVector2D::DotProduct(Delta, FVector2D(-Front.Y, Front.X))) > LimitSide)
 				{
 					return false;
 				}
+				for (int32 j = i + 1; j < PosM.Num(); ++j)
+				{
+					MinSq = FMath::Min(MinSq, FVector2D::DistSquared(PosM[i], PosM[j]));
+				}
 			}
-			return true;
+			return FMath::Sqrt(MinSq) >= 0.3f;
 		};
-		if ((Coherent(Narrow) && Coherent(Wide)) || TicksInPhase > 3000)
+		if ((Coherent(Leader) && Coherent(Follower)) || TicksInPhase > 6000)
 		{
-			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S3_SqueezeMorph settle done ticks=%d"), TicksInPhase);
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S3_PassQueue settle done ticks=%d"), TicksInPhase);
 			Phase = EPhase::Assert;
 			TicksInPhase = 0;
 		}
@@ -1633,39 +1900,60 @@ void AUnitSqueezeMorphTest::Tick(float DeltaSeconds)
 	{
 		bool bOk = true;
 
-		// T1.7a: decisions locked (commit rule -- no mid-corridor re-decision).
-		const FUnitFormationSharedFragment* FN = FindFormation(World, Narrow->GetUnitHandle());
-		const FUnitFormationSharedFragment* FW = FindFormation(World, Wide->GetUnitHandle());
-		if (!FN || !FW)
+		const FUnitFormationSharedFragment* FL = FindFormation(World, Leader->GetUnitHandle());
+		const FUnitFormationSharedFragment* FF = FindFormation(World, Follower->GetUnitHandle());
+		if (!FL || !FF)
 		{
 			CompleteTest(EFunctionalTestResult::Error, TEXT("formations missing at assert"));
 			return;
 		}
-		if (!FN->PassLocked || !FW->PassLocked)
+
+		// T1.7a (audit H5): the leader morphed, exactly once.
+		UE_LOG(LogMassBattle, Display,
+			TEXT("EXEC_RESULT S3QueueStats leaderMorphs=%d followerMorphs=%d minLeaderFiles=%d queueTicks=%d maxBeyondTail=%.2fm"),
+			MaxLeaderMorphs, MaxFollowerMorphs, MinLeaderFilesSeen, QueueObservedTicks,
+			MaxFollowerFrontBeyondTailCm * 0.01f);
+		if (MinLeaderFilesSeen != 3)
 		{
-			AddError(TEXT("T1.7 FAIL: pass decision not locked"));
+			AddError(FString::Printf(TEXT("T1.7 FAIL: leader never morphed (min files seen %d, expected 3 = floor(measured 4.5 m / 1.2 m))"),
+				MinLeaderFilesSeen == INT32_MAX ? -1 : MinLeaderFilesSeen));
+			bOk = false;
+		}
+		if (MaxLeaderMorphs != 1 || MaxFollowerMorphs > 1)
+		{
+			AddError(FString::Printf(TEXT("T1.7 FAIL: morph thrash (leader %d / follower %d morph decisions, audit H5)"),
+				MaxLeaderMorphs, MaxFollowerMorphs));
 			bOk = false;
 		}
 
-		// T1.7b: threshold correct both sides -- narrow morphed to 6 files,
-		// wide kept its files (squeeze).
-		// The 8 m AUTHORED gap measures ~4.5 m on the 3 m cost grid (cell
-		// quantization; the planner consumes the same cells, so decisions on
-		// the measured width are the safe ones). Morph files = floor(4.5/1.2).
-		if (FN->NumFiles != 3)
+		// T1.7b (audit H5): the follower held a queue station -- observed
+		// holding behind the leader's tail through the leader's occupancy,
+		// never grinding deeper than 1.5 m past the tail, and never more
+		// than 8 m past the wall line.
+		if (QueueObservedTicks < 30)
 		{
-			AddError(FString::Printf(TEXT("T1.7 FAIL: narrow files %d (expected morph to 3 = floor(measured 4.5 m / 1.2 m))"), FN->NumFiles));
+			AddError(FString::Printf(TEXT("T1.7 FAIL: follower held a queue station for only %d ticks (audit H5, expected >= 30)"),
+				QueueObservedTicks));
 			bOk = false;
 		}
-		if (FW->NumFiles != NarrowFilesAtSpawn)
+		if (MaxFollowerFrontBeyondTailCm > 250)
 		{
-			AddError(FString::Printf(TEXT("T1.7 FAIL: wide files %d changed (expected squeeze, no morph)"),
-				FW->NumFiles));
+			// 2.5 m: the leader's morph re-dress swings entities across the
+			// geometric tail line; real grind-through runs ~10+ m deep.
+			AddError(FString::Printf(TEXT("T1.7 FAIL: follower front pushed %.2f m past the leader's tail (grind-through, audit H5)"),
+				MaxFollowerFrontBeyondTailCm * 0.01f));
+			bOk = false;
+		}
+		if (MaxFollowerFrontXCm > 800)
+		{
+			AddError(FString::Printf(TEXT("T1.7 FAIL: follower front reached %.2f m past the wall line while the leader occupied the pass"),
+				MaxFollowerFrontXCm * 0.01f));
 			bOk = false;
 		}
 
-		// T1.7c: clean re-deploy past the exit -- both formations coherent and
-		// separated (the settle waited for coherence or budget).
+		// T1.7c (audit H2): clean re-deploy past the exit -- frontage
+		// RESTORED (the old test asserted the locked 3-file state as the
+		// goal; the contract is the opposite), traversal unlocked.
 		auto CheckUnit = [this, &World](const TCHAR* Name, const TObjectPtr<AUnitActor>& Unit, bool& bOk) -> void
 		{
 			TArray<FVector2D> PosM;
@@ -1701,10 +1989,17 @@ void AUnitSqueezeMorphTest::Tick(float DeltaSeconds)
 			}
 			const float MinSep = FMath::Sqrt(MinSq);
 			UE_LOG(LogMassBattle, Display,
-				TEXT("EXEC_RESULT S3Unit %s files=%d strays=%d minSep=%.3fm"), Name, F->NumFiles, Strays, MinSep);
+				TEXT("EXEC_RESULT S3Unit %s files=%d passLocked=%d strays=%d minSep=%.3fm"),
+				Name, F->NumFiles, F->PassLocked, Strays, MinSep);
+			if (F->NumFiles != FilesAtSpawn || F->PassLocked != 0)
+			{
+				AddError(FString::Printf(TEXT("T1.7 FAIL: %s not re-deployed (files=%d passLocked=%d, audit H2)"),
+					Name, F->NumFiles, F->PassLocked));
+				bOk = false;
+			}
 			if (Strays > 0)
 			{
-				AddError(FString::Printf(TEXT("T1.7 FAIL: %s not re-deployed (%d strays)"), Name, Strays));
+				AddError(FString::Printf(TEXT("T1.7 FAIL: %s not re-dressed (%d strays)"), Name, Strays));
 				bOk = false;
 			}
 			if (MinSep < 0.3f)
@@ -1713,22 +2008,29 @@ void AUnitSqueezeMorphTest::Tick(float DeltaSeconds)
 				bOk = false;
 			}
 		};
-		CheckUnit(TEXT("narrow"), Narrow, bOk);
-		CheckUnit(TEXT("wide"), Wide, bOk);
+		CheckUnit(TEXT("leader"), Leader, bOk);
+		CheckUnit(TEXT("follower"), Follower, bOk);
 
+		// Contact at the mouth runs the ladder for real (queued entities are
+		// slow and off-slot); the zero-escalation assert of the two-gaps
+		// layout is replaced by an explicit disclosed budget (audit M15
+		// semantics, S3 flavor).
+		constexpr int32 S3EscalationBudget = 400;
 		const int32 Escalations = Debug->GetLadderEscalations();
-		if (Escalations != 0)
+		if (Escalations > S3EscalationBudget)
 		{
-			AddError(FString::Printf(TEXT("T1.7 FAIL: %d unstuck escalations"), Escalations));
+			AddError(FString::Printf(TEXT("T1.7 FAIL: %d escalations (queue budget %d)"), Escalations, S3EscalationBudget));
 			bOk = false;
 		}
-		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S3Assert escalations=%d ok=%d"), Escalations, bOk ? 1 : 0);
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S3Assert escalations=%d (budget %d) ok=%d"),
+			Escalations, S3EscalationBudget, bOk ? 1 : 0);
 
 		Phase = EPhase::Done;
 		CompleteTest(bOk ? EFunctionalTestResult::Succeeded : EFunctionalTestResult::Failed,
-			bOk ? TEXT("S3 squeeze/morph green") : TEXT("S3 assertions failed"));
+			bOk ? TEXT("S3 pass-queue green") : TEXT("S3 assertions failed"));
 	}
 }
+
 
 
 // ---------------------------------------------------------------------------

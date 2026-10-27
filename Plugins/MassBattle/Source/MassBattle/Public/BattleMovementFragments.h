@@ -141,6 +141,11 @@ struct FUnitFormationSharedFragment : public FMassSharedFragment
 	 *  current pass -- no re-decision mid-corridor (no thrash). */
 	UPROPERTY() uint8 PassLocked = 0;
 
+	/** Morph decisions taken in the CURRENT traversal (audit H2/H5: the
+	 *  no-thrash contract is per order serial; reset with PassLocked on a new
+	 *  order, asserted <= 1 by S3). Diagnostic counter, never hashed. */
+	UPROPERTY() uint8 PassMorphCount = 0;
+
 	/** Planner path; empty (NumPoints<2) until UnitLocomotion plans one. */
 	UPROPERTY() FBattlePathPolyline Path;
 

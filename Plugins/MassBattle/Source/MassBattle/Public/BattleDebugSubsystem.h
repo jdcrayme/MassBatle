@@ -64,6 +64,12 @@ public:
 	void RecordLadderEscalation() { LadderEscalations++; }
 	int32 GetLadderEscalations() const { return LadderEscalations; }
 
+	/** Pass-geometry MORPH decisions since the last reset (audit H2/H5: S3
+	 *  asserts the no-thrash contract through this counter). Game thread only
+	 *  (UnitLocomotion decides), so a plain int; ResetDiagnostics is GT too. */
+	void RecordMorphDecision() { ++MorphDecisions; }
+	int32 GetMorphDecisions() const { return MorphDecisions; }
+
 	// -- Garrison metrics (B.8 item 4; task 9) --
 
 	/** One call per unit reaching Settled (UnitLocomotion, game thread):
@@ -83,8 +89,12 @@ public:
 private:
 	FBattleFrameMetrics LastMetrics;
 
-	/** T1.5/T1.8 diagnostics; relaxed atomicity is fine (diagnostic only). */
+	/** T1.5/T1.8 diagnostics; seq_cst std::atomic (workers write; the extra
+	 *  ordering is irrelevant for a diagnostic counter but harmless). */
 	std::atomic<int32> LadderEscalations{0};
+
+	/** Morph decisions (game-thread writer; see RecordMorphDecision). */
+	int32 MorphDecisions = 0;
 
 	// Garrison metric accumulators (B.4 instrumented set, game thread only).
 	int32 GarrisonFilings = 0;

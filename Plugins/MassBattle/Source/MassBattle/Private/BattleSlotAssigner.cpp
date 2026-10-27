@@ -138,13 +138,44 @@ namespace FSlotAssigner
 		}
 	}
 
-	void ApplyPredictiveSwaps(TArray<int32>& InOutAssignment, const TArray<FIntPoint>& Pairs)
+	void ApplyPredictiveSwaps(TArray<int32>& InOutAssignment, const TArray<FIntPoint>& Pairs,
+		const TArray<FVector2D>& Positions, const TArray<FVector2D>& SlotPositions)
 	{
+		// Audit M3: the detection-time 2-opt guard was evaluated against the
+		// assignment as it stood when FindCrossingPairs ran. Applied chains
+		// like (1,2),(2,3) mutated the assignment between pairs, so a later
+		// swap could execute without its guard promise holding -- a
+		// swap-created trek bypassing the k-file bound. Re-check the guard
+		// against the CURRENT assignment at apply time and use each entity
+		// at most once per pass.
+		TSet<int32> Used;
 		for (const FIntPoint& Pair : Pairs)
 		{
-			if (InOutAssignment.IsValidIndex(Pair.X) && InOutAssignment.IsValidIndex(Pair.Y))
+			const int32 I = Pair.X;
+			const int32 J = Pair.Y;
+			if (!InOutAssignment.IsValidIndex(I) || !InOutAssignment.IsValidIndex(J)
+				|| Used.Contains(I) || Used.Contains(J))
 			{
-				Swap(InOutAssignment[Pair.X], InOutAssignment[Pair.Y]);
+				continue;
+			}
+			const int32 SlotI = InOutAssignment[I];
+			const int32 SlotJ = InOutAssignment[J];
+			if (SlotI < 0 || SlotJ < 0 || SlotI == SlotJ
+				|| !SlotPositions.IsValidIndex(SlotI) || !SlotPositions.IsValidIndex(SlotJ)
+				|| !Positions.IsValidIndex(I) || !Positions.IsValidIndex(J))
+			{
+				continue;
+			}
+			const float OwnI = FVector2D::DistSquared(Positions[I], SlotPositions[SlotI]);
+			const float OwnJ = FVector2D::DistSquared(Positions[J], SlotPositions[SlotJ]);
+			const float SwapI = FVector2D::DistSquared(Positions[I], SlotPositions[SlotJ]);
+			const float SwapJ = FVector2D::DistSquared(Positions[J], SlotPositions[SlotI]);
+			if (SwapI < OwnI && SwapJ < OwnJ)
+			{
+				InOutAssignment[I] = SlotJ;
+				InOutAssignment[J] = SlotI;
+				Used.Add(I);
+				Used.Add(J);
 			}
 		}
 	}

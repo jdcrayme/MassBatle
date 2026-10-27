@@ -133,6 +133,24 @@ private:
 	EPhase Phase = EPhase::Spawn;
 	int32 TicksInPhase = 0;
 
+	// Audit H1/M14: per-tick mid-march formation coherence. Entities outside
+	// their unit's TRAVELING body envelope (+5 m) while PathS is strictly
+	// inside the path are violations; two overshoot distances are judged:
+	// AHEAD of the front along the facing (the H1 terminus-streaming
+	// signature -- entities beelining for path-end slots; bound 1.0 m) and
+	// ANY direction (ejections/left-behind entities; bound 6.0 m -- the
+	// 90-degree wheel start legitimately leaves the old flank up to ~5.2 m
+	// behind the rotating envelope until the re-dress catches up, while real
+	// shedding or the H1 dissolution overshoots by an order of magnitude).
+	int32 MaxMidMarchViolations = 0;
+	float MaxAheadOvershootM = 0.f;
+	float MaxAnyOvershootM = 0.f;
+	int32 MidMarchSamples = 0;
+	// Diagnostics: per-phase maxima + the first violation's coordinates.
+	int32 MaxViolationsMarch = 0;
+	int32 MaxViolationsWheel = 0;
+	FString FirstViolationDesc;
+
 	UPROPERTY() TArray<TObjectPtr<AUnitActor>> Units;
 };
 
@@ -185,15 +203,30 @@ private:
 	int32 TicksInPhase = 0;
 	int32 EscalationsAtPassEnd = 0;
 
-	UPROPERTY() TObjectPtr<AUnitActor> Mover;
+	// Audit H3: the mover's speed-limit samples while its anchor is inside
+	// the contact band -- the ~55% pass-through factor must actually bind
+	// (the old code multiplied a dead local after the Min3).
+	float MaxContactLimitCm = 0.f;
+	int32 ContactSamples = 0;
+	// Audit M15: escalations during the contact window get an explicit,
+	// disclosed budget instead of being exempt from every assert.
+	int32 EscalationsAtPassStart = 0;
+
+	/** Cavalry mover (registry handle; spawned directly from the inline EDU
+	 *  row, no AUnitActor shell). */
+	FUnitHandle MoverHandle;
+
 	UPROPERTY() TObjectPtr<AUnitActor> Standee;
 };
 
 // ---------------------------------------------------------------------------
-// S3_SqueezeMorph (T1.7): two units cross a stamped wall -- one through an
-// 8 m gap (morph to column), one through a 16 m gap (squeeze). Asserts:
-// threshold decision correct both sides; the decision locks (PassLocked,
-// commits once -- no re-decision thrash); clean re-deploy past the exit.
+// S3_PassQueue (T1.7, audit H5 re-scope to the roadmap B.3 wording): TWO units
+// cross ONE wall gap (8 m authored -> ~4.5 m on the 3 m grid -> morph). The
+// follower queues behind the leader while the leader occupies the corridor.
+// Asserts: the follower holds a station near the pass mouth during the
+// leader's occupancy; morph commits exactly once per unit (PassMorphCount <= 1
+// -- no re-morph thrash); clean re-deploy past the exit (frontage restored --
+// the audit H2 invariant, NOT the locked-3-files state the old test sold).
 // ---------------------------------------------------------------------------
 UCLASS()
 class MASSBATTLETEST_API AUnitSqueezeMorphTest : public AFunctionalTest
@@ -214,9 +247,18 @@ private:
 	EPhase Phase = EPhase::Spawn;
 	int32 TicksInPhase = 0;
 
-	UPROPERTY() TObjectPtr<AUnitActor> Narrow;  // 8 m gap -> morph
-	UPROPERTY() TObjectPtr<AUnitActor> Wide;    // 16 m gap -> squeeze
-	int32 NarrowFilesAtSpawn = 0;
+	UPROPERTY() TObjectPtr<AUnitActor> Leader;    // first through the gap (morph)
+	UPROPERTY() TObjectPtr<AUnitActor> Follower;  // queues at the mouth, then crosses
+	int32 FilesAtSpawn = 0;
+
+	// -- queue-pressure tracking (sampled while the leader's anchor is inside
+	//    the wall band) --
+	int32 QueueObservedTicks = 0;             // follower held station behind the leader's tail
+	int32 MaxFollowerFrontXCm = 0;            // deepest follower front advance past the wall line (cm)
+	int32 MaxFollowerFrontBeyondTailCm = 0;   // deepest push into the leader's body past its tail (cm)
+	int32 MaxLeaderMorphs = 0;                // PassMorphCount high-water per unit
+	int32 MaxFollowerMorphs = 0;
+	int32 MinLeaderFilesSeen = INT32_MAX;     // smallest committed frontage observed (morph evidence)
 };
 
 // ---------------------------------------------------------------------------

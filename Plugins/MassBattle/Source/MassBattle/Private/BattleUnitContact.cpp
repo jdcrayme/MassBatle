@@ -23,11 +23,22 @@ namespace FUnitContact
 			// Coincident centers: treat as maximal overlap along the tight axis.
 			return FMath::Min(A.HalfAcrossFacing + B.HalfAcrossFacing, A.HalfAlongFacing + B.HalfAlongFacing);
 		}
-		const FVector2D Axis1 = Delta.GetSafeNormal();
-		const FVector2D Axis2(-Axis1.Y, Axis1.X);
+		// Audit M2: true 4-face-axis OBB SAT. The old 2-axis projection
+		// (center delta + its perpendicular) is only exact for parallel and
+		// exact-90-degree pairs: for oblique elongated formations it reports
+		// deep overlap where the boxes barely touch, and even overlap where
+		// they are separated -- which spuriously engaged the 8.2 facing lock
+		// and the shove zone. Only the boxes' own face axes are guaranteed
+		// separating axes.
+		const float RadA = FMath::DegreesToRadians(A.YawDeg);
+		const FVector2D AFront(FMath::Cos(RadA), FMath::Sin(RadA));
+		const FVector2D ASide(-AFront.Y, AFront.X);
+		const float RadB = FMath::DegreesToRadians(B.YawDeg);
+		const FVector2D BFront(FMath::Cos(RadB), FMath::Sin(RadB));
+		const FVector2D BSide(-BFront.Y, BFront.X);
 
 		float Depth = FLT_MAX;
-		for (const FVector2D* Axis : { &Axis1, &Axis2 })
+		for (const FVector2D* Axis : { &AFront, &ASide, &BFront, &BSide })
 		{
 			const float Dist = FMath::Abs(FVector2D::DotProduct(Delta, *Axis));
 			const float Sum = ProjectExtent(A, *Axis) + ProjectExtent(B, *Axis);

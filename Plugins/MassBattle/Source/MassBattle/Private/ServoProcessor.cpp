@@ -31,6 +31,8 @@ UServoProcessor::UServoProcessor(const FObjectInitializer& ObjectInitializer)
 	, ServoQuery(*this)
 	, SnapshotQuery(*this)
 	, UnitBodyQuery(*this)
+	, CavalryUnitQuery(*this)
+	, ZeroVelocityQuery(*this)
 {
 	bAutoRegisterWithProcessingPhases = true;
 	SetProcessingPhase(EMassProcessingPhase::PrePhysics);
@@ -62,6 +64,16 @@ void UServoProcessor::ConfigureQueries(const TSharedRef<FMassEntityManager>& Ent
 	// Unit bodies: one chunk per unit (shared-formation grouped).
 	UnitBodyQuery.AddSharedRequirement<FUnitFormationSharedFragment>(EMassFragmentAccess::ReadOnly);
 	UnitBodyQuery.AddRequirement<FOwnerUnitFragment>(EMassFragmentAccess::ReadOnly);
+
+	// Same grouping, cavalry rosters only (§8.6 mobility-advantage input).
+	CavalryUnitQuery.AddSharedRequirement<FUnitFormationSharedFragment>(EMassFragmentAccess::ReadOnly);
+	CavalryUnitQuery.AddRequirement<FOwnerUnitFragment>(EMassFragmentAccess::ReadOnly);
+	CavalryUnitQuery.AddTagRequirement<FCavalryTag>(EMassFragmentPresence::All);
+
+	// Audit M6 companion query: zeroes velocity when the servo stage is gated
+	// out (battle entities only -- FOwnerUnitFragment scopes it).
+	ZeroVelocityQuery.AddRequirement<FMassVelocityFragment>(EMassFragmentAccess::ReadWrite);
+	ZeroVelocityQuery.AddRequirement<FOwnerUnitFragment>(EMassFragmentAccess::ReadOnly);
 }
 
 void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionContext& Context)
@@ -75,11 +87,28 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 
 	if (GBattleMovementServo.GetValueOnAnyThread() == 0)
 	{
+		// Audit M6: a gated-out servo must still zero planar velocity, or the
+		// Integrate stage (if left on) coasts every previously-moving entity
+		// at constant speed forever. The B.8 opt-out must not corrupt the sim.
+		ZeroVelocityQuery.ForEachEntityChunk(Context, [](FMassExecutionContext& Context)
+		{
+			auto Velocities = Context.GetMutableFragmentView<FMassVelocityFragment>();
+			for (int32 i = 0; i < Context.GetNumEntities(); ++i)
+			{
+				Velocities[i].Value = FVector::ZeroVector;
+			}
+		});
 		return;
 	}
 
 	const float DT = Context.GetDeltaTimeSeconds();
 	UBattleDebugSubsystem* Debug = Context.GetWorld() ? Context.GetWorld()->GetSubsystem<UBattleDebugSubsystem>() : nullptr;
+	// Cached once (audit H4): the pointer is stable for the process; a
+	// FindConsoleVariable per chunk per frame is pure lookup waste.
+	if (!WalkSpeedCvar)
+	{
+		WalkSpeedCvar = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Movement.WalkSpeed"));
+	}
 
 	// ---- Frame snapshot (all battle entities) ----
 	struct FSnapshotEntry
@@ -91,6 +120,7 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 		float RadiusM;
 	};
 	TArray<FSnapshotEntry> Snapshot;
+	Snapshot.Reserve(320); // Phase-1 fixture scale (audit H4: capacity reuse, not per-frame growth)
 	SnapshotQuery.ForEachEntityChunk(Context, [&Snapshot](FMassExecutionContext& Context)
 	{
 		const auto Transforms = Context.GetFragmentView<FTransformFragment>();
@@ -106,6 +136,19 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 			Entry.HandleIndex = Context.GetEntity(i).Index;
 			Entry.RadiusM = 0.4f; // FAgentRadiusFragment 40 cm (fact 1.9); cavalry widens in Task 9
 			Snapshot.Add(Entry);
+		}
+	});
+
+	// §8.6 mobility input (audit H3): the set of cavalry-owned units. Units are
+	// class-uniform (one EDU row per unit), so chunk membership is the unit's
+	// class.
+	TSet<FUnitHandle> CavalryUnits;
+	CavalryUnitQuery.ForEachEntityChunk(Context, [&CavalryUnits](FMassExecutionContext& Context)
+	{
+		const auto Owners = Context.GetFragmentView<FOwnerUnitFragment>();
+		if (Owners.Num() > 0)
+		{
+			CavalryUnits.Add(Owners[0].Owner);
 		}
 	});
 
@@ -153,6 +196,12 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 	ShoveVel.Init(FVector2D::ZeroVector, Snapshot.Num());
 	TArray<float> ShoveW;
 	ShoveW.Init(0.f, Snapshot.Num());
+	// Audit H3: Block-policy pairs. Equal-footing contact shoves nobody --
+	// instead the mover's entities take the blocking unit's entities as
+	// avoidance neighbors below (crowd/deflect at the contact instead of
+	// servoing straight through). This is the mechanism behind the S3
+	// pass-mouth queue. Built before the chunk fan-out; read-only in it.
+	TMap<FUnitHandle, TArray<FUnitHandle>> BlockPartners;
 	for (int32 A = 0; A < UnitBodies.Num(); ++A)
 	{
 		if (!BodyMoving[A])
@@ -170,11 +219,23 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 			{
 				continue;
 			}
-			// Same-team fixtures in Phase 1: the mover (PassThrough side,
-			// documented policy at Phase 1 fixtures) shoves the static unit's
-			// entities aside; cavalry-vs-infantry mass ratio 2:1.
+			// §8.6 policy resolution (audit H3 -- ResolvePolicy is now the
+			// single decision point). A is the mover (right-of-way: the
+			// doctrine that only a moving unit displaces others); friendly is
+			// true for the Phase 1 same-team fixture set (hostile contact is
+			// Phase 2); mobility advantage = cavalry mover vs non-cavalry.
+			const bool bAdvantage = CavalryUnits.Contains(BodyUnits[A]) && !CavalryUnits.Contains(BodyUnits[B]);
+			const FUnitContact::EContactPolicy Policy = FUnitContact::ResolvePolicy(
+				/*bFriendly*/ true, bAdvantage, /*bRightOfWay*/ true);
+			if (Policy != FUnitContact::EContactPolicy::PassThrough)
+			{
+				BlockPartners.FindOrAdd(BodyUnits[A]).AddUnique(BodyUnits[B]);
+				continue;
+			}
 			const FUnitOBB& Mover = UnitBodies[A];
-			const float Blend = FUnitContact::ShoveBlend(2.0f /* cavalry:infantry mass ratio */, Depth);
+			// Cavalry-over-infantry mass ratio 2:1; equal classes 1:1.
+			const float MassRatio = bAdvantage ? 2.0f : 1.0f;
+			const float Blend = FUnitContact::ShoveBlend(MassRatio, Depth);
 
 			// Infantry of the weaker unit inside the mover's OBB get shoved.
 			for (int32 S = 0; S < Snapshot.Num(); ++S)
@@ -209,7 +270,8 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 		HandleToSnapshot.Add(Snapshot[S].HandleIndex, S);
 	}
 
-	ServoQuery.ForEachEntityChunk(Context, [DT, MaxAccel, Debug, &Snapshot, &ShoveVel, &ShoveW, &HandleToSnapshot](FMassExecutionContext& Context)
+	const IConsoleVariable* WalkCvar = WalkSpeedCvar;
+	ServoQuery.ForEachEntityChunk(Context, [DT, MaxAccel, Debug, &Snapshot, &ShoveVel, &ShoveW, &HandleToSnapshot, &BlockPartners, WalkCvar](FMassExecutionContext& Context)
 	{
 		const FUnitFormationSharedFragment& Formation = *Context.GetSharedFragmentPtr<FUnitFormationSharedFragment>();
 		const auto Targets = Context.GetFragmentView<FSlotTargetFragment>();
@@ -227,15 +289,25 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 		float MaxSpeedM = Formation.SpeedLimit * 0.01f;
 		if (MaxSpeedM <= 0.f)
 		{
-			if (const IConsoleVariable* WalkCvar = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Movement.WalkSpeed")))
-			{
-				MaxSpeedM = WalkCvar->GetFloat();
-			}
-			else
-			{
-				MaxSpeedM = 1.4f;
-			}
+			MaxSpeedM = WalkCvar ? WalkCvar->GetFloat() : 1.4f;
 		}
+
+		// Audit H3: this unit's Block partners (avoid-them instead of shove-
+		// through). Chunk = one unit, so one lookup.
+		const TArray<FUnitHandle>* MyBlockPartners = BlockPartners.Find(Formation.OwnerUnit);
+
+		// Audit H4: one capacity-reused neighbor buffer per chunk (chunks are
+		// single-threaded internally; Reset keeps the allocation) instead of a
+		// heap allocation per entity per frame.
+		TArray<FAvoidanceNeighbor> Neighbors;
+		Neighbors.Reserve(128);
+
+		// Avoidance gather cull radius (audit H4): neighbors beyond this can
+		// matter only through the 1.5 s horizon at the fastest commanded
+		// speeds; inside the radius the deflection math is unchanged.
+		constexpr float CullRadiusSq = FMath::Square(12.f);
+
+		const float MaxBlendSpeedM = MaxSpeedM * FUnitServoConstants::CatchupBoost;
 
 		for (int32 i = 0; i < Context.GetNumEntities(); ++i)
 		{
@@ -265,29 +337,46 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 			const FUnitHandle MyOwner = Owners[i].Owner;
 			if (Weight > 0.f)
 			{
-				TArray<FAvoidanceNeighbor> Neighbors;
-				Neighbors.Reserve(128);
+				Neighbors.Reset();
 				for (const FSnapshotEntry& Entry : Snapshot)
 				{
 					if (Entry.HandleIndex == MyHandle)
 					{
 						continue;
 					}
-					// ManeuverToSlot: teammates only (§4.5).
-					if (State == EBattleMovementState::ManeuverToSlot && Entry.Owner != MyOwner)
+					// Distance cull (audit H4): ~102k full-pair evaluations at
+					// Phase-1 scale become a cheap squared-distance reject for
+					// the overwhelming majority.
+					if (FVector2D::DistSquared(PosM, Entry.Pos) > CullRadiusSq)
 					{
 						continue;
 					}
-					FAvoidanceNeighbor N;
+					// ManeuverToSlot: teammates, plus §8.6 Block-policy
+					// partners (audit H3) -- the blocking unit's entities are
+					// exactly the obstacle this entity must crowd against
+					// instead of shoving through or interpenetrating.
+					if (Entry.Owner != MyOwner)
+					{
+						const bool bBlockPartner = MyBlockPartners &&
+							MyBlockPartners->Contains(Entry.Owner);
+						if (State != EBattleMovementState::CrossField && !bBlockPartner)
+						{
+							continue;
+						}
+					}
+					FAvoidanceNeighbor& N = Neighbors.AddDefaulted_GetRef();
 					N.Pos = Entry.Pos;
 					N.Vel = Entry.Vel;
 					N.Radius = Entry.RadiusM;
 					N.HandleIndex = Entry.HandleIndex;
-					Neighbors.Add(N);
 				}
 				const float WeightMul = FUnstuckLadder::AvoidanceWeightMultiplier(ServoStates[i].LadderLevel);
-				const FVector2D Deflection = FUnitServo::ComputeAvoidanceDeflection(
+				FVector2D Deflection = FUnitServo::ComputeAvoidanceDeflection(
 					PosM, DesiredVel, 0.4f, MyHandle, Neighbors, Weight * WeightMul);
+				// Audit M4: the accumulated push is unbounded by construction
+				// (full Combined per overlapping neighbor); clamp it so the
+				// blended velocity can never ratchet past the §8.2 unit limit.
+				Deflection = Deflection.GetClampedToMaxSize(MaxBlendSpeedM);
 				DesiredVel += Deflection;
 
 				// Step 2 sidestep impulse: perpendicular to the servo output.
@@ -295,6 +384,56 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 					ServoStates[i].SidestepDir.SizeSquared() > KINDA_SMALL_NUMBER)
 				{
 					DesiredVel += ServoStates[i].SidestepDir * MaxSpeedM * 0.5f;
+				}
+				// Audit M4 (rate + total): ClampAcceleration bounds the CHANGE,
+				// not the magnitude -- clamp the commanded velocity itself so
+				// avoidance + sidestep cannot walk the limit upward.
+				DesiredVel = DesiredVel.GetClampedToMaxSize(MaxBlendSpeedM);
+			}
+
+			// §8.6 Block realized as a follow constraint (audit H3): the
+			// lateral deflection above steers around a blocked path but never
+			// brakes the forward press -- without this cap the servo would
+			// grind the mover straight through the blocking formation. Against
+			// each Block partner roughly ahead within the brake radius, the
+			// forward speed is capped at the blocker's forward speed plus a
+			// separation spring: entities QUEUE behind the contact (the S3
+			// pass-mouth queue) instead of shoving through. PassThrough movers
+			// have no partners and are untouched.
+			if (MyBlockPartners)
+			{
+				const FVector2D MoveDir = DesiredVel.GetSafeNormal();
+				if (MoveDir.SizeSquared() > KINDA_SMALL_NUMBER)
+				{
+					for (const FSnapshotEntry& Entry : Snapshot)
+					{
+						if (!MyBlockPartners->Contains(Entry.Owner))
+						{
+							continue;
+						}
+						const FVector2D Rel = Entry.Pos - PosM;
+						const float Dist = Rel.Size();
+						constexpr float CombinedRadius = 0.8f; // 40 cm + 40 cm (fact 1.9)
+						if (Dist > CombinedRadius + 2.2f)
+						{
+							continue;
+						}
+						if (FVector2D::DotProduct(Rel, MoveDir) <= 0.f)
+						{
+							continue; // partner behind or abreast: not a follow target
+						}
+						const float BlockerAheadSpeed = FMath::Max(0.f, FVector2D::DotProduct(Entry.Vel, MoveDir));
+						const float Gap = Dist - CombinedRadius;
+						constexpr float QueueGap = 0.5f;   // m, held station behind the blocker
+						constexpr float SpringPerS = 2.0f; // m/s per m of gap error
+						const float AllowedForward = FMath::Max(0.f,
+							BlockerAheadSpeed + (Gap - QueueGap) * SpringPerS);
+						const float Forward = FVector2D::DotProduct(DesiredVel, MoveDir);
+						if (Forward > AllowedForward)
+						{
+							DesiredVel = MoveDir * AllowedForward;
+						}
+					}
 				}
 			}
 
@@ -315,6 +454,10 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 					ServoStates[i].DisplacementWeight = 0.f;
 				}
 			}
+			// Audit M4: the shove blend targets a fixed 1.5 m/s displacement
+			// regardless of the unit's own limit -- clamp the post-blend
+			// result to the servo ceiling.
+			NewVelM = NewVelM.GetClampedToMaxSize(MaxBlendSpeedM);
 			Velocities[i].Value = FVector(NewVelM.X, NewVelM.Y, 0.f) * 100.f;
 
 			// Ladder bookkeeping (§8.5): slow + away from slot escalates.
@@ -323,11 +466,15 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 			const bool bNearSlot = DistToSlotM < FUnitServoConstants::SlotReachEps;
 			const bool bSlow = SpeedM < FUnitServoConstants::StuckSpeedEps;
 			float Timer = ServoStates[i].LowSpeedTime;
-			const int32 NewLevel = FUnstuckLadder::Advance(ServoStates[i].LadderLevel, bSlow, bNearSlot,
+			const int32 OldLevel = ServoStates[i].LadderLevel;
+			const int32 NewLevel = FUnstuckLadder::Advance(OldLevel, bSlow, bNearSlot,
 				DT, Timer, FUnitServoConstants::EscalateAfterSeconds);
-			if (NewLevel != ServoStates[i].LadderLevel)
+			if (NewLevel != OldLevel)
 			{
-				if (Debug)
+				// Audit M10: count only ESCALATIONS. Advance() returns 0 on
+				// recovery -- counting every de-escalation made the soak's
+				// "escalations" metric uninterpretable.
+				if (NewLevel > OldLevel && Debug)
 				{
 					Debug->RecordLadderEscalation(); // T1.5/T1.8 zero-escalation gate
 				}
@@ -336,7 +483,7 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 					TEXT("EXEC_RESULT UnstuckLadder Entity=%u:%u Unit=%u:%u Level=%d DistToSlot=%.2f"),
 					Context.GetEntity(i).Index, Context.GetEntity(i).SerialNumber,
 					MyOwner.Index, MyOwner.Serial, NewLevel, DistToSlotM);
-				if (Debug)
+				if (Debug && NewLevel > OldLevel)
 				{
 					FBattleOverlayLine Line;
 					Line.From = P;

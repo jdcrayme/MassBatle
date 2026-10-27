@@ -26,4 +26,6 @@ private:
 	FMassEntityQuery LocomotionQuery;
 	/** Unit bodies for the §8.2 interpenetration facing lock. */
 	FMassEntityQuery UnitBodyQuery;
+	/** Cavalry rosters only (audit H3: §8.6 mobility-advantage input). */
+	FMassEntityQuery CavalryQuery;
 };

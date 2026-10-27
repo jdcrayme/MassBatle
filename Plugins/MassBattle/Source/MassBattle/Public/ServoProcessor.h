@@ -10,6 +10,8 @@
 #include "MassProcessor.h"
 #include "ServoProcessor.generated.h"
 
+class IConsoleVariable;
+
 UCLASS()
 class MASSBATTLE_API UServoProcessor : public UMassProcessor
 {
@@ -29,4 +31,11 @@ private:
 	FMassEntityQuery SnapshotQuery;
 	/** One chunk per unit (shared-formation grouped, RO): unit-body OBBs. */
 	FMassEntityQuery UnitBodyQuery;
+	/** Same grouping as UnitBodyQuery, restricted to CAVALRY rosters (audit
+	 *  H3: the §8.6 mobility-advantage input to ResolvePolicy). */
+	FMassEntityQuery CavalryUnitQuery;
+	/** Battle entities only; zeroes velocity when the stage is gated out. */
+	FMassEntityQuery ZeroVelocityQuery;
+	/** Cached CVAR pointer (audit H4): stable for the process. */
+	const IConsoleVariable* WalkSpeedCvar = nullptr;
 };

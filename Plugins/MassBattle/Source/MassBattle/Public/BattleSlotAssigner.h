@@ -37,7 +37,11 @@ namespace FSlotAssigner
 
 	/** Swap slot indices for every reported pair (each slot used once per
 	 *  pass; pairs processed in the given order -- single pass terminates). */
-	MASSBATTLE_API void ApplyPredictiveSwaps(TArray<int32>& InOutAssignment, const TArray<FIntPoint>& Pairs);
+	/** Applies detected pairs with the 2-opt guard RE-CHECKED against the
+	 *  current assignment at apply time (audit M3) and each entity used at
+	 *  most once per pass. */
+	MASSBATTLE_API void ApplyPredictiveSwaps(TArray<int32>& InOutAssignment, const TArray<FIntPoint>& Pairs,
+		const TArray<FVector2D>& Positions, const TArray<FVector2D>& SlotPositions);
 }
 
 /** Batched reflow cadence (arch §8.4): reflow at most every IntervalSeconds,
