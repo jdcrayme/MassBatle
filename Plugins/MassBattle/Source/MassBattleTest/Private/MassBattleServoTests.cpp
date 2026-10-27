@@ -44,6 +44,57 @@ bool FServo_ClampsAndDirection::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FServo_FeedForward,
+	"Battle.Unit.Servo.FeedForward",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FServo_FeedForward::RunTest(const FString& Parameters)
+{
+	// Phase 2 A1: velocity matching on a moving slot. A slot marching at walk
+	// speed with the entity exactly ON the slot must produce exactly the slot
+	// velocity (the pure pursuit form would output 0 here and trail by Tau*v).
+	const float DT = 1.f / 60.f;
+	const float Walk = 1.4f;
+	const FVector2D Target(10.f, 0.f);
+	const FVector2D Prev = Target - FVector2D(Walk * DT, 0.f);
+	const FVector2D VOnSlot = FUnitServo::ComputeServoVelocityFF(Target, Target, Prev,
+		FUnitServoConstants::Tau, Walk, FUnitServoConstants::CatchupBoost, DT);
+	TestTrue(TEXT("on-slot: output equals slot velocity (zero steady lag)"),
+		VOnSlot.Equals(FVector2D(Walk, 0.f), 1e-3f));
+
+	// The trailing entity (Tau*v behind) commands catch-up: slot velocity plus
+	// the full pursuit term (no clamp at these magnitudes... 2.8 < 1.75x?
+	// 1.4 + 0.35/0.25 = 2.8 > 1.75 -- CLAMPED). At member max the clamp binds;
+	// use a higher ceiling to check the unclamped sum.
+	const FVector2D PosTrailing = Target - FVector2D(FUnitServoConstants::Tau * Walk, 0.f);
+	const FVector2D VTrailing = FUnitServo::ComputeServoVelocityFF(PosTrailing, Target, Prev,
+		FUnitServoConstants::Tau, 10.f, FUnitServoConstants::CatchupBoost, DT);
+	TestTrue(TEXT("trailing: slot velocity + full pursuit term"),
+		VTrailing.Equals(FVector2D(Walk + (FUnitServoConstants::Tau * Walk) / FUnitServoConstants::Tau, 0.f), 1e-3f));
+
+	// Clamp regime: the feed-forward sum can never exceed MaxSpeed * Boost.
+	const FVector2D VClamped = FUnitServo::ComputeServoVelocityFF(FVector2D::ZeroVector,
+		FVector2D(1000.f, 0.f), FVector2D(999.f, 0.f), FUnitServoConstants::Tau, Walk,
+		FUnitServoConstants::CatchupBoost, DT);
+	TestTrue(TEXT("clamped at MaxSpeed*Boost"),
+		FMath::IsNearlyEqual(VClamped.X, Walk * FUnitServoConstants::CatchupBoost, 1e-3f));
+
+	// Degenerate DT contributes no feed-forward (no NaN / no lurch); the
+	// ceiling stays high enough that the pure pursuit term passes through.
+	const FVector2D VZeroDt = FUnitServo::ComputeServoVelocityFF(FVector2D::ZeroVector, Target,
+		FVector2D::ZeroVector, FUnitServoConstants::Tau, 100.f, 1.f, 0.f);
+	TestTrue(TEXT("zero DT: pure pursuit fallback"), VZeroDt.Equals(FVector2D(10.f / FUnitServoConstants::Tau, 0.f), 1e-3f));
+
+	// A stationary slot (Prev == Target) reduces exactly to the old math.
+	const FVector2D VStatic = FUnitServo::ComputeServoVelocityFF(FVector2D(2.f, 0.f), FVector2D(10.f, 0.f),
+		FVector2D(10.f, 0.f), FUnitServoConstants::Tau, 100.f, 1.f, DT);
+	TestTrue(TEXT("static slot: identical to pure pursuit"),
+		VStatic.Equals(FUnitServo::ComputeServoVelocity(FVector2D(2.f, 0.f), FVector2D(10.f, 0.f),
+			FUnitServoConstants::Tau, 100.f, 1.f), 1e-3f));
+
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FServo_PerStateAvoidanceWeights,
 	"Battle.Unit.Servo.PerStateAvoidanceWeights",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

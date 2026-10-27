@@ -151,6 +151,12 @@ private:
 	int32 MaxViolationsWheel = 0;
 	FString FirstViolationDesc;
 
+	// Phase 2 phase-A gate: max servo-target error observed during the wheel
+	// (asserted <= 0.8 m only when a phase-A flag is on; logged otherwise --
+	// the flag-off baseline legitimately sheds the ends in tight wheels).
+	float MaxWheelSlotErrorM = 0.f;
+	bool bPhaseAFlagsOn = false;
+
 	UPROPERTY() TArray<TObjectPtr<AUnitActor>> Units;
 };
 

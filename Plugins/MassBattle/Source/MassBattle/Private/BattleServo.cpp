@@ -15,6 +15,24 @@ namespace FUnitServo
 		return V;
 	}
 
+	FVector2D ComputeServoVelocityFF(const FVector2D& Pos, const FVector2D& SlotPos,
+		const FVector2D& PrevSlotPos, float Tau, float MaxSpeed, float CatchupBoost, float DT)
+	{
+		// Slot velocity from the resolve stage's own previous write (a moving
+		// target); a degenerate DT contributes no feed-forward.
+		const FVector2D SlotVel = DT > KINDA_SMALL_NUMBER
+			? (SlotPos - PrevSlotPos) / DT
+			: FVector2D::ZeroVector;
+		const FVector2D Pursuit = (SlotPos - Pos) / FMath::Max(Tau, KINDA_SMALL_NUMBER);
+		FVector2D V = SlotVel + Pursuit;
+		const float Clamp = FMath::Max(0.f, MaxSpeed * CatchupBoost);
+		if (V.SizeSquared() > Clamp * Clamp)
+		{
+			V = V.GetSafeNormal() * Clamp;
+		}
+		return V;
+	}
+
 	FVector2D ClampAcceleration(const FVector2D& OldVel, const FVector2D& NewVel, float MaxAccel, float DT)
 	{
 		const FVector2D Delta = NewVel - OldVel;

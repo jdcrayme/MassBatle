@@ -101,7 +101,7 @@ Keep: path drop at Remaining <= 1 cm; the H2 corridor files-restore safety net; 
 | A2 | ServoProcessor.cpp | MaxSpeedM = WalkSpeed x Stats->SpeedMult (member max) under cvar Battle.Movement.MemberClamp; the SpeedLimit <= 0 no-order fallback keeps its walk-speed ceiling | Unit: clamp binds at MemberMax x Boost |
 | A3 | BattleUnitLocomotion.h/.cpp, UnitLocomotionProcessor.cpp | FSpeedLimitInputs gains HalfFrontageM + bPathActive; marching form AnchorCap = v_member x r/(r+HalfFrontage) when a path is active; pivot (no path) keeps OuterRadius form; header doc-comment updated. Cvar Battle.Movement.WheelCapV2 | Unit: r->inf -> cap = member max; r->0 -> cap -> 0; worked-example dimension audit; flag-off golden |
 
-Phase A func gate: S1_MarchWheel gains a max-slot-error bound (<= 0.8 m during the wheel) asserted when the A flags are on (computed in the test actor; B1 has not landed yet). LOC ~120 + ~150 test.
+Phase A func gate: S1_MarchWheel gains the per-tick max slot-error instrumentation (logged both flag states). ERRATA (2026-10-27, measured): the plan's "assert <= 0.8 m during the wheel" does not fit S1's geometry -- S1's wheel is a 90-degree lateral reform of a 24 m-wide unit on a smoothed path; the flag-on run showed identical anchor ticks to baseline (the corrected cap never binds on the gentle curve) and an error floor dominated by assignment churn (the Phase C problem), not servo ceilings. The binding B-6 assert moves to the bend-course (P3-style, 14 files) coverage; S1 stays the regression + diagnostic gate for Phase A. LOC ~120 + ~150 test.
 
 ### Phase B -- "The unit waits for its men" (Issue 2 closure)
 | Task | Files | Change | Acceptance |

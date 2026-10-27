@@ -24,6 +24,24 @@ namespace
 		FUnitServoConstants::MaxAccel,
 		TEXT("Servo acceleration clamp, m/s^2 (arch §8.3)."),
 		ECVF_Default);
+
+	// Phase 2 A1 (F-4): slot-velocity feed-forward in the servo. 0 keeps the
+	// pure position pursuit byte-for-byte.
+	TAutoConsoleVariable<int32> GBattleMovementFeedForward(
+		TEXT("Battle.Movement.FeedForward"),
+		0,
+		TEXT("1 = servo adds the slot-velocity feed-forward term (V_slot + (Target-Pos)/Tau). Phase 2 A1."),
+		ECVF_Default);
+
+	// Phase 2 A2 (F-3): the servo ceiling is the MEMBER's own max speed
+	// (WalkSpeed x SpeedMult), not the anchor's pace -- in a wheel the anchor
+	// slows and every entity's ceiling must NOT drop with it, because outer
+	// files have to move faster than the anchor to track their sweeping slots.
+	TAutoConsoleVariable<int32> GBattleMovementMemberClamp(
+		TEXT("Battle.Movement.MemberClamp"),
+		0,
+		TEXT("1 = servo clamps at the member's own max speed (arch §8.3 MaxSpeed = member max). Phase 2 A2."),
+		ECVF_Default);
 }
 
 UServoProcessor::UServoProcessor(const FObjectInitializer& ObjectInitializer)
@@ -56,6 +74,9 @@ void UServoProcessor::ConfigureQueries(const TSharedRef<FMassEntityManager>& Ent
 	// Audit M8 (all movement queries): death-window corpses excluded.
 	ServoQuery.AddTagRequirement<FDeadTag>(EMassFragmentPresence::None);
 	ServoQuery.AddSharedRequirement<FUnitFormationSharedFragment>(EMassFragmentAccess::ReadOnly);
+	// Phase 2 A2: the member clamp reads the unit's SpeedMult (stats fragment
+	// travels on every battle entity; chunk grouping is per unit already).
+	ServoQuery.AddSharedRequirement<FUnitStatsSharedFragment>(EMassFragmentAccess::ReadOnly);
 
 	// Frame snapshot: every battle entity's position/velocity/state, all
 	// read-only (safe to run to completion before the servo chunks). Phase 1
@@ -161,6 +182,8 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 	});
 
 	const float MaxAccel = GBattleMovementMaxAccel.GetValueOnAnyThread();
+	const bool bFeedForward = GBattleMovementFeedForward.GetValueOnAnyThread() != 0;
+	const bool bMemberClamp = GBattleMovementMemberClamp.GetValueOnAnyThread() != 0;
 
 	// ---- Unit-vs-unit OBB contact (arch §8.6, Phase 1 scale: 8 units) ----
 	// One body per unit from the formation fragment; pairs resolved to
@@ -275,9 +298,10 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 	}
 
 	const IConsoleVariable* WalkCvar = WalkSpeedCvar;
-	ServoQuery.ForEachEntityChunk(Context, [DT, MaxAccel, Debug, &Snapshot, &ShoveVel, &ShoveW, &HandleToSnapshot, &BlockPartners, WalkCvar](FMassExecutionContext& Context)
+	ServoQuery.ForEachEntityChunk(Context, [DT, MaxAccel, bFeedForward, bMemberClamp, Debug, &Snapshot, &ShoveVel, &ShoveW, &HandleToSnapshot, &BlockPartners, WalkCvar](FMassExecutionContext& Context)
 	{
 		const FUnitFormationSharedFragment& Formation = *Context.GetSharedFragmentPtr<FUnitFormationSharedFragment>();
+		const FUnitStatsSharedFragment* Stats = Context.GetSharedFragmentPtr<FUnitStatsSharedFragment>();
 		const auto Targets = Context.GetFragmentView<FSlotTargetFragment>();
 		const auto Transforms = Context.GetFragmentView<FTransformFragment>();
 		const auto Owners = Context.GetFragmentView<FOwnerUnitFragment>();
@@ -289,8 +313,16 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 		// A unit WITHOUT an order (SpeedLimit 0) holds its ground -- but its
 		// entities still re-dress (wake recovery, slot fills): they get the
 		// walk speed as the servo ceiling. Marching units clamp at their
-		// section 8.2 limit.
+		// section 8.2 limit -- EXCEPT under Battle.Movement.MemberClamp
+		// (phase 2 A2, F-3): the ceiling is then the member's own max speed
+		// (arch §8.3 MaxSpeed means member max, not the anchor's pace), so a
+		// wheel's outer files may quickstep while the anchor slows. The
+		// no-order fallback keeps its walk-speed ceiling in both paths.
 		float MaxSpeedM = Formation.SpeedLimit * 0.01f;
+		if (bMemberClamp && Stats)
+		{
+			MaxSpeedM = (WalkCvar ? WalkCvar->GetFloat() : 1.4f) * Stats->SpeedMult;
+		}
 		if (MaxSpeedM <= 0.f)
 		{
 			MaxSpeedM = WalkCvar ? WalkCvar->GetFloat() : 1.4f;
@@ -321,9 +353,24 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 			const FVector2D OldVelM(Velocities[i].Value.X * 0.01f, Velocities[i].Value.Y * 0.01f);
 			const EBattleMovementState State = States[i].State;
 
-			// §8.3 servo (velocity control, ADR-07).
-			FVector2D DesiredVel = FUnitServo::ComputeServoVelocity(PosM, SlotPosM,
-				FUnitServoConstants::Tau, MaxSpeedM, FUnitServoConstants::CatchupBoost);
+			// §8.3 servo (velocity control, ADR-07). Phase 2 A1: the
+			// feed-forward form adds the slot's own velocity (Reynolds
+			// velocity matching on a moving target) so sweeping/wheeling
+			// slots are tracked instead of perpetually trailed.
+			FVector2D DesiredVel;
+			if (bFeedForward)
+			{
+				const FVector2D PrevSlotPosM = Targets[i].bPrevValid
+					? FVector2D(Targets[i].PrevTargetPos) * 0.01f
+					: SlotPosM; // first write: no slot motion yet
+				DesiredVel = FUnitServo::ComputeServoVelocityFF(PosM, SlotPosM, PrevSlotPosM,
+					FUnitServoConstants::Tau, MaxSpeedM, FUnitServoConstants::CatchupBoost, DT);
+			}
+			else
+			{
+				DesiredVel = FUnitServo::ComputeServoVelocity(PosM, SlotPosM,
+					FUnitServoConstants::Tau, MaxSpeedM, FUnitServoConstants::CatchupBoost);
+			}
 
 			// A1 per-state avoidance weights (§4.5): HoldSlot none;
 			// ManeuverToSlot medium teammates-only; CrossField full.

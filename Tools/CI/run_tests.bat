@@ -1,7 +1,7 @@
 @echo off
 REM ============================================================
 REM run_tests.bat -- MassBattle per-commit automation gate (R8)
-REM Usage: run_tests.bat [unit|func]
+REM Usage: run_tests.bat [unit|func|funcon]
 REM   unit (default): Battle.Unit + Battle.Data + Battle.Smoke, headless editor-cmd
 REM   func          : Battle.Func functional tests, standalone -game mode
 REM Parses the log for the pass/fail summary (never trusts exit codes alone),
@@ -27,8 +27,14 @@ if "%TIER%"=="unit" (
 ) else if "%TIER%"=="func" (
     set FILTER=Battle.Func
     set MODE_FLAGS=-game
+) else if "%TIER%"=="funcon" (
+    REM Phase 2 flag-on tier: the whole func suite with the phase-2 movement
+    REM cvars applied by the harness (-Phase2Flags param; the -ExecCmds path
+    REM proved unreliable for multi-command chains in the -game process).
+    set FILTER=Battle.Func
+    set MODE_FLAGS=-game -Phase2Flags
 ) else (
-    echo Unknown tier "%TIER%" -- use unit or func
+    echo Unknown tier "%TIER%" -- use unit, func or funcon
     exit /b 2
 )
 

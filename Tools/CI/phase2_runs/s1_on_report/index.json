@@ -1,0 +1,993 @@
+﻿{
+	"devices": [
+		{
+			"deviceName": "FROST",
+			"instance": "087414784339C6318DF222A6A319DDFA",
+			"instanceName": "FROST-19932",
+			"platform": "WindowsEditor",
+			"oSVersion": "Windows 10 (22H2) [10.0.19045.6466] ",
+			"model": "Default",
+			"gPU": "NVIDIA GeForce GTX 1660 Ti",
+			"cPUModel": "Intel(R) Core(TM) i7-9700F CPU @ 3.00GHz",
+			"rAMInGB": 16,
+			"renderMode": "SM6",
+			"rHI": "",
+			"appInstanceLog": ""
+		}
+	],
+	"reportCreatedOn": "2026.10.27-13.12.03",
+	"succeeded": 0,
+	"succeededWithWarnings": 0,
+	"failed": 1,
+	"notRun": 0,
+	"inProcess": 0,
+	"totalDuration": 2.0475935935974121,
+	"comparisonExported": false,
+	"comparisonExportDirectory": "",
+	"tests": [
+		{
+			"testDisplayName": "S1_MarchWheel",
+			"fullTestPath": "Battle.Func.S1_MarchWheel",
+			"tags": [],
+			"state": "Fail",
+			"deviceInstance": [
+				"087414784339C6318DF222A6A319DDFA"
+			],
+			"duration": 2.0475935935974121,
+			"dateTime": "2026.10.27-13.12.01",
+			"entries": [
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogAudio: Audio Device unregistered from world 'L_MassBattle_Demo01'.",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogStreaming: FlushAsyncLoading(184): 1 QueuedPackages, 0 AsyncPackages",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogAudio: Audio Device (ID: 1) registered with world 'L_MassBattle_T0_Functional'.",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogStaticMesh: Waiting on static mesh StaticMesh /Engine/BasicShapes/Plane.Plane being ready before playing",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogDemoBattle: EXEC_RESULT DemoGameMode discovered 0 level units",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogDemoBattle: EXEC_RESULT DemoPC ready",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT Phase2Flags applied (6 cvars)",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT SpawnSpec Actor=UnitActor_0 Loc=(-4500.0,0.0)cm SpawnPos=(-4500.0,0.0)cm",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT SpawnRoster Unit=1:1 Entities=40 Row=0 Name=UnitActor_0",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT SpawnPerf Unit=1:1 Micros=217.7 PerEntity=5.44",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT SpawnSpec Actor=UnitActor_1 Loc=(-1500.0,0.0)cm SpawnPos=(-1500.0,0.0)cm",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT SpawnRoster Unit=2:1 Entities=40 Row=1 Name=UnitActor_1",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT SpawnPerf Unit=2:1 Micros=118.5 PerEntity=2.96",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT SpawnSpec Actor=UnitActor_2 Loc=(1500.0,0.0)cm SpawnPos=(1500.0,0.0)cm",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT SpawnRoster Unit=3:1 Entities=40 Row=0 Name=UnitActor_2",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT SpawnPerf Unit=3:1 Micros=24.6 PerEntity=0.62",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT SpawnSpec Actor=UnitActor_3 Loc=(4500.0,0.0)cm SpawnPos=(4500.0,0.0)cm",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT SpawnRoster Unit=4:1 Entities=40 Row=1 Name=UnitActor_3",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT SpawnPerf Unit=4:1 Micros=23.4 PerEntity=0.59",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT SpawnSpec Actor=UnitActor_4 Loc=(-4500.0,3000.0)cm SpawnPos=(-4500.0,3000.0)cm",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT SpawnRoster Unit=5:1 Entities=40 Row=0 Name=UnitActor_4",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT SpawnPerf Unit=5:1 Micros=24.4 PerEntity=0.61",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT SpawnSpec Actor=UnitActor_5 Loc=(-1500.0,3000.0)cm SpawnPos=(-1500.0,3000.0)cm",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT SpawnRoster Unit=6:1 Entities=40 Row=1 Name=UnitActor_5",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT SpawnPerf Unit=6:1 Micros=22.7 PerEntity=0.57",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT SpawnSpec Actor=UnitActor_6 Loc=(1500.0,3000.0)cm SpawnPos=(1500.0,3000.0)cm",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT SpawnRoster Unit=7:1 Entities=40 Row=0 Name=UnitActor_6",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT SpawnPerf Unit=7:1 Micros=26.6 PerEntity=0.66",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT SpawnSpec Actor=UnitActor_7 Loc=(4500.0,3000.0)cm SpawnPos=(4500.0,3000.0)cm",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT SpawnRoster Unit=8:1 Entities=40 Row=1 Name=UnitActor_7",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT SpawnPerf Unit=8:1 Micros=25.4 PerEntity=0.63",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT S1_MarchWheel Spawned Units=8 Entities=320",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT S1SpawnCheck U0 handle=1:1 anchor=(-45.0,0.0)m files=20 slots=40 rankSp=1.2",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT S1SpawnCheck U1 handle=2:1 anchor=(-15.0,0.0)m files=20 slots=40 rankSp=1.2",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT S1SpawnCheck U2 handle=3:1 anchor=(15.0,0.0)m files=20 slots=40 rankSp=1.2",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT S1SpawnCheck U3 handle=4:1 anchor=(45.0,0.0)m files=20 slots=40 rankSp=1.2",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT S1SpawnCheck U4 handle=5:1 anchor=(-45.0,30.0)m files=20 slots=40 rankSp=1.2",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT S1SpawnCheck U5 handle=6:1 anchor=(-15.0,30.0)m files=20 slots=40 rankSp=1.2",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT S1SpawnCheck U6 handle=7:1 anchor=(15.0,30.0)m files=20 slots=40 rankSp=1.2",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT S1SpawnCheck U7 handle=8:1 anchor=(45.0,30.0)m files=20 slots=40 rankSp=1.2",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT S1_MarchWheel PhaseA flags=1",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT S1_MarchWheel Phase=March orders issued",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT PlanPath Unit=1:1 Length=30.0m Points=17",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT PlanPath Unit=2:1 Length=30.0m Points=17",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT PlanPath Unit=3:1 Length=30.0m Points=17",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT PlanPath Unit=4:1 Length=30.0m Points=17",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT PlanPath Unit=5:1 Length=30.0m Points=17",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT PlanPath Unit=6:1 Length=30.0m Points=17",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT PlanPath Unit=7:1 Length=30.0m Points=17",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT PlanPath Unit=8:1 Length=30.0m Points=17",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogDemoBattle: EXEC_RESULT DemoClickProbe none (no garrison structures registered)",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogDemoBattle: EXEC_RESULT DemoSpawn spawned=0 of 0",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.01"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT S1_MarchWheel Phase=March done ticks=1223",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.02"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT S1_MarchWheel Phase=Wheel orders issued",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.02"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT PlanPath Unit=1:1 Length=24.0m Points=14",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.02"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT PlanPath Unit=2:1 Length=24.0m Points=14",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.02"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT PlanPath Unit=3:1 Length=24.0m Points=14",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.02"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT PlanPath Unit=4:1 Length=24.0m Points=14",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.02"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT PlanPath Unit=5:1 Length=24.0m Points=14",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.02"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT PlanPath Unit=6:1 Length=24.0m Points=14",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.02"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT PlanPath Unit=7:1 Length=24.0m Points=14",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.02"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT PlanPath Unit=8:1 Length=24.0m Points=14",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.02"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT S1_MarchWheel Phase=Wheel done ticks=966",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.03"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT ArriveRefront Unit=1:1 Facing=0.0 Files=20",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.03"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT ArriveRefront Unit=2:1 Facing=0.0 Files=20",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.03"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT ArriveRefront Unit=3:1 Facing=0.0 Files=20",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.03"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT ArriveRefront Unit=4:1 Facing=0.0 Files=20",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.03"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT ArriveRefront Unit=5:1 Facing=0.0 Files=20",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.03"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT ArriveRefront Unit=6:1 Facing=0.0 Files=20",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.03"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT ArriveRefront Unit=7:1 Facing=0.0 Files=20",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.03"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT ArriveRefront Unit=8:1 Facing=0.0 Files=20",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.03"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT S1MidMarch samples=546 maxViolations=88 aheadOvershoot=0.00m anyOvershoot=4.92m march=0 wheel=88 first=u=0 anchor=(-42.7,28.5) facing=57 pathS=2.3/24.0 ent=(-54.6,27.9) along=6.4/6.2 side=9.7/17.0",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.03"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT S1WheelSlotError max=16.967m asserted=1",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.03"
+				},
+				{
+					"event":
+					{
+						"type": "Error",
+						"message": "UnitMarchWheelTest0: phase-A FAIL: wheel slot error 16.97 m (expected <= 0.8)",
+						"context": "",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": 0,
+					"timestamp": "2026.10.27-13.12.03"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT S1Settle ticks=197 minSep=0.9807m nearOrigin=0",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.03"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT S1Dump U0 anchor=(-21.0,28.5)m facing=0.0 entities0-3=(-21.0,29.1 -21.0,27.9 -21.0,30.3 -21.0,26.7)",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.03"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT S1_MarchWheel Assert escalations=0 minSeparation=0.981m ok=0",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.03"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT S1_MarchWheel Complete Result=Failed Msg=S1 assertions failed",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-13.12.03"
+				},
+				{
+					"event":
+					{
+						"type": "Error",
+						"message": "S1_MarchWheel finished with result 4",
+						"context": "",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "E:\\Unreal Projects\\MassBattle\\Plugins\\MassBattle\\Source\\MassBattleTest\\Private\\MassBattleFuncTestHarness.cpp",
+					"lineNumber": 274,
+					"timestamp": "2026.10.27-13.12.03"
+				}
+			],
+			"warnings": 0,
+			"errors": 2,
+			"artifacts": []
+		}
+	]
+}

@@ -35,6 +35,14 @@ namespace FUnitServo
 	MASSBATTLE_API FVector2D ComputeServoVelocity(const FVector2D& Pos, const FVector2D& SlotPos,
 		float Tau, float MaxSpeed, float CatchupBoost);
 
+	/** Phase 2 A1 (arch §8.3): slot-velocity feed-forward form --
+	 *  V = clamp(SlotVel + (SlotPos - Pos) / Tau, MaxSpeed * CatchupBoost)
+	 *  with SlotVel = (SlotPos - PrevSlotPos) / DT. Velocity matching on a
+	 *  moving target: the systematic Tau*v trailing lag of the pure pursuit
+	 *  collapses to ~0 without touching Tau or the accel clamp. */
+	MASSBATTLE_API FVector2D ComputeServoVelocityFF(const FVector2D& Pos, const FVector2D& SlotPos,
+		const FVector2D& PrevSlotPos, float Tau, float MaxSpeed, float CatchupBoost, float DT);
+
 	/** Acceleration clamp: |New - Old| <= MaxAccel * DT. */
 	MASSBATTLE_API FVector2D ClampAcceleration(const FVector2D& OldVel, const FVector2D& NewVel, float MaxAccel, float DT);
 

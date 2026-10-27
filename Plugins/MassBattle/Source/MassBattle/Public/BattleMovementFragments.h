@@ -219,6 +219,15 @@ struct FSlotTargetFragment : public FMassFragment
 	UPROPERTY() FVector2D TargetPos = FVector2D::ZeroVector;
 	UPROPERTY() float TargetYaw = 0.f;
 	UPROPERTY() float TargetZ = 0.f;
+
+	/** Phase 2 A1 feed-forward: the target as of the PREVIOUS resolve tick,
+	 *  written by FormationSlotResolve before the overwrite. The servo forms
+	 *  the slot's own velocity from (Target - Prev)/DT and cancels the
+	 *  systematic Tau*v trailing lag of a pure position pursuit. bPrevValid
+	 *  gates the first write (an unvalid Prev would read as a huge one-frame
+	 *  slot velocity); diagnostic bytes, never hashed. */
+	UPROPERTY() FVector2D PrevTargetPos = FVector2D::ZeroVector;
+	UPROPERTY() uint8 bPrevValid = 0;
 };
 
 /** Movement state (§8.3 enum; per-entity -- formation behavior is read per

@@ -6,7 +6,14 @@ namespace FUnitLocomotion
 	float ComputeUnitSpeedLimit(const FSpeedLimitInputs& In)
 	{
 		// Two explicit steps so every dimension is auditable (arch §8.2, E2).
-		const float OmegaMax = In.MaxMemberSpeed / FMath::Max(In.OuterRadius, KINDA_SMALL_NUMBER); // rad/s
+		// The wheel radius is traversal-dependent (phase 2 A3, F-5): with a
+		// path active the wrapped column's outer files sweep r_path +
+		// HalfFrontage (marching form); the pivot keeps the formed-body
+		// OuterRadius about the centroid (E2 original form).
+		const float WheelRadius = FMath::Max(
+			In.bPathActive ? In.PathRadiusOfAnchor + In.HalfFrontageM : In.OuterRadius,
+			KINDA_SMALL_NUMBER);
+		const float OmegaMax = In.MaxMemberSpeed / WheelRadius; // rad/s
 		const float WheelLinearLimit = OmegaMax * FMath::Max(In.PathRadiusOfAnchor, KINDA_SMALL_NUMBER); // m/s
 		const float FacingLinearLimit = In.FacingDeltaRate * FMath::Max(In.PathRadiusOfAnchor, KINDA_SMALL_NUMBER); // m/s
 

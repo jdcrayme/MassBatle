@@ -9,12 +9,15 @@
 
 #include "BattleFuncTestActor.h"
 #include "BattleTestSettings.h"
+#include "MassBattleModule.h"
 #include "EngineUtils.h"
 #include "UObject/UObjectIterator.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
 #include "FunctionalTestingModule.h"
+#include "HAL/IConsoleManager.h"
+#include "Misc/CommandLine.h"
 
 namespace
 {
@@ -74,6 +77,57 @@ namespace
 		FAutomationTestBase* Owner = nullptr;
 		bool bOpened = false;
 		double Deadline = 0.0;
+	};
+
+	/** Phase 2 flag-on variant runs: -Phase2Flags on the command line turns
+	 *  the phase-2 movement cvars on for the duration of a scenario and
+	 *  restores the previous values afterwards. This rides a dedicated param
+	 *  because the -ExecCmds path proved unreliable for multi-command chains
+	 *  in the -game process (only the first command of the chain executed --
+	 *  recorded in the phase-2 report); scenarios condition their own asserts
+	 *  on the live cvars, so the same actors serve both tiers. */
+	class FPhase2FlagScope
+	{
+	public:
+		static constexpr const TCHAR* Cvars[] = {
+			TEXT("Battle.Movement.FeedForward"),
+			TEXT("Battle.Movement.MemberClamp"),
+			TEXT("Battle.Movement.WheelCapV2"),
+			TEXT("Battle.Movement.StragglerPace"),
+			TEXT("Battle.Movement.MarchStickiness"),
+			TEXT("Battle.Movement.ProgressiveFallIn"),
+		};
+
+		void Apply()
+		{
+			for (const TCHAR* Name : Cvars)
+			{
+				if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(Name))
+				{
+					Saved.Add(C->GetInt());
+					C->Set(1, ECVF_SetByCode);
+				}
+				else
+				{
+					Saved.Add(0);
+				}
+			}
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT Phase2Flags applied (%d cvars)"), (int32)std::size(Cvars));
+		}
+
+		void Restore()
+		{
+			for (int32 i = 0; i < (int32)std::size(Cvars); ++i)
+			{
+				if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(Cvars[i]))
+				{
+					C->Set(Saved[i], ECVF_SetByCode);
+				}
+			}
+		}
+
+	private:
+		TArray<int32> Saved;
 	};
 
 	/** Finds/spawns the named S-scenario actor class, begins it, polls completion. */
@@ -192,6 +246,11 @@ namespace
 				// World is passed (audit M2) so the Mass-side probes run.
 				UBattleTestSettings::ApplyTestMode();
 				UBattleTestSettings::AssertTestMode(Owner, nullptr, World);
+				// Phase 2 flag-on tier: apply AFTER the contract asserts.
+				if (FParse::Param(FCommandLine::Get(), TEXT("Phase2Flags")))
+				{
+					Flags.Apply();
+				}
 				return false;
 			}
 
@@ -204,6 +263,7 @@ namespace
 					Owner->AddError(FString::Printf(TEXT("%s timed out (%d ticks, audit M17 tick budget)"), *TestName, PollTicks));
 					TestActor->Result = EFunctionalTestResult::Error;
 					TestActor->bIsRunning = false;
+					Flags.Restore();
 					return true;
 				}
 				return false; // keep polling
@@ -214,6 +274,7 @@ namespace
 				Owner->AddError(FString::Printf(TEXT("%s finished with result %d"),
 					*TestName, static_cast<int32>(TestActor->Result)));
 			}
+			Flags.Restore();
 			return true;
 		}
 
@@ -222,6 +283,7 @@ namespace
 		FString TestName;
 		FString ActorClassName;
 		TObjectPtr<AFunctionalTest> TestActor;
+		FPhase2FlagScope Flags;
 		bool bStarted = false;
 		int32 PollTicks = 0;
 		int32 DeadlineTicks = 0;

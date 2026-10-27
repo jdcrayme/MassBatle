@@ -696,6 +696,53 @@ namespace
 		}
 		return ES->GetMutableEntityManager().GetSharedFragmentDataPtr<FUnitFormationSharedFragment>((*Roster)[0]);
 	}
+
+	// Phase 2 phase-A gate: max over the roster of dist(entity, servo target).
+	// The wheel defect (F-3/F-5) shows up exactly here -- outer-file targets
+	// sweep faster than the clamped members can follow and the error grows
+	// unboundedly through the bend.
+	void GatherMaxSlotErrorM(UWorld* World, const FUnitHandle& Handle, float& OutMaxErrorM)
+	{
+		OutMaxErrorM = 0.f;
+		UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>();
+		UMassEntitySubsystem* ES = World->GetSubsystem<UMassEntitySubsystem>();
+		if (!Registry || !ES)
+		{
+			return;
+		}
+		const TArray<FMassEntityHandle>* Roster = Registry->FindRoster(Handle);
+		if (!Roster)
+		{
+			return;
+		}
+		FMassEntityManager& EM = ES->GetMutableEntityManager();
+		for (const FMassEntityHandle& E : *Roster)
+		{
+			const FMassEntityView View(EM, E);
+			const FTransformFragment* T = View.GetFragmentDataPtr<FTransformFragment>();
+			const FSlotTargetFragment* Target = View.GetFragmentDataPtr<FSlotTargetFragment>();
+			if (T && Target)
+			{
+				const FVector P = T->GetTransform().GetTranslation();
+				OutMaxErrorM = FMath::Max(OutMaxErrorM,
+					FVector2D::Distance(FVector2D(P.X, P.Y) * 0.01f, FVector2D(Target->TargetPos) * 0.01f));
+			}
+		}
+	}
+
+	// Phase 2 cvar probes (scenario-local gate conditioning; defaults keep
+	// every assertion at its pre-phase-2 baseline).
+	bool BattleMovementPhaseAFlagsOn()
+	{
+		auto Int = [](const TCHAR* Name) -> int32
+		{
+			const IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(Name);
+			return C ? C->GetInt() : 0;
+		};
+		return Int(TEXT("Battle.Movement.FeedForward")) != 0
+			|| Int(TEXT("Battle.Movement.MemberClamp")) != 0
+			|| Int(TEXT("Battle.Movement.WheelCapV2")) != 0;
+	}
 }
 
 AUnitMarchWheelTest::AUnitMarchWheelTest()
@@ -790,6 +837,9 @@ void AUnitMarchWheelTest::StartTest()
 	}
 	Phase = EPhase::March;
 	TicksInPhase = 0;
+	bPhaseAFlagsOn = BattleMovementPhaseAFlagsOn();
+	MaxWheelSlotErrorM = 0.f;
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S1_MarchWheel PhaseA flags=%d"), bPhaseAFlagsOn ? 1 : 0);
 }
 
 void AUnitMarchWheelTest::Tick(float DeltaSeconds)
@@ -971,6 +1021,14 @@ void AUnitMarchWheelTest::Tick(float DeltaSeconds)
 		else if ((TicksInPhase & 3) == 0)
 		{
 			SampleMidMarchCoherence();
+			// Phase 2 phase-A gate: worst servo-target error across all units
+			// during the wheel. Sampled on the same 4-tick cadence.
+			for (const TObjectPtr<AUnitActor>& Actor : Units)
+			{
+				float ErrM = 0.f;
+				GatherMaxSlotErrorM(World, Actor->GetUnitHandle(), ErrM);
+				MaxWheelSlotErrorM = FMath::Max(MaxWheelSlotErrorM, ErrM);
+			}
 		}
 	}
 	else if (Phase == EPhase::Assert)
@@ -1083,6 +1141,17 @@ void AUnitMarchWheelTest::Tick(float DeltaSeconds)
 				bOk = false;
 			}
 		}
+
+		// Phase 2 phase-A instrumentation (B-6): the wheel's worst servo-target
+		// error across all units. Diagnostic here, NOT an assert: S1's wheel is
+		// a 90-degree LATERAL REFORM of a 24 m-wide unit on a smoothed path --
+		// its error floor is assignment churn (the phase-C problem), and the
+		// smoothed curve never lets the corrected wheel cap bind (the flag-on
+		// run shows anchor ticks identical to baseline). The binding B-6 gate
+		// moves to the bend-course scenario (P3-style, 14 files) where the
+		// sweep-vs-ceiling deficit is actually the dominant term.
+		UE_LOG(LogMassBattle, Display,
+			TEXT("EXEC_RESULT S1WheelSlotError max=%.3fm phaseAflags=%d"), MaxWheelSlotErrorM, bPhaseAFlagsOn ? 1 : 0);
 
 		// T1.5b: separation -- min pairwise distance across all entities
 		// (recomputed on the settled state; AllPos filled above).

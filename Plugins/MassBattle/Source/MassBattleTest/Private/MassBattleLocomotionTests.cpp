@@ -110,6 +110,86 @@ bool FSpeedLimits_E2DegenerateSet::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSpeedLimits_MarchingWheelCapV2,
+	"Battle.Unit.SpeedLimits.MarchingWheelCapV2",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FSpeedLimits_MarchingWheelCapV2::RunTest(const FString& Parameters)
+{
+	// Phase 2 A3 (F-5): with a path active the wheel radius is r_path +
+	// HalfFrontage (the wrapped column's outer-file sweep), not the centroid's
+	// OuterRadius. Worked example (brief section 0): 14-file x 3-rank at
+	// spacing 1.2 m -> HalfFrontage 8.4 m; 90-deg bend r=8; member walk 1.4.
+	{
+		FUnitLocomotion::FSpeedLimitInputs In;
+		In.CommandedSpeed = 8.f;
+		In.MinMemberSpeed = 1.4f;
+		In.MaxMemberSpeed = 1.4f;
+		In.OuterRadius = 8.59f;             // the centroid form's answer
+		In.HalfFrontageM = 8.4f;
+		In.bPathActive = true;
+		In.PathRadiusOfAnchor = 8.f;
+		In.FacingDeltaRate = 0.35f;
+		const float Expected = 1.4f * 8.f / (8.f + 8.4f); // ~= 0.683 m/s
+		const float Limit = FUnitLocomotion::ComputeUnitSpeedLimit(In);
+		TestTrue(FString::Printf(TEXT("worked example: anchor cap %.3f ~= %.3f"), Limit, Expected),
+			FMath::IsNearlyEqual(Limit, Expected, 1e-3f));
+	}
+
+	// r -> huge (straight path): the marching cap converges to member max --
+	// exactly (member * r / (r + HF)) with vanishing HF influence; commanded
+	// and slowest-man terms sit above it so the wheel term binds.
+	{
+		FUnitLocomotion::FSpeedLimitInputs In;
+		In.CommandedSpeed = 8.f;
+		In.MinMemberSpeed = 6.f;
+		In.MaxMemberSpeed = 5.f;
+		In.OuterRadius = 10.f;
+		In.HalfFrontageM = 4.f;
+		In.bPathActive = true;
+		In.PathRadiusOfAnchor = 1e6f;
+		In.FacingDeltaRate = 1.f;
+		const float Limit = FUnitLocomotion::ComputeUnitSpeedLimit(In);
+		TestTrue(FString::Printf(TEXT("r->inf: cap -> member max (got %.4f)"), Limit),
+			FMath::IsNearlyEqual(Limit, 5.f, 1e-2f));
+	}
+
+	// r -> 0 (tight bend): the cap collapses to ~0 -- the unit cannot
+	// translate through a hairpin regardless of frontage.
+	{
+		FUnitLocomotion::FSpeedLimitInputs In;
+		In.CommandedSpeed = 8.f;
+		In.MinMemberSpeed = 6.f;
+		In.MaxMemberSpeed = 5.f;
+		In.OuterRadius = 10.f;
+		In.HalfFrontageM = 4.f;
+		In.bPathActive = true;
+		In.PathRadiusOfAnchor = 0.f;
+		In.FacingDeltaRate = 1.f;
+		TestTrue(TEXT("r->0: cap collapses to ~0"),
+			FUnitLocomotion::ComputeUnitSpeedLimit(In) < 1e-3f);
+	}
+
+	// Flag-off golden: bPathActive = false must reproduce the E2 pivot form
+	// EXACTLY, HalfFrontageM notwithstanding (the cvar-off contract).
+	{
+		FUnitLocomotion::FSpeedLimitInputs In;
+		In.CommandedSpeed = 12.f;
+		In.MinMemberSpeed = 12.f;
+		In.MaxMemberSpeed = 5.f;
+		In.OuterRadius = 10.f;
+		In.HalfFrontageM = 8.4f; // set but MUST be ignored without a path
+		In.bPathActive = false;
+		In.PathRadiusOfAnchor = 20.f;
+		In.FacingDeltaRate = 1.f;
+		// omega = 5/10 = 0.5; wheel = 0.5*20 = 10; slowest*1.25 = 15 -> 10.
+		TestEqual(TEXT("flag-off: OuterRadius form preserved"),
+			FUnitLocomotion::ComputeUnitSpeedLimit(In), 10.f);
+	}
+
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSpeedLimits_HysteresisUnderNoise,
 	"Battle.Unit.SpeedLimits.HysteresisUnderNoise",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

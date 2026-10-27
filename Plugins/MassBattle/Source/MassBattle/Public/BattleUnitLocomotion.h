@@ -2,10 +2,18 @@
 // Pure functions on the seam, METERS. The unit is the locomotor (§8.1): these
 // functions produce the per-unit speed limit and anchor/facing progression the
 // formation rides on. The wheel cap is the E2-corrected two-step form:
-//   OmegaMax        = MaxMemberSpeed / max(OuterRadius, eps)          [rad/s]
-//   WheelLinearLimit= OmegaMax * max(PathRadiusOfAnchor, eps)       [m/s]
+//   OmegaMax        = MaxMemberSpeed / max(R_wheel, eps)                [rad/s]
+//   WheelLinearLimit= OmegaMax * max(PathRadiusOfAnchor, eps)           [m/s]
 //   FacingLinearLimit = FacingDeltaRate * max(PathRadiusOfAnchor, eps)  [m/s]
 //   UnitSpeedLimit  = Min3(CommandedSpeed, MinMemberSpeed*Catchup, min(Wheel, Facing))
+// R_wheel depends on the traversal (phase 2 A3, F-5):
+//   path active   -> R_wheel = r_path + HalfFrontage. The path-frame layout
+//                    wraps ranks ALONG the path, so the outer files sweep
+//                    r_path + HalfFrontage, not the formed-body outer radius
+//                    about the centroid -- the centroid form is too generous
+//                    on bends and lets outer slots outrun the members.
+//   no path       -> R_wheel = OuterRadius (in-place pivot: the formed body
+//                    rotates about the anchor; the E2-audited original form).
 #pragma once
 
 #include "CoreMinimal.h"
@@ -21,8 +29,12 @@ namespace FUnitLocomotion
 		float MinMemberSpeed = 0.f;
 		/** MaxMemberSpeed -- the fastest man sets the angular cap (m/s). */
 		float MaxMemberSpeed = 0.f;
-		/** Unit body outer radius (m). */
+		/** Unit body outer radius (m) -- the pivot-form wheel radius. */
 		float OuterRadius = 0.f;
+		/** Half the formed frontage (m) -- the marching-form wheel sweep term. */
+		float HalfFrontageM = 0.f;
+		/** 1 = a path is active (marching form); 0 = pivot form (OuterRadius). */
+		bool bPathActive = false;
 		/** Anchor's turning radius: 0 = in-place pivot, huge = straight march (m). */
 		float PathRadiusOfAnchor = 0.f;
 		/** Commanded facing-change rate (rad/s), applied as a separate linear cap. */

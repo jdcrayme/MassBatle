@@ -55,6 +55,16 @@ namespace
 		TEXT("Speed-limit hysteresis fraction (rises need this margin)."),
 		ECVF_Default);
 
+	// Phase 2 A3 (F-5): marching-form wheel cap -- the outer files of the
+	// path-wrapped column sweep r_path + HalfFrontage, so that (not the
+	// centroid's OuterRadius) sets the angular cap while a path is active.
+	// 0 keeps the E2 pivot form for every traversal.
+	TAutoConsoleVariable<int32> GBattleMovementWheelCapV2(
+		TEXT("Battle.Movement.WheelCapV2"),
+		0,
+		TEXT("1 = marching-form wheel cap (AnchorCap = v_member * r/(r + HalfFrontage) with a path active). Phase 2 A3."),
+		ECVF_Default);
+
 	// Audit H2: the T1.7 pass decision commits when the constriction is this
 	// close to the anchor (the lead rank at the mouth) -- not on first sight
 	// anywhere inside the 15 m scan-ahead. 6 m gives the batched reflow ~4 s
@@ -850,7 +860,12 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 
 		// Unit outer radius from the formed body; turn radius from path
 		// curvature at the anchor (straight path -> huge -> caps inactive).
+		// Phase 2 A3: with a path active the wheel radius is r_path +
+		// HalfFrontage (the wrapped column's outer-file sweep), gated by
+		// Battle.Movement.WheelCapV2; flag off keeps the pivot form everywhere.
 		LimitIn.OuterRadius = FMath::Sqrt(HalfFrontageM * HalfFrontageM + HalfDepthM * HalfDepthM);
+		LimitIn.HalfFrontageM = HalfFrontageM;
+		LimitIn.bPathActive = GBattleMovementWheelCapV2.GetValueOnGameThread() != 0 && bHasPath;
 		LimitIn.PathRadiusOfAnchor = bHasPath
 			? FUnitLocomotion::PathRadiusAt(PathM, Formation.PathS * 0.01f, 3.0f)
 			: BIG_NUMBER;

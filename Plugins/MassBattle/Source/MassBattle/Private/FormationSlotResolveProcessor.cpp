@@ -198,9 +198,15 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 				{
 					continue;
 				}
-				HoldTargets[i].TargetPos = FVector2D(PostPosM[Slot]) * 100.f;
-				HoldTargets[i].TargetYaw = PostYaw[Slot];
-				HoldTargets[i].TargetZ = PostZCm[Slot];
+			// Phase 2 A1 feed-forward: stamp the previous target BEFORE the
+			// overwrite so the servo can form the slot's own velocity. First
+			// write: Prev = the new target (no slot motion on the first frame).
+			const FVector2D NewTargetPos(FVector2D(PostPosM[Slot]) * 100.f);
+			HoldTargets[i].PrevTargetPos = HoldTargets[i].bPrevValid ? HoldTargets[i].TargetPos : NewTargetPos;
+			HoldTargets[i].bPrevValid = 1;
+			HoldTargets[i].TargetPos = NewTargetPos;
+			HoldTargets[i].TargetYaw = PostYaw[Slot];
+			HoldTargets[i].TargetZ = PostZCm[Slot];
 
 				if (DebugHold)
 				{
@@ -415,7 +421,14 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 					TargetYawDeg = Formation.FinalFacingYaw;
 				}
 			}
-			Targets[i].TargetPos = FVector2D(TargetPosM) * 100.f;
+			// Phase 2 A1 feed-forward: stamp the previous target BEFORE the
+			// overwrite (pre-blend, per the plan -- the servo tracks the
+			// moving blended target, which is the slot the soldier walks to).
+			// First write: Prev = the new target (no slot motion frame one).
+			const FVector2D NewTargetPos(FVector2D(TargetPosM) * 100.f);
+			Targets[i].PrevTargetPos = Targets[i].bPrevValid ? Targets[i].TargetPos : NewTargetPos;
+			Targets[i].bPrevValid = 1;
+			Targets[i].TargetPos = NewTargetPos;
 			Targets[i].TargetYaw = TargetYawDeg;
 			// Garrison filing (spec §6): TargetZ interpolates along the path
 			// at the entity's rank arc; field movement stays at ground Z.
