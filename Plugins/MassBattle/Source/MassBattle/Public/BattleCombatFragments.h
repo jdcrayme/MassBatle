@@ -81,6 +81,16 @@ struct FCombatPairFragment : public FMassFragment
 	/** Failed-seek backoff, ticks (1-3, jittered; spec §4.4). Transient pacing
 	 *  -- not a hashed term (spec §3.4's list). */
 	UPROPERTY() uint8 BackoffTicks = 0;
+	/** Defender stat mirror (spec §4.8 directional defense): stamped by the
+	 *  assign pass at PAIR CREATION from the defender's immutable stats -- the
+	 *  worker-side resolution pass reads these instead of crossing chunks
+	 *  (ADR-05: attacker-authoritative, defender holds no combat authority). */
+	UPROPERTY() float DefenderDefense = 0.f;
+	UPROPERTY() float DefenderShield = 0.f;
+	UPROPERTY() float DefenderArmor = 0.f;
+	/** Remaining mount pool of the paired defender (hits before the rider
+	 *  pool; humans have none -- spec §4.8 composite model). */
+	UPROPERTY() int16 DefenderMountRemaining = 0;
 };
 
 /** Charge state machine per-entity fields (spec §4.9, worker-written by the
@@ -98,4 +108,12 @@ struct FChargeFragment : public FMassFragment
 	UPROPERTY() float ImpactSpeed = 0.f;
 	/** 1 after impact seeded the first pair (the bypass latch). */
 	UPROPERTY() uint8 bConnected = 0;
+	/** Ticks spent charging without connecting (fixed DT; the run-up EXPIRES
+	 *  after the decay window so a never-connecting fast mover cannot hold
+	 *  the unit's charge-through displacement open indefinitely -- measured
+	 *  2026-10-27: one stuck charger shoved the enemy formation 25 m). */
+	UPROPERTY() uint16 ChargeTicks = 0;
+	/** 1 once the connect impulse reached the victim's transform (one-shot;
+	 *  the assign pass applies it game-thread before the worker phase). */
+	UPROPERTY() uint8 bKnockbackApplied = 0;
 };

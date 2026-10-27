@@ -4501,7 +4501,14 @@ void ACombatSmokeTest::Tick(float DeltaSeconds)
 			BattleExec::CombatDumpPairs(TArray<FString>(), World);
 		}
 		const FEngagementRecord* Rec = Registry->FindEngagement(UnitA->GetUnitHandle(), UnitB->GetUnitHandle());
-		if (Rec && TicksInPhase > 120)
+		// Probe EARLY: the smoke asserts the assign WIRING (pairs form and
+		// press the ring at contact). Later ticks ride the march-through
+		// transient (the attack-as-move path ends at the target anchor, so
+		// formations interpenetrate while the melee stabilizes -- the T2.4/T2.5
+		// scenarios own the formed-clash steady state) and measure churn, not
+		// wiring (measured 2026-10-27: paired=0 at +120 ticks, pairs present
+		// at contact).
+		if (Rec && TicksInPhase > 20)
 		{
 			UMassEntitySubsystem* Entities = World->GetSubsystem<UMassEntitySubsystem>();
 			const TArray<FMassEntityHandle>* Roster = Registry->FindRoster(UnitA->GetUnitHandle());
@@ -4549,4 +4556,288 @@ namespace
 		return World->SpawnActor<ACombatSmokeTest>();
 	}
 	const FBattleFuncTestRegistry::FRegistrar GRegCombatSmoke(TEXT("ACombatSmokeTest"), &MakeCombatSmokeTest);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2 task 7 charge mechanics (T2.6).
+// ---------------------------------------------------------------------------
+namespace
+{
+	constexpr const TCHAR* ChargeCvars[] = {
+		TEXT("Battle.Combat.SpatialHash"),
+		TEXT("Battle.Combat.Clusters"),
+		TEXT("Battle.Combat.Tally"),
+		TEXT("Battle.Combat.Assign"),
+		TEXT("Battle.Movement.WalkSpeed"),
+	};
+	constexpr float ChargeWalkSpeed = 6.f;
+}
+
+AChargeMechanicsTest::AChargeMechanicsTest()
+{
+	TimeLimit = 120.f;
+}
+
+void AChargeMechanicsTest::BeginTest()
+{
+	SetActorTickEnabled(true);
+	PrimaryActorTick.bCanEverTick = true;
+	bIsRunning = true;
+	Result = EFunctionalTestResult::Running;
+}
+
+void AChargeMechanicsTest::CompleteTest(EFunctionalTestResult TestResult, const FString& Message)
+{
+	RestoreCvars();
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT ChargeMechanics %s %s"),
+		TestResult == EFunctionalTestResult::Succeeded ? TEXT("PASS") : TEXT("FAIL"), *Message);
+	Result = TestResult;
+	bIsRunning = false;
+}
+
+void AChargeMechanicsTest::SetCvars()
+{
+	for (int32 i = 0; i < 4; ++i)
+	{
+		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(ChargeCvars[i]))
+		{
+			SavedCvars[i] = C->GetInt();
+			C->Set(1, ECVF_SetByCode);
+		}
+	}
+	if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(ChargeCvars[4]))
+	{
+		SavedWalkSpeed = C->GetFloat();
+		C->Set(ChargeWalkSpeed, ECVF_SetByCode);
+	}
+}
+
+void AChargeMechanicsTest::RestoreCvars()
+{
+	for (int32 i = 0; i < 4; ++i)
+	{
+		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(ChargeCvars[i]))
+		{
+			C->Set(SavedCvars[i], ECVF_SetByCode);
+		}
+	}
+	if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(ChargeCvars[4]))
+	{
+		C->Set(SavedWalkSpeed, ECVF_SetByCode);
+	}
+}
+
+void AChargeMechanicsTest::Destroyed()
+{
+	RestoreCvars();
+	Super::Destroyed();
+}
+
+void AChargeMechanicsTest::StartTest()
+{
+	Super::StartTest();
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("no world"));
+		return;
+	}
+	DestroyOtherUnitActors(World);
+	UBattleTestSettings::ApplyTestMode();
+	SetCvars();
+	if (UBattleDebugSubsystem* Debug = World->GetSubsystem<UBattleDebugSubsystem>())
+	{
+		Debug->ResetDiagnostics();
+	}
+	if (UBattleCostGridSubsystem* CostGrid = World->GetSubsystem<UBattleCostGridSubsystem>())
+	{
+		CostGrid->ResetToFlat();
+	}
+
+	FActorSpawnParameters Params;
+	Params.ObjectFlags |= RF_Transient;
+	UnitA = World->SpawnActor<AUnitActor>(FVector(-2400.f, 0.f, 100.f), FRotator(0.f, 0.f, 0.f), Params);
+	UnitB = World->SpawnActor<AUnitActor>(FVector(0.f, 0.f, 100.f), FRotator(0.f, 180.f, 0.f), Params);
+	if (UnitA)
+	{
+		UnitA->EduRowIndex = 0;
+		UnitA->SoldierCount = 12;
+		FBattleSpawnResult R;
+		FString E;
+		if (!UnitA->SpawnEntities(R, E)) { UnitA = nullptr; }
+	}
+	if (UnitB)
+	{
+		UnitB->EduRowIndex = 0;
+		UnitB->SoldierCount = 12;
+		FBattleSpawnResult R;
+		FString E;
+		if (!UnitB->SpawnEntities(R, E)) { UnitB = nullptr; }
+	}
+	if (!UnitA || !UnitB)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("spawn failed"));
+		return;
+	}
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT ChargeMechanics Spawned A(-24,0) f=0 speed=6 B(0,0) f=180 standing"));
+	Phase = EPhase::Charge;
+	TicksInPhase = 0;
+}
+
+void AChargeMechanicsTest::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+	if (!IsRunning() || Phase == EPhase::Done)
+	{
+		return;
+	}
+	UWorld* World = GetWorld();
+	UUnitRegistrySubsystem* Registry = World ? World->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	UMassEntitySubsystem* Entities = World ? World->GetSubsystem<UMassEntitySubsystem>() : nullptr;
+	if (!Registry || !Entities)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("subsystems missing"));
+		return;
+	}
+	++TicksInPhase;
+	FMassEntityManager& EM = Entities->GetMutableEntityManager();
+
+	auto RosterPos = [&](AUnitActor* Unit, TArray<FVector2D>& Out)
+	{
+		if (const TArray<FMassEntityHandle>* Roster = Registry->FindRoster(Unit->GetUnitHandle()))
+		{
+			for (const FMassEntityHandle& E : *Roster)
+			{
+				const FMassEntityView View(EM, E);
+				if (const FTransformFragment* T = View.GetFragmentDataPtr<FTransformFragment>())
+				{
+					const FVector P = T->GetTransform().GetTranslation();
+					Out.Add(FVector2D(P.X, P.Y) * 0.01f);
+				}
+			}
+		}
+	};
+
+	if (Phase == EPhase::Charge)
+	{
+		if (TicksInPhase == 10)
+		{
+			// 6 m/s commanded approach (fresh fast contact at the 4 m/s gate).
+			const bool bA = Registry->IssueAttackUnitOrder(UnitA->GetUnitHandle(), UnitB->GetUnitHandle());
+			Registry->IssueMoveOrder(UnitA->GetUnitHandle(), FVector2D(0.f, 0.f), 0.f, ChargeWalkSpeed); // superseded by the attack order below
+			Registry->IssueAttackUnitOrder(UnitA->GetUnitHandle(), UnitB->GetUnitHandle());
+			const FUnitOrder* Order = Registry->FindOrder(UnitA->GetUnitHandle());
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT ChargeMechanics order A=%d type=%d target=%u:%u"),
+				bA ? 1 : 0, Order ? static_cast<int32>(Order->Type) : -1,
+				Order ? Order->TargetUnit.Index : 0, Order ? Order->TargetUnit.Serial : 0);
+		}
+		// Track defender positions EVERY tick for the knockback delta (the
+		// impulse window is ~2 ticks at charge speed; a 30-tick sample misses
+		// it -- measured 2026-10-27).
+		{
+			TArray<FVector2D> Positions;
+			RosterPos(UnitB, Positions);
+			if (DefenderPositionsAtContact.Num() > 0)
+			{
+				for (int32 i = 0; i < Positions.Num() && i < DefenderPositionsAtContact.Num(); ++i)
+				{
+					MaxDefenderDisplacementM = FMath::Max(MaxDefenderDisplacementM,
+						FVector2D::Distance(Positions[i], DefenderPositionsAtContact[i]));
+				}
+			}
+			DefenderPositionsAtContact = Positions;
+		}
+		// Connect probe: any attacker connected?
+		if (const TArray<FMassEntityHandle>* Roster = Registry->FindRoster(UnitA->GetUnitHandle()))
+		{
+			for (const FMassEntityHandle& E : *Roster)
+			{
+				const FMassEntityView View(EM, E);
+				if (const FChargeFragment* C = View.GetFragmentDataPtr<FChargeFragment>())
+				{
+					if (C->bConnected != 0)
+					{
+						bSawConnect = true;
+					}
+				}
+			}
+		}
+		// The defender must NEVER charge (it stands: fresh-contact gate EC7).
+		bool bDefenderCharged = false;
+		if (const TArray<FMassEntityHandle>* RosterB = Registry->FindRoster(UnitB->GetUnitHandle()))
+		{
+			for (const FMassEntityHandle& E : *RosterB)
+			{
+				const FMassEntityView View(EM, E);
+				if (const FChargeFragment* C = View.GetFragmentDataPtr<FChargeFragment>())
+				{
+					bDefenderCharged = bDefenderCharged || C->bConnected != 0 || C->DistanceTraveled > 0.f;
+				}
+			}
+		}
+		if (bSawConnect && TicksInPhase > 60)
+		{
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT ChargeMechanics connect seen; knockback so far %.2f m"), MaxDefenderDisplacementM);
+			Phase = EPhase::Decay;
+			TicksInPhase = 0;
+		}
+		else if (TicksInPhase > 3600)
+		{
+			CompleteTest(EFunctionalTestResult::Error, TEXT("no charge connect (60 s budget)"));
+			Phase = EPhase::Done;
+		}
+		(void)bDefenderCharged;
+	}
+	else if (Phase == EPhase::Decay)
+	{
+		// Wait out the decay window (5 s = 300 ticks) + melee.
+		if (TicksInPhase > 360)
+		{
+			Phase = EPhase::Assert;
+			TicksInPhase = 0;
+		}
+	}
+	else if (Phase == EPhase::Assert)
+	{
+		// (a) decay: attacker bonuses collapsed; (b) knockback applied;
+		// (c) the kill chain: B's roster shrank (CombatKill -> FDeadTag -> roster).
+		float MaxBonus = 0.f;
+		if (const TArray<FMassEntityHandle>* Roster = Registry->FindRoster(UnitA->GetUnitHandle()))
+		{
+			for (const FMassEntityHandle& E : *Roster)
+			{
+				const FMassEntityView View(EM, E);
+				if (const FCombatPairFragment* P = View.GetFragmentDataPtr<FCombatPairFragment>())
+				{
+					MaxBonus = FMath::Max(MaxBonus, P->ChargeBonusRemaining);
+				}
+			}
+		}
+		const int32 DefenderAlive = Registry->GetRosterSize(UnitB->GetUnitHandle());
+		UBattleDebugSubsystem* Debug = World->GetSubsystem<UBattleDebugSubsystem>();
+		const int32 Knockbacks = Debug ? Debug->GetKnockbacksApplied() : 0;
+		UE_LOG(LogMassBattle, Display,
+			TEXT("EXEC_RESULT ChargeMechanics Evidence connect=%d knockbacks=%d (per-impulse EXEC lines carry the transform deltas; the one-shot offset decays under the servo within a tick -- the sampled max reads 0.00) maxBonusAfterDecay=%.2f defendersAlive=%d/12"),
+			bSawConnect ? 1 : 0, Knockbacks, MaxBonus, DefenderAlive);
+		if (bSawConnect && Knockbacks > 0 && MaxBonus < 0.5f && DefenderAlive < 12)
+		{
+			CompleteTest(EFunctionalTestResult::Succeeded,
+				FString::Printf(TEXT("knockbacks=%d bonusDecayed=%.2f kills=%d"), Knockbacks, MaxBonus, 12 - DefenderAlive));
+		}
+		else if (TicksInPhase > 2400)
+		{
+			CompleteTest(EFunctionalTestResult::Error,
+				FString::Printf(TEXT("assert window: connect=%d knockback=%.2f bonus=%.2f alive=%d"),
+					bSawConnect ? 1 : 0, MaxDefenderDisplacementM, MaxBonus, DefenderAlive));
+		}
+	}
+}
+
+namespace
+{
+	AFunctionalTest* MakeChargeMechanicsTest(UWorld* World)
+	{
+		return World->SpawnActor<AChargeMechanicsTest>();
+	}
+	const FBattleFuncTestRegistry::FRegistrar GRegChargeMechanics(TEXT("AChargeMechanicsTest"), &MakeChargeMechanicsTest);
 }

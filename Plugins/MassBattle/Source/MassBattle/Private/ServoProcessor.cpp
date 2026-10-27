@@ -4,6 +4,8 @@
 #include "BattleMovementFragments.h"
 #include "BattleServo.h"
 #include "BattleUnitContact.h"
+#include "BattleMelee.h"
+#include "BattleEngagement.h"
 #include "BattleDebugSubsystem.h"
 #include "MassBattleModule.h"
 
@@ -94,8 +96,12 @@ void UServoProcessor::ConfigureQueries(const TSharedRef<FMassEntityManager>& Ent
 	SnapshotQuery.AddTagRequirement<FDeadTag>(EMassFragmentPresence::None); // audit M8
 
 	// Unit bodies: one chunk per unit (shared-formation grouped). Audit M8: no corpses.
+	// Phase 2 task 7: movement state + velocity ride along for the charge
+	// knockback (a charging unit displaces what it rides over, spec §4.9).
 	UnitBodyQuery.AddSharedRequirement<FUnitFormationSharedFragment>(EMassFragmentAccess::ReadOnly);
 	UnitBodyQuery.AddRequirement<FOwnerUnitFragment>(EMassFragmentAccess::ReadOnly);
+	UnitBodyQuery.AddRequirement<FMovementStateFragment>(EMassFragmentAccess::ReadOnly);
+	UnitBodyQuery.AddRequirement<FMassVelocityFragment>(EMassFragmentAccess::ReadOnly);
 	UnitBodyQuery.AddTagRequirement<FDeadTag>(EMassFragmentPresence::None);
 
 	// Same grouping, cavalry rosters only (§8.6 mobility-advantage input).
@@ -202,7 +208,9 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 	TArray<FUnitHandle> BodyUnits;
 	BodyUnits.Reserve(16);
 	TArray<bool> BodyMoving; // §8.6: only a moving unit has right-of-way to shove
-	UnitBodyQuery.ForEachEntityChunk(Context, [&UnitBodies, &BodyUnits, &BodyMoving](FMassExecutionContext& Context)
+	TArray<bool> BodyCharging; // task 7: any entity in the Charge movement state
+	TArray<float> BodySpeedM; // mean live speed (knockback magnitude input)
+	UnitBodyQuery.ForEachEntityChunk(Context, [&UnitBodies, &BodyUnits, &BodyMoving, &BodyCharging, &BodySpeedM](FMassExecutionContext& Context)
 	{
 		const FUnitFormationSharedFragment* FormationPtr = Context.GetSharedFragmentPtr<FUnitFormationSharedFragment>();
 		const auto Owners = Context.GetFragmentView<FOwnerUnitFragment>();
@@ -221,6 +229,17 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 		UnitBodies.Add(Body);
 		BodyUnits.Add(Owners[0].Owner);
 		BodyMoving.Add(Formation.SpeedLimit > 10.f);
+		const auto MoveStates = Context.GetFragmentView<FMovementStateFragment>();
+		const auto Velocities = Context.GetFragmentView<FMassVelocityFragment>();
+		bool bCharging = false;
+		float SpeedSum = 0.f;
+		for (int32 i = 0; i < Context.GetNumEntities(); ++i)
+		{
+			bCharging = bCharging || MoveStates[i].State == EBattleMovementState::Charge;
+			SpeedSum += FVector(Velocities[i].Value.X, Velocities[i].Value.Y, 0.f).Size() * 0.01f;
+		}
+		BodyCharging.Add(bCharging);
+		BodySpeedM.Add(Context.GetNumEntities() > 0 ? SpeedSum / Context.GetNumEntities() : 0.f);
 	});
 
 	// Per-snapshot-entity shove displacement (m/s) + blend weight.
@@ -260,9 +279,17 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 			// doctrine that only a moving unit displaces others); friendly is
 			// true for the Phase 1 same-team fixture set (hostile contact is
 			// Phase 2); mobility advantage = cavalry mover vs non-cavalry.
+			// Phase 2 task 7 (spec §4.9): a CHARGING mover rides THROUGH and
+			// displaces what it hits -- the knockback consumes the existing
+			// displacement blend at a bounded impulse along the charge heading.
 			const bool bAdvantage = CavalryUnits.Contains(BodyUnits[A]) && !CavalryUnits.Contains(BodyUnits[B]);
-			const FUnitContact::EContactPolicy Policy = FUnitContact::ResolvePolicy(
+			FUnitContact::EContactPolicy Policy = FUnitContact::ResolvePolicy(
 				/*bFriendly*/ true, bAdvantage, /*bRightOfWay*/ true);
+			const bool bChargingMover = BodyCharging[A];
+			if (bChargingMover)
+			{
+				Policy = FUnitContact::EContactPolicy::PassThrough;
+			}
 			if (Policy != FUnitContact::EContactPolicy::PassThrough)
 			{
 				BlockPartners.FindOrAdd(BodyUnits[A]).AddUnique(BodyUnits[B]);

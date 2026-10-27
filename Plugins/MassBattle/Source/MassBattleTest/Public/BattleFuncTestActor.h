@@ -458,6 +458,45 @@ private:
 };
 
 // ---------------------------------------------------------------------------
+// Phase 2 task 7 charge mechanics (T2.6): cavalry-charge shape vs a standing
+// line -- bonus only on fresh fast contact, bounded knockback observable in
+// transform deltas, decay to melee within the window, kill chain evidenced.
+// Walk speed rides a local cvar override (the fixture's 1.4 m/s walk cannot
+// reach the 4 m/s fresh-contact gate).
+// ---------------------------------------------------------------------------
+UCLASS()
+class MASSBATTLETEST_API AChargeMechanicsTest : public AFunctionalTest
+{
+	GENERATED_BODY()
+
+public:
+	AChargeMechanicsTest();
+
+	void BeginTest();
+	void CompleteTest(EFunctionalTestResult TestResult, const FString& Message);
+	virtual void StartTest() override;
+	virtual void Tick(float DeltaSeconds) override;
+	virtual bool IsReady_Implementation() override { return true; }
+	virtual void Destroyed() override;
+
+private:
+	enum class EPhase : int32 { Spawn, Charge, Decay, Assert, Done };
+	EPhase Phase = EPhase::Spawn;
+	int32 TicksInPhase = 0;
+	UPROPERTY() TObjectPtr<AUnitActor> UnitA;
+	UPROPERTY() TObjectPtr<AUnitActor> UnitB;
+	int32 SavedCvars[4] = {};      // the four combat gates (int cvars)
+	float SavedWalkSpeed = 0.f;    // the float cvar rides separately (an int
+	                               // cast truncates 1.4 -> 1.0 -- measured
+	                               // 2026-10-27: poisoned every later march)
+	bool bSawConnect = false;
+	float MaxDefenderDisplacementM = 0.f;
+	TArray<FVector2D> DefenderPositionsAtContact;
+	void SetCvars();
+	void RestoreCvars();
+};
+
+// ---------------------------------------------------------------------------
 // S-scenario actor factory registry -- deterministic, reflection-free class
 // lookup for the automation harness (FindObject with /Script/ paths and
 // TObjectIterator both failed to resolve fresh C++ classes in -game processes

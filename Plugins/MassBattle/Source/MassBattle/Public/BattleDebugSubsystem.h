@@ -54,6 +54,19 @@ public:
 	void RecordCombatHashMs(double Ms) { CombatHashMs = Ms; }
 	double GetCombatHashMs() const { return CombatHashMs; }
 
+	// -- Phase 2 combat diagnostics (task 7; worker-writers, atomics) --
+	void RecordCombatRoll(bool bLanded) { ++CombatRolls; if (bLanded) { ++CombatRollsLanded; } }
+	int32 GetCombatRolls() const { return CombatRolls; }
+	int32 GetCombatRollsLanded() const { return CombatRollsLanded; }
+	/** Death-by-arc bookkeeping (EC6): the defender-relative sector bucket. */
+	void RecordDeathByArc(int32 Sector, int32 SectorCount);
+	int32 GetDeathsByArc(int32 Band) const { return Band >= 0 && Band < 3 ? DeathsByArc[Band] : -1; } // 0 frontal 1 flank 2 rear
+	void RecordChargeConnect() { ++ChargeConnects; }
+	int32 GetChargeConnects() const { return ChargeConnects; }
+	/** One-shot knockback impulses applied to victim transforms (assign pass). */
+	void RecordKnockback() { ++KnockbacksApplied; }
+	int32 GetKnockbacksApplied() const { return KnockbacksApplied; }
+
 	/** Thread-safe overlay enqueue (worker processors call this; A3 states
 	 *  only: slot-error magnitude, path polyline, unstuck ladder). */
 	void EnqueueOverlayLine(const FBattleOverlayLine& Line);
@@ -99,6 +112,12 @@ private:
 
 	/** Phase 2 combat pass costs (B.4; DumpMetrics line). */
 	double CombatHashMs = 0.0;
+	std::atomic<int32> CombatRolls{0};
+	std::atomic<int32> CombatRollsLanded{0};
+	std::atomic<int32> ChargeConnects{0};
+	std::atomic<int32> KnockbacksApplied{0};
+	int32 DeathsByArc[3] = {}; // guarded by ArcMutex (worker writers)
+	FCriticalSection ArcMutex;
 
 	/** T1.5/T1.8 diagnostics; seq_cst std::atomic (workers write; the extra
 	 *  ordering is irrelevant for a diagnostic counter but harmless). */

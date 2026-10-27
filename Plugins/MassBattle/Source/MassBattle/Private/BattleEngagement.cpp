@@ -10,7 +10,7 @@ namespace
 {
 	TAutoConsoleVariable<int32> GCCombatEnable(
 		TEXT("Battle.Combat.Enable"),
-		0,
+		1,
 		TEXT("Master combat flag. 0 = pre-combat behavior (byte-identical; B.8 item 6). "
 			 "Flips to default 1 when the task-7 resolution pass lands end-to-end."),
 		ECVF_Default);

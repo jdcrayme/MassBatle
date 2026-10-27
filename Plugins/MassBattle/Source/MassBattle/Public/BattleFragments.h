@@ -50,6 +50,10 @@ struct FBaseStatsFragment : public FMassFragment
 	UPROPERTY() float Shield = 0.f;
 	UPROPERTY() float MoraleBase = 0.f;
 	UPROPERTY() float ChargeDistance = 0.f;
+	/** Phase 2 weapon stats (task 2 EDU mapping; spec §4.8). Lethality
+	 *  multiplies the hit chance; AP halves the defender's armor. */
+	UPROPERTY() float Lethality = 1.f;
+	UPROPERTY() uint8 bArmorPiercing = 0;
 };
 
 /** Per-entity HP pool + pending damage (written by combat resolution, Phase 2+;

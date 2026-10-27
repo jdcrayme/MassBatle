@@ -3,13 +3,17 @@
 #include "BattleRegistry.h"
 #include "BattleRngRegistry.h"
 #include "BattleEngagement.h"
+#include "BattleMelee.h"
 #include "BattleCombatFragments.h"
 #include "BattleFragments.h"
 #include "BattleMovementFragments.h"
 #include "BattleExecCommands.h"
+#include "BattleDebugSubsystem.h"
+#include "MassBattleModule.h"
 
 #include "MassExecutionContext.h"
 #include "MassCommonFragments.h"
+#include "MassEntitySubsystem.h"
 #include "Engine/World.h"
 #include "HAL/IConsoleManager.h"
 
@@ -52,6 +56,9 @@ void UAssignPairsProcessor::ConfigureQueries(const TSharedRef<FMassEntityManager
 	SeekerQuery.AddRequirement<FCombatIntentFragment>(EMassFragmentAccess::ReadWrite);
 	SeekerQuery.AddRequirement<FTransformFragment>(EMassFragmentAccess::ReadOnly);
 	SeekerQuery.AddRequirement<FLoadoutFragment>(EMassFragmentAccess::ReadOnly);
+	// ReadWrite: the write-back stamps the one-shot knockback-applied latch.
+	SeekerQuery.AddRequirement<FChargeFragment>(EMassFragmentAccess::ReadWrite);
+	SeekerQuery.AddRequirement<FMassVelocityFragment>(EMassFragmentAccess::ReadOnly);
 	SeekerQuery.AddRequirement<FOwnerUnitFragment>(EMassFragmentAccess::ReadOnly);
 	SeekerQuery.AddTagRequirement<FDeadTag>(EMassFragmentPresence::None);
 	SeekerQuery.AddSharedRequirement<FUnitFormationSharedFragment>(EMassFragmentAccess::ReadOnly);
@@ -59,6 +66,7 @@ void UAssignPairsProcessor::ConfigureQueries(const TSharedRef<FMassEntityManager
 
 	DefenderQuery.AddRequirement<FTransformFragment>(EMassFragmentAccess::ReadOnly);
 	DefenderQuery.AddRequirement<FOwnerUnitFragment>(EMassFragmentAccess::ReadOnly);
+	DefenderQuery.AddRequirement<FBaseStatsFragment>(EMassFragmentAccess::ReadOnly);
 	DefenderQuery.AddTagRequirement<FDeadTag>(EMassFragmentPresence::None);
 	DefenderQuery.AddSharedRequirement<FUnitFormationSharedFragment>(EMassFragmentAccess::ReadOnly);
 	DefenderQuery.RegisterWithProcessor(*this);
@@ -69,6 +77,7 @@ void UAssignPairsProcessor::Execute(FMassEntityManager& EntityManager, FMassExec
 	UWorld* World = Context.GetWorld();
 	UUnitRegistrySubsystem* Registry = World ? World->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
 	UBattleRngSubsystem* Rng = World ? World->GetSubsystem<UBattleRngSubsystem>() : nullptr;
+	UMassEntitySubsystem* Entities = World ? World->GetSubsystem<UMassEntitySubsystem>() : nullptr;
 	if (!Registry || GCCombatAssign.GetValueOnGameThread() == 0)
 	{
 		return; // flags-off: no pairs form, no combat targets move (byte-identical)
@@ -92,6 +101,7 @@ void UAssignPairsProcessor::Execute(FMassEntityManager& EntityManager, FMassExec
 		}
 		const auto Transforms = Context.GetFragmentView<FTransformFragment>();
 		const auto Owners = Context.GetFragmentView<FOwnerUnitFragment>();
+		const auto Stats = Context.GetFragmentView<FBaseStatsFragment>();
 		Defenders.Reserve(Defenders.Num() + Context.GetNumEntities());
 		const float Rad = FMath::DegreesToRadians(Formation.FacingYaw);
 		const FVector2D Side(-FMath::Sin(Rad), FMath::Cos(Rad));
@@ -106,6 +116,10 @@ void UAssignPairsProcessor::Execute(FMassEntityManager& EntityManager, FMassExec
 			Def.PosM = FVector2D(P.X, P.Y) * 0.01f;
 			Def.Spacing = SpacingM;
 			Def.YawDeg = Formation.FacingYaw;
+			Def.Defense = Stats[i].MeleeDefense;
+			Def.Shield = Stats[i].Shield;
+			Def.Armor = Stats[i].Armor;
+			Def.MountHP = 0; // mount pools ride the health fragment (cavalry rows, T6.1)
 			const float AlongFrontage = FVector2D::DotProduct(Def.PosM - AnchorM, Side) / FMath::Max(0.1f, SpacingM)
 				+ Formation.NumFiles * 0.5f;
 			Def.LaneIndex = static_cast<uint8>(FMath::Clamp(FMath::FloorToInt(AlongFrontage), 0, 255));
@@ -293,6 +307,8 @@ void UAssignPairsProcessor::Execute(FMassEntityManager& EntityManager, FMassExec
 			const auto Transforms = Context.GetFragmentView<FTransformFragment>();
 			const auto Owners = Context.GetFragmentView<FOwnerUnitFragment>();
 
+			auto Charges = Context.GetMutableFragmentView<FChargeFragment>();
+			const auto Velocities = Context.GetFragmentView<FMassVelocityFragment>();
 			// This chunk's slice of the SEAM-MUTATED Seekers array (the gather
 			// appended per chunk in order; BridgesByChunk holds pre-pass
 			// copies and must not be written back).
@@ -305,7 +321,25 @@ void UAssignPairsProcessor::Execute(FMassEntityManager& EntityManager, FMassExec
 				const int32 i = ChunkRows[Row];
 				const FCombatSolver::FAssignSeekerState& S = Seekers[SeekerCursor - 1 + Row];
 				FCombatPairFragment& Out = Pairs[i];
+				const FMassEntityHandle PrevTarget = Out.Target;
 				Out.Target = S.Target;
+				// Defender stat mirror: stamped at PAIR CREATION only (the
+				// resolution pass drains the mount mirror across ticks; a
+				// refresh must not restore it).
+				if (S.Target.IsValid() && S.Target != PrevTarget)
+				{
+					for (const FCombatSolver::FAssignDefenderState& Def : Defenders)
+					{
+						if (Def.Entity == S.Target)
+						{
+							Out.DefenderDefense = Def.Defense;
+							Out.DefenderShield = Def.Shield;
+							Out.DefenderArmor = Def.Armor;
+							Out.DefenderMountRemaining = static_cast<int16>(Def.MountHP);
+							break;
+						}
+					}
+				}
 				Out.ContactAngle = S.ContactAngle;
 				Out.State = static_cast<ECombatPairState>(S.State);
 				Out.AttackTimer = S.AttackTimer;
@@ -372,6 +406,45 @@ void UAssignPairsProcessor::Execute(FMassEntityManager& EntityManager, FMassExec
 				else
 				{
 					Out.bRingValid = 0;
+				}
+
+				// Charge knockback (spec §4.9): the worker-side connect seeds
+				// ImpactSpeed; THIS game-thread pass applies the one-shot
+				// bounded displacement to the victim's transform along the
+				// attacker's velocity heading -- BEFORE the worker phase (no
+				// writer races; the same discipline the spawn path uses).
+				if (Charges[i].bConnected != 0 && Charges[i].bKnockbackApplied == 0
+					&& S.Target.IsValid() && Charges[i].ImpactSpeed > 0.f)
+				{
+					const float ImpulseM = FMeleeMath::KnockbackImpulse(
+						Charges[i].ImpactSpeed, FCombatCVars::ChargeSpeedThreshold());
+					const FVector AttackerVel = Velocities[i].Value;
+					FVector2D Heading(AttackerVel.X, AttackerVel.Y);
+					Heading = Heading.GetSafeNormal();
+					if (ImpulseM > 0.f && Heading.SizeSquared() > KINDA_SMALL_NUMBER)
+					{
+						{
+							FMassEntityView TargetView(Entities->GetMutableEntityManager(), S.Target);
+							if (FTransformFragment* TargetTransform = TargetView.GetFragmentDataPtr<FTransformFragment>())
+							{
+								FVector Pos = TargetTransform->GetTransform().GetTranslation();
+								Pos.X += Heading.X * ImpulseM * 100.f;
+								Pos.Y += Heading.Y * ImpulseM * 100.f;
+								TargetTransform->GetMutableTransform().SetTranslation(Pos);
+								if (UBattleDebugSubsystem* Debug = World->GetSubsystem<UBattleDebugSubsystem>())
+								{
+									Debug->RecordKnockback();
+								}
+								UE_LOG(LogMassBattle, Display,
+									TEXT("EXEC_RESULT ChargeKnockback Attacker=%u:%u Victim=%u:%u Impulse=%.2fm Heading=(%.2f,%.2f)"),
+									S.Entity.Index, S.Entity.SerialNumber, S.Target.Index, S.Target.SerialNumber,
+									ImpulseM, Heading.X, Heading.Y);
+							}
+						}
+					}
+					// Mark applied REGARDLESS (one shot per connect; a zero
+					// impulse below the threshold still consumed the event).
+					Charges[i].bKnockbackApplied = 1;
 				}
 			}
 		});

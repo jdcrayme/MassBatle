@@ -1080,42 +1080,6 @@ bool FS5MobSkeleton::RunTest(const FString& Parameters)
 	return false;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FChargeMechanicsSkeleton,
-	"Battle.Func.ChargeMechanics",
-	(EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter))
-
-bool FChargeMechanicsSkeleton::RunTest(const FString& Parameters)
-{
-	// T2.6 (task 7): bonus only on fresh fast contact; knockback applied;
-	// decays to melee within the window.
-	AddError(TEXT("skeleton: ChargeMechanics scenario lands with task 7"));
-	return false;
-}
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPairLifecycleSkeleton,
-	"Battle.Func.PairLifecycle",
-	(EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter))
-
-bool FPairLifecycleSkeleton::RunTest(const FString& Parameters)
-{
-	// T2.7 (task 8 full assert): hysteresis breakup; vacated-slot handoff
-	// <= 1 tick; disengage mass release.
-	AddError(TEXT("skeleton: PairLifecycle scenario lands with task 8"));
-	return false;
-}
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDeterminismTwoRunSkeleton,
-	"Battle.Func.DeterminismTwoRun",
-	(EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter))
-
-bool FDeterminismTwoRunSkeleton::RunTest(const FString& Parameters)
-{
-	// T2.8 (task 9): 5-min mixed clash, same seed twice, per-tick state-hash
-	// equality (R9 scope: same binary, same machine).
-	AddError(TEXT("skeleton: DeterminismTwoRun lands with task 9"));
-	return false;
-}
-
 // ---------------------------------------------------------------------------
 // T2.9 perf gate placeholder (task 9): the pairing pass budget.
 // Runs under the Battle.Perf filter (nightly/Gauntlet territory per B.0) --
@@ -1362,6 +1326,32 @@ bool FCombat_ClusterRecords::RunTest(const FString& Parameters)
 	}
 
 	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPairLifecycleSkeleton,
+	"Battle.Func.PairLifecycle",
+	(EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter))
+
+bool FPairLifecycleSkeleton::RunTest(const FString& Parameters)
+{
+	// T2.7 (task 8 full assert): hysteresis breakup; vacated-slot handoff
+	// <= 1 tick; disengage mass release. ERRATA: an over-broad edit during
+	// task 7 removed this skeleton; restored (the pair-rule UNIT coverage
+	// lives in T2.3's FTallyAssign since task 4).
+	AddError(TEXT("skeleton: PairLifecycle scenario lands with task 8"));
+	return false;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDeterminismTwoRunSkeleton,
+	"Battle.Func.DeterminismTwoRun",
+	(EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter))
+
+bool FDeterminismTwoRunSkeleton::RunTest(const FString& Parameters)
+{
+	// T2.8 (task 9): 5-min mixed clash, same seed twice, per-tick state-hash
+	// equality (R9 scope: same binary, same machine).
+	AddError(TEXT("skeleton: DeterminismTwoRun lands with task 9"));
+	return false;
 }
 
 #endif // WITH_DEV_AUTOMATION_TESTS

@@ -252,6 +252,10 @@ namespace
 				{
 					Combat->BeginTest();
 				}
+				else if (AChargeMechanicsTest* Charge = Cast<AChargeMechanicsTest>(TestActor))
+				{
+					Charge->BeginTest();
+				}
 				// T0.9: apply + assert the test-mode contract at scenario start
 				// (roadmap B.0: assert ACTIVE engine settings, not CVars being
 				// set; the -game process does not seed the contract on its own).
@@ -594,6 +598,23 @@ bool FS8b_MultiUnitGarrison::RunTest(const FString& Parameters)
 
 IMPLEMENT_CUSTOM_COMPLEX_AUTOMATION_TEST(FCombatSmoke, FBattleFuncTestBase,
 	"Battle.Func.CombatSmoke", (EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter))
+
+IMPLEMENT_CUSTOM_COMPLEX_AUTOMATION_TEST(FChargeMechanics, FBattleFuncTestBase,
+	"Battle.Func.ChargeMechanics", (EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter))
+
+void FChargeMechanics::GetTests(TArray<FString>& OutBeautifiedNames, TArray<FString>& OutTestCommands) const
+{
+	OutBeautifiedNames.Add(TEXT("ChargeMechanics"));
+	OutTestCommands.Add(TEXT(""));
+}
+
+bool FChargeMechanics::RunTest(const FString& Parameters)
+{
+	IFunctionalTestingModule::Get().MarkPendingActivation();
+	ADD_LATENT_AUTOMATION_COMMAND(FOpenBattleFuncMap(this));
+	ADD_LATENT_AUTOMATION_COMMAND(FRunBattleFuncTest(this, TEXT("ChargeMechanics"), TEXT("AChargeMechanicsTest")));
+	return true;
+}
 
 void FCombatSmoke::GetTests(TArray<FString>& OutBeautifiedNames, TArray<FString>& OutTestCommands) const
 {

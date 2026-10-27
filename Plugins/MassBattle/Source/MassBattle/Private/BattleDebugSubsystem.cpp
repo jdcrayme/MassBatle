@@ -36,6 +36,11 @@ void UBattleDebugSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 
 void UBattleDebugSubsystem::ResetDiagnostics()
 {
+	CombatRolls = 0;
+	CombatRollsLanded = 0;
+	ChargeConnects = 0;
+	KnockbacksApplied = 0;
+	DeathsByArc[0] = DeathsByArc[1] = DeathsByArc[2] = 0;
 	LadderEscalations = 0;
 	MorphDecisions = 0;
 	UnitAIHandoffs = 0;
@@ -120,6 +125,21 @@ void UBattleDebugSubsystem::RecordUnitSyncMs(double Ms)
 	// Archetype count is filled by DumpMetrics (needs the entity manager).
 }
 
+void UBattleDebugSubsystem::RecordDeathByArc(int32 Sector, int32 SectorCount)
+{
+	// Frontal/flank/rear bands over the sector index (the same angular windows
+	// as the defense bands); game-thread-safe because the worker path defers
+	// through the kill only -- THIS call happens worker-side, so atomic via
+	// the counter lock (three ints under one critical section is fine at kill
+	// rates; the counters are diagnostics).
+	FScopeLock Lock(&ArcMutex);
+	const float Center = (static_cast<float>(Sector) + 0.5f) * (360.f / static_cast<float>(FMath::Max(1, SectorCount)));
+	float Normalized = FMath::Fmod(Center + 180.f, 360.f) - 180.f;
+	const float AbsDeg = FMath::Abs(Normalized);
+	const int32 Band = AbsDeg <= 45.f ? 0 : (AbsDeg >= 135.f ? 2 : 1);
+	++DeathsByArc[Band];
+}
+
 void UBattleDebugSubsystem::DumpMetrics()
 {
 	UWorld* World = GetWorld();
@@ -137,8 +157,9 @@ void UBattleDebugSubsystem::DumpMetrics()
 	LastMetrics.ArchetypeCount = ArchetypeCount;
 
 	UE_LOG(LogMassBattle, Display,
-	       TEXT("EXEC_RESULT BattleMetrics Frame=%d Archetypes=%d Units=%d UnitSyncMs=%.3f BookkeepingHash=%u OverlayHook=%d CombatHashMs=%.3f"),
+	       TEXT("EXEC_RESULT BattleMetrics Frame=%d Archetypes=%d Units=%d UnitSyncMs=%.3f BookkeepingHash=%u OverlayHook=%d CombatHashMs=%.3f Rolls=%d/%d ChargeConnects=%d DeathsF/F/R=%d/%d/%d"),
 	       LastMetrics.Frame, ArchetypeCount, LastMetrics.UnitCount,
 	       LastMetrics.UnitSyncMs, static_cast<uint32>(LastMetrics.RegistryHash32), BattleDebugShowOverlay,
-	       CombatHashMs);
+	       CombatHashMs, CombatRolls.load(), CombatRollsLanded.load(), ChargeConnects.load(),
+	       DeathsByArc[0], DeathsByArc[1], DeathsByArc[2]);
 }

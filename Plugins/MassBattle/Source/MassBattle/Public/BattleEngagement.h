@@ -166,6 +166,10 @@ namespace FCombatSolver
 		FVector2D PosM = FVector2D::ZeroVector;
 		float Spacing = 0.f;
 		float YawDeg = 0.f;            // defender facing (ring-point math)
+		float Defense = 0.f;           // immutable stat mirror (resolution input)
+		float Shield = 0.f;
+		float Armor = 0.f;
+		int32 MountHP = 0;
 		float Coverage = 0.f;          // stamped fresh by the tally pass
 		uint16 CoveredMask = 0;        // same-unit living-neighbor sectors
 		uint8 LaneIndex = 0;
