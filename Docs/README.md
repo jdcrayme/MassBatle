@@ -34,6 +34,7 @@
 | `Docs/README.md` | This file — status, map, read orders | **Living** (update with every phase) |
 | `Docs/spec/architecture.md` | System architecture + ADR decision log (ADR-01…17) | **Living spec** |
 | `Docs/spec/garrison-movement.md` | Garrison movement design spec: B1-B7 behavior contract, data model, mechanics §4, ADR-18…21 proposals | **Living spec** (owner-authored; implementing agents read cited sections only) |
+| `Docs/spec/engagement-and-melee.md` | Engagement solver & melee design spec: §0 EC-table acceptance contract, §3 data model, §4 mechanics, §6 touch points, ADR-22…26 proposals | **Living spec** (owner-authored; implementing agents read cited sections only) |
 | `Docs/spec/roadmap-and-testing.md` | Build order (Phase 0–6), test gates T0–T6, scenarios S1–S7, automation strategy | **Living spec** |
 | `Docs/spec/reference-machine.md` | Perf-baseline hardware record (R10) | **Living** |
 | `Docs/reference/engine-api-5.8.md` | Pinned UE 5.8.4 API reference: Part A audit (C1–C12 verdicts), Part B operational digest (§4.0–§4.13), Part C sources | **Living reference** |
@@ -42,7 +43,7 @@
 | `Docs/phases/pre-phase-0/` | brief · progress · report (environment scaffold run) | **Archive** |
 | `Docs/phases/phase-0/` | brief · progress · report · audit (foundation run + post-run audit) | **Archive** (report §7 = Phase 1 entry point) |
 | `Docs/phases/phase-1/` | brief · progress · report · audit + the rolled-in garrison run (`brief-garrison` · `progress-garrison` · `report-garrison`) | **Archive** (report §4 + report-garrison §4 = Phase 2 entry points) |
-| `Docs/phases/phase-2/` | brief · progress · report (formation movement cleanup run; brief = the owner-approved senior-dev plan) | **Archive** (engagement-solver run appends its own `*-engagement` files here) |
+| `Docs/phases/phase-2/` | Movement-cleanup run: brief · progress · report (**Archive**). Engagement-solver run: `brief-engagement` · `progress-engagement` · `report-engagement` (**Active**) | |
 | `Docs/reviews/plan-review-findings.md` | 2026-10-23 plan review: errors E1–E6, risks R1–R13, improvements I1–I7, evidence + citations | **Archive** (referenced by live specs) |
 
 Repo files outside `Docs/` you will be pointed at: `Tools/CI/README.md`, `Tools/CI/JENKINS.md`, `Tools/CI/run_tests.bat` / `nightly.bat` / `compare_baseline.py`, `Baselines/perf/README.md`, `Jenkinsfile`.

@@ -53,7 +53,10 @@ struct MASSBATTLE_API FBattleAttributeSnapshot
  *  scope v1 (Phase 5 territory). */
 struct FUnitOrder
 {
-	enum class EType : uint8 { None, Move, Stop, Garrison, ExitGarrison };
+	// Phase 2 (brief A4): AttackUnit orders a specific enemy unit; AttackMove
+	// marches and auto-engages en route. Disengage = re-task with Move/Stop
+	// while engaged (records die -> mass release, spec §4.7).
+	enum class EType : uint8 { None, Move, Stop, Garrison, ExitGarrison, AttackMove, AttackUnit };
 
 	EType Type = EType::None;
 	/** Move-order anchor (centimeters, engine space). */
@@ -67,6 +70,9 @@ struct FUnitOrder
 	int32 CommandedFiles = 0;
 	/** Garrison-order target structure (registry-assigned id; 0 = none). */
 	uint32 StructureId = 0;
+	/** Attack-order target unit (brief A4; valid for AttackUnit, the
+	 *  pre-designated target for AttackMove when issued with one). */
+	FUnitHandle TargetUnit;
 };
 
 /** Registry-side per-unit state (arch §2.3). Game-thread written, plain so
