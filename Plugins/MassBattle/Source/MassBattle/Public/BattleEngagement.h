@@ -1,17 +1,18 @@
 // BattleEngagement.h -- engagement solver pure math on the B.0 seam (brief A1;
 // phase ground rule 1). ALL functions are free functions / plain structs,
-// deterministic, no RNG, no wall clock, METERS. Processors stay thin shims:
-// read fragments/records -> call these -> write fragments. RNG discipline
-// (A13/F7): the assign-pass shuffle draws from the registered `Combat.Assign`
-// stream in the CALLER (processor), never in here.
-//
-// Task 0 skeleton: the spec §4 signatures exist and return failure sentinels;
-// bodies land in task 4 (brief task plan).
+// deterministic, no wall clock, METERS. Processors stay thin shims: read
+// fragments/records -> call these -> write fragments. RNG discipline (A13/F7):
+// the only randomness is the assign-pass seeker shuffle, driven by a
+// caller-provided `Combat.Assign` FRandomStream (null = the B.5 determinism
+// mode: index-sorted iteration with per-entity jitter).
 #pragma once
 
 #include "CoreMinimal.h"
 #include "Mass/EntityHandle.h"
 #include "BattleTypes.h"
+
+struct FCombatTallyTable;
+struct FRandomStream;
 
 /** Battle.Combat.* CVAR block (spec §4.11 table; brief task 0 step 4; B.8
  *  item 6). Defined in BattleEngagement.cpp; read through these accessors
@@ -55,9 +56,7 @@ namespace FCombatCVars
 	MASSBATTLE_API int32 StateTree();
 }
 
-/** Read-only defender snapshot for the seam (plain struct, meters). Grows
- *  with task 4's real implementation needs (slot-table access rides the
- *  caller's records, not this view). */
+/** Read-only defender snapshot for the seam (plain struct, meters). */
 struct FCombatDefenderView
 {
 	/** Defender entity position, meters. */
@@ -96,28 +95,119 @@ namespace FCombatSolver
 	MASSBATTLE_API int32 SectorIndexFromAngle(uint8 ContactAngle, int32 SectorCount);
 
 	/** Center of a sector as a 0-255 angle (round-trips through
-	 *  SectorIndexFromAngle for odd/even sector counts). */
+	 *  SectorIndexFromAngle). */
 	MASSBATTLE_API uint8 SectorCenterAngle(int32 SectorIndex, int32 SectorCount);
 
 	/** Per-defender attack-slot budget (spec §4.5, arch §7.3 verbatim):
-	 *  lerp(MaxMobSlots, FormedSlots, Coverage), + SecondRankBonus for
-	 *  spear-class attackers, clamped >= 1. FAILURE STUB: returns 0. */
+	 *  lerp(MaxMobSlots, FormedSlots, Coverage) rounded to nearest, +
+	 *  SecondRankBonus for spear-class attackers, clamped >= 1. T2.2 bound
+	 *  reading: [1, MaxMobSlots] non-spear; MaxMobSlots + SecondRankBonus for
+	 *  spear (the bonus is geometry, not a bound violation). */
 	MASSBATTLE_API int32 SlotBudget(const FCombatDefenderView& Defender, float Coverage, const FCombatAttackerView& Attacker);
 
 	/** Same-unit living-neighbor coverage in [0,1] (spec §4.5): neighbors
-	 *  within Spacing * 1.25, normalized by NeighborsForFullCoverage, capped
-	 *  at 1. FAILURE STUB: returns -1.f. */
-	MASSBATTLE_API float ComputeCoverage(const FCombatDefenderView& Defender);
+	 *  within Spacing * 1.25 (the caller passes same-UNIT, living, self-
+	 *  excluded positions), normalized by NeighborsForFullCoverage, capped
+	 *  at 1. */
+	MASSBATTLE_API float ComputeCoverage(const FCombatDefenderView& Defender, const TArray<FVector2D>& SameUnitNeighborPositionsM);
 
-	/** Quantized exposed approach sector around the defender (spec §4.5):
-	 *  exposed sectors filled before covered ones; 0-255 quantized (full
-	 *  circle). FAILURE STUB: returns 255. */
-	MASSBATTLE_API uint8 PickExposedAngle(const FCombatDefenderView& Defender, float Coverage);
+	/** Sector-assignment input: which sectors are covered by living same-unit
+	 *  neighbors, and how many attackers this pass already placed per sector. */
+	struct FSectorPickContext
+	{
+		/** Bit k set = sector k holds a living same-unit neighbor (covered). */
+		uint16 CoveredMask = 0;
+		/** Assigned counts per sector this pass (SectorCount <= 16). */
+		int32 AssignedPerSector[16] = {};
+		/** The defender's current total budget (bounds the sector shares). */
+		int32 TotalBudget = 0;
+	};
+
+	/** Quantized approach angle for the NEXT attacker (spec §4.5): prefer the
+	 *  least-loaded EXPOSED sector (ties -> lowest index) while exposed
+	 *  sectors are below their even share of the budget; only then open
+	 *  covered arcs (same rule). Returns 255 when every sector is at share
+	 *  (the caller treats it as "no angle available this pass"). */
+	MASSBATTLE_API uint8 PickExposedAngle(int32 SectorCount, const FSectorPickContext& Context);
 
 	/** Unit-level engagement pressure (spec §3.2, with the A14 floor):
-	 *  frontal = DefenderAlive * FormedSlots;
-	 *  mob = Min(AttackerAlive, Max(DefenderAlive * MobPressureFactor, MaxMobSlots)).
-	 *  Mode: 0 = Frontal, 1 = Flank (frontal formula; flanking attacker
-	 *  files wrap the line end), 2 = Mob. FAILURE STUB: returns 0. */
+	 *  frontal/flank = DefenderAlive * FormedSlots;
+	 *  mob = Min(AttackerAlive, Max(DefenderAlive * MobPressureFactor, MaxMobSlots)). */
 	MASSBATTLE_API int32 DesiredPressure(int32 Mode, int32 AttackerAlive, int32 DefenderAlive);
+
+	// -- The assign step (spec §4.4 pseudo-code as the contract; task 6's
+	//    AssignPairsProcessor bridges fragments/records into these mirrors). --
+
+	/** Mirror of one seeker's mutable assign state (FCombatPairFragment +
+	 *  the order intent the processor resolves). */
+	struct FAssignSeekerState
+	{
+		FMassEntityHandle Entity;
+		FUnitHandle OwnerUnit;
+		FUnitHandle IntentTarget;      // enemy UNIT this seeker's owner engages
+		FVector2D PosM = FVector2D::ZeroVector;
+		float PairAge = 0.f;
+		float AttackTimer = 0.f;
+		FMassEntityHandle Target;      // paired defender; invalid = unpaired
+		uint8 ContactAngle = 0;
+		uint8 State = 0;               // ECombatPairState
+		uint8 ReachClass = 0;
+		uint8 LaneIndex = 0;           // attacking file (laned targeting)
+		uint8 BackoffTicks = 0;        // failed-seek backoff (1-3, jittered)
+		uint8 bCharging = 0;           // charging entities bypass pairing (§4.7)
+		int32 RecordIndex = INDEX_NONE; // into Records; INDEX_NONE = no engagement
+	};
+
+	/** Mirror of one candidate defender. */
+	struct FAssignDefenderState
+	{
+		FMassEntityHandle Entity;
+		FUnitHandle Unit;
+		FVector2D PosM = FVector2D::ZeroVector;
+		float Spacing = 0.f;
+		float Coverage = 0.f;          // stamped fresh by the tally pass
+		uint16 CoveredMask = 0;        // same-unit living-neighbor sectors
+		uint8 LaneIndex = 0;
+		uint8 bValidTarget = 1;        // alive + not garrisoned + not own unit
+	};
+
+	/** Mirror of one engagement record (AssignedAttackers is the mutable
+	 *  tally the pass owns). */
+	struct FAssignRecordView
+	{
+		int32 DesiredPressure = 0;
+		int32 AssignedAttackers = 0;
+		uint8 Mode = 0;                // EEngagementMode
+		uint8 bDead = 0;               // disengage flag -> mass release (§4.7)
+	};
+
+	struct FAssignContext
+	{
+		/** `Combat.Assign` stream (A13); null = B.5 determinism mode
+		 *  (index-sorted iteration + per-entity jitter). */
+		FRandomStream* ShuffleStream = nullptr;
+		/** Per-defender per-sector assignment counts (caller-owned scratch,
+		 *  Defenders.Num() x 16; the pass Reserves once, Resets per pass --
+		 *  EC9). Null degrades sector picks to covered-mask-only. */
+		TArray<int32>* SectorScratch = nullptr;
+		float SeekRadiusM = 15.f;      // arch §12: 12-15 m
+		float BreakRadiusFactor = 1.5f; // ring x 1.5 (arch §12)
+		float DefenderRadiusM = 0.4f;  // fact 1.9 body radius
+		float AttackerRadiusM = 0.4f;
+		/** Weapon reach in meters by reach class (index =
+		 *  EBattleWeaponReach); the contact ring + break radius inputs. */
+		float ReachByClassM[8] = { 0.5f, 0.7f, 1.6f, 2.2f, 2.8f, 0.7f, 0.7f, 0.7f };
+	};
+
+	/** One assign pass over the mirrors (spec §4.4, elaborated): validation
+	 *  and releases top-of-pass (immediate -- vacated slots are visible to
+	 *  later seekers in the same tick, the <= 1 tick handoff EC5), then
+	 *  unpaired seekers take targets under unit-level caps and per-defender
+	 *  budgets. Mutates Seekers (targets/states/timers/backoff), the records'
+	 *  AssignedAttackers, and the tally table. */
+	MASSBATTLE_API void RunAssignPass(TArray<FAssignSeekerState>& Seekers,
+		const TArray<FAssignDefenderState>& Defenders,
+		TArray<FAssignRecordView>& Records,
+		FCombatTallyTable& Tally,
+		const FAssignContext& Context);
 }

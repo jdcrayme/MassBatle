@@ -30,6 +30,8 @@ namespace
 		return UWorld::CreateWorld(EWorldType::Game, false);
 	}
 
+	using namespace FCombatSolver; // the assign mirrors are seam-namespace types
+
 	/** Registry-valid spec (RegisterUnit rejects INDEX_NONE/<=0). */
 	FUnitSpawnSpec MakeCombatSpec(int32 Row = 0, int32 Count = 8)
 	{
@@ -673,28 +675,377 @@ bool FHitChanceGolden::RunTest(const FString& Parameters)
 	return true;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBudgetCoverageSkeleton,
+// ---------------------------------------------------------------------------
+// T2.2 (task 4): budget/coverage invariants -- bounds [1, MaxMob(+spear)],
+// exposed arcs filled before covered, over 1k randomized assign/remove cycles.
+// ---------------------------------------------------------------------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBudgetCoverage,
 	"Battle.Unit.Combat.BudgetCoverage",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
-bool FBudgetCoverageSkeleton::RunTest(const FString& Parameters)
+bool FBudgetCoverage::RunTest(const FString& Parameters)
 {
-	// T2.2 (task 4): exposed arcs filled before covered; budget bounds [1,
-	// MaxMob] never violated over 1k random assign/remove cycles.
-	AddError(TEXT("skeleton: T2.2 invariants land with task 4 (BattleEngagement seam)"));
-	return false;
+	// -- Budget bound reading (spec §4.5): [1, MaxMobSlots] non-spear;
+	// MaxMobSlots + SecondRankBonus for spear; coverage 1 = FormedSlots.
+	{
+		const FCombatDefenderView D{ FVector2D::ZeroVector, 1.2f, FUnitHandle(), FMassEntityHandle() };
+		const FCombatAttackerView Melee{ FUnitHandle(), static_cast<uint8>(EBattleWeaponReach::Normal) };
+		const FCombatAttackerView Spear{ FUnitHandle(), static_cast<uint8>(EBattleWeaponReach::Spear) };
+		TestEqual(TEXT("coverage 1 -> FormedSlots"), FCombatSolver::SlotBudget(D, 1.f, Melee), FCombatCVars::FormedSlots());
+		TestEqual(TEXT("coverage 0 -> MaxMobSlots"), FCombatSolver::SlotBudget(D, 0.f, Melee), FCombatCVars::MaxMobSlots());
+		TestEqual(TEXT("spear bonus"), FCombatSolver::SlotBudget(D, 1.f, Spear), FCombatCVars::FormedSlots() + FCombatCVars::SecondRankBonus());
+		FRandomStream Rng(777);
+		bool bBounds = true;
+		for (int32 i = 0; i < 1000; ++i)
+		{
+			const float Coverage = Rng.FRand();
+			const int32 B = FCombatSolver::SlotBudget(D, Coverage, Melee);
+			bBounds = bBounds && B >= 1 && B <= FCombatCVars::MaxMobSlots();
+		}
+		TestTrue(TEXT("1k random coverages stay in [1, MaxMobSlots]"), bBounds);
+	}
+
+	// -- Exposed-before-covered (spec §4.5), over randomized sector contexts.
+	FRandomStream Rng(4242);
+	bool bExposedFirst = true;
+	bool bBoundsAngle = true;
+	for (int32 Iter = 0; Iter < 1000; ++Iter)
+	{
+		FCombatSolver::FSectorPickContext Ctx;
+		Ctx.TotalBudget = 1 + Rng.RandRange(0, 8);
+		uint16 Covered = 0;
+		for (int32 Sector = 0; Sector < 8; ++Sector)
+		{
+			if (Rng.FRand() < 0.4f)
+			{
+				Covered |= (1u << Sector);
+			}
+			if (Rng.FRand() < 0.3f)
+			{
+				Ctx.AssignedPerSector[Sector] = Rng.RandRange(0, 2);
+			}
+		}
+		Ctx.CoveredMask = Covered;
+		const uint8 Angle = FCombatSolver::PickExposedAngle(8, Ctx);
+		bBoundsAngle = bBoundsAngle && Angle <= 255;
+		if (Angle == 255)
+		{
+			continue; // everything at share
+		}
+		const int32 Chosen = FCombatSolver::SectorIndexFromAngle(Angle, 8);
+		const bool bChosenExposed = (Covered & (1u << Chosen)) == 0;
+		// Invariant: if the pick is COVERED, then NO exposed sector has room.
+		if (!bChosenExposed)
+		{
+			const int32 Share = FMath::DivideAndRoundUp(Ctx.TotalBudget, 8);
+			for (int32 Sector = 0; Sector < 8 && bExposedFirst; ++Sector)
+			{
+				if (!(Covered & (1u << Sector)) && Ctx.AssignedPerSector[Sector] < Share)
+				{
+					bExposedFirst = false; // an exposed sector had room: violation
+				}
+			}
+		}
+	}
+	TestTrue(TEXT("1k randomized picks: exposed arcs fill before covered"), bExposedFirst);
+	TestTrue(TEXT("1k randomized picks: angle always valid or 255"), bBoundsAngle);
+
+	// -- Full assign cycles: randomized populations, budgets respected, tally
+	// agreement.
+	FCombatTallyTable Tally;
+	Tally.Initialize(1024);
+	TArray<int32> SectorScratch;
+	SectorScratch.Reserve(64 * 16);
+	bool bCyclesClean = true;
+	for (int32 Iter = 0; Iter < 1000 && bCyclesClean; ++Iter)
+	{
+		const int32 NumDefenders = 1 + Rng.RandRange(0, 6);
+		const int32 NumSeekers = Rng.RandRange(0, 24);
+		TArray<FAssignDefenderState> Defenders;
+		TArray<FAssignSeekerState> Seekers;
+		TArray<FAssignRecordView> Records;
+		for (int32 D = 0; D < NumDefenders; ++D)
+		{
+			FAssignDefenderState Def;
+			Def.Entity.Index = static_cast<uint32>(1000 + D);
+			Def.Entity.SerialNumber = 1;
+			Def.Unit.Index = 50;
+			Def.Unit.Serial = 1;
+			Def.PosM = FVector2D(D * 1.5f, 0.f);
+			Def.Spacing = 1.2f;
+			Def.Coverage = Rng.FRand();
+			Def.CoveredMask = static_cast<uint16>(Rng.RandRange(0, 255));
+			Defenders.Add(Def);
+			FAssignRecordView Rec;
+			Rec.DesiredPressure = Rng.RandRange(0, 10);
+			Rec.Mode = 2; // mob: laned filter off
+			Records.Add(Rec);
+		}
+		for (int32 SIdx = 0; SIdx < NumSeekers; ++SIdx)
+		{
+			FAssignSeekerState S;
+			S.Entity.Index = static_cast<uint32>(2000 + SIdx);
+			S.Entity.SerialNumber = 1;
+			S.OwnerUnit.Index = 60;
+			S.OwnerUnit.Serial = 1;
+			S.IntentTarget.Index = 50;
+			S.IntentTarget.Serial = 1;
+			S.PosM = FVector2D(Rng.FRand() * 20.f - 10.f, Rng.FRand() * 20.f - 10.f);
+			S.ReachClass = static_cast<uint8>(Rng.RandRange(0, 1));
+			S.RecordIndex = 0; // one shared record: the unit-level cap binds
+			Seekers.Add(S);
+		}
+		Tally.Reset();
+		FAssignContext Ctx;
+		Ctx.SectorScratch = &SectorScratch;
+		Ctx.SeekRadiusM = 30.f;
+		FCombatSolver::RunAssignPass(Seekers, Defenders, Records, Tally, Ctx);
+
+		int32 AssignedTotal = 0;
+		for (const FAssignDefenderState& Def : Defenders)
+		{
+			const FCombatDefenderView View{ Def.PosM, Def.Spacing, Def.Unit, Def.Entity };
+			const FCombatAttackerView Att{ Seekers.Num() > 0 ? Seekers[0].OwnerUnit : FUnitHandle(),
+				static_cast<uint8>(EBattleWeaponReach::Normal) };
+			const int32 Budget = FCombatSolver::SlotBudget(View, Def.Coverage, Att);
+			if (Tally.GetCount(Def.Entity) > Budget)
+			{
+				bCyclesClean = false;
+			}
+			AssignedTotal += Tally.GetCount(Def.Entity);
+		}
+		if (Records[0].AssignedAttackers > Records[0].DesiredPressure)
+		{
+			bCyclesClean = false;
+		}
+		if (Records[0].AssignedAttackers != AssignedTotal)
+		{
+			bCyclesClean = false; // tally and record must agree
+		}
+	}
+	TestTrue(TEXT("1k assign/remove cycles: budgets + caps + tally agreement hold"), bCyclesClean);
+
+	return true;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FTallyAssignSkeleton,
+// ---------------------------------------------------------------------------
+// T2.3 (task 4): the assign step over synthetic populations -- budgets
+// respected, lifecycle rules (validate/release/hysteresis/disengage), and
+// the A13 determinism flag's index-sorted reproducibility.
+// ---------------------------------------------------------------------------
+
+namespace
+{
+	/** Builds a small formed-line population: 5 defenders (unit B) vs
+	 *  NumSeekers attackers (unit A), one frontal record. Attackers approach
+	 *  from -X, so the frontal sectors (0, 7) are the exposed ones. */
+	void BuildSyntheticClash(TArray<FAssignSeekerState>& OutSeekers, TArray<FAssignDefenderState>& OutDefenders,
+		TArray<FAssignRecordView>& OutRecords, int32 NumSeekers)
+	{
+		OutDefenders.Reset();
+		OutSeekers.Reset();
+		OutRecords.Reset();
+		for (int32 D = 0; D < 5; ++D)
+		{
+			FAssignDefenderState Def;
+			Def.Entity.Index = static_cast<uint32>(100 + D);
+			Def.Entity.SerialNumber = 1;
+			Def.Unit.Index = 20;
+			Def.Unit.Serial = 1;
+			Def.PosM = FVector2D(10.f, D * 1.2f - 2.4f);
+			Def.Spacing = 1.2f;
+			Def.Coverage = 1.f; // formed line: full coverage
+			// Neighbors cover every sector except the frontal two.
+			Def.CoveredMask = 0b01111110;
+			Def.LaneIndex = static_cast<uint8>(D % 2);
+			OutDefenders.Add(Def);
+		}
+		for (int32 SIdx = 0; SIdx < NumSeekers; ++SIdx)
+		{
+			FAssignSeekerState S;
+			S.Entity.Index = static_cast<uint32>(300 + SIdx);
+			S.Entity.SerialNumber = 1;
+			S.OwnerUnit.Index = 10;
+			S.OwnerUnit.Serial = 1;
+			S.IntentTarget.Index = 20;
+			S.IntentTarget.Serial = 1;
+			S.PosM = FVector2D(6.f, static_cast<float>(SIdx % 5) * 1.2f - 2.4f);
+			S.ReachClass = static_cast<uint8>(EBattleWeaponReach::Normal);
+			S.LaneIndex = static_cast<uint8>(SIdx % 2);
+			S.RecordIndex = 0; // the single shared frontal record
+			OutSeekers.Add(S);
+		}
+		FAssignRecordView Rec;
+		Rec.DesiredPressure = 10; // frontal: 5 defenders x FormedSlots(2)
+		Rec.Mode = 0;
+		OutRecords.Add(Rec);
+	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FTallyAssign,
 	"Battle.Unit.Combat.TallyAssign",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
-bool FTallyAssignSkeleton::RunTest(const FString& Parameters)
+bool FTallyAssign::RunTest(const FString& Parameters)
 {
-	// T2.3 (task 4): budgets respected on synthetic populations; determinism
-	// flag yields index-sorted reproducibility (A13).
-	AddError(TEXT("skeleton: T2.3 synthetic assign lands with task 4"));
-	return false;
+	FCombatTallyTable Tally;
+	Tally.Initialize(256);
+	TArray<int32> SectorScratch;
+	SectorScratch.Reserve(16 * 16);
+
+	// -- Determinism mode (null stream): identical outputs across runs.
+	TArray<FAssignSeekerState> Run1;
+	TArray<FAssignDefenderState> Defenders;
+	TArray<FAssignRecordView> Records;
+	BuildSyntheticClash(Run1, Defenders, Records, 12);
+	{
+		TArray<FAssignSeekerState> Run2 = Run1;
+		TArray<FAssignRecordView> Records2 = Records;
+		FCombatTallyTable Tally2;
+		Tally2.Initialize(256);
+		TArray<int32> Scratch2;
+		Scratch2.Reserve(16 * 16);
+		FAssignContext Ctx;
+		Ctx.SectorScratch = &SectorScratch;
+		FCombatSolver::RunAssignPass(Run1, Defenders, Records, Tally, Ctx);
+		Ctx.SectorScratch = &Scratch2;
+		FCombatSolver::RunAssignPass(Run2, Defenders, Records2, Tally2, Ctx);
+		bool bIdentical = true;
+		for (int32 i = 0; i < Run1.Num(); ++i)
+		{
+			bIdentical = bIdentical
+				&& Run1[i].Target == Run2[i].Target
+				&& Run1[i].ContactAngle == Run2[i].ContactAngle
+				&& Run1[i].State == Run2[i].State
+				&& Run1[i].BackoffTicks == Run2[i].BackoffTicks;
+		}
+		TestTrue(TEXT("determinism mode: two runs identical (A13)"), bIdentical);
+		TestEqual(TEXT("record tallies agree"), Records[0].AssignedAttackers, Records2[0].AssignedAttackers);
+	}
+
+	// -- Budgets respected: formed line with coverage 1 -> FormedSlots per
+	// defender; the unit-level cap binds; exposed sectors fill first.
+	{
+		int32 MaxPerDefender = 0;
+		for (const FAssignDefenderState& Def : Defenders)
+		{
+			MaxPerDefender = FMath::Max(MaxPerDefender, Tally.GetCount(Def.Entity));
+		}
+		const FCombatDefenderView View{ Defenders[0].PosM, Defenders[0].Spacing, Defenders[0].Unit, Defenders[0].Entity };
+		const FCombatAttackerView Att{ Run1[0].OwnerUnit, static_cast<uint8>(EBattleWeaponReach::Normal) };
+		TestEqual(TEXT("formed-line budget = FormedSlots"), FCombatSolver::SlotBudget(View, 1.f, Att), FCombatCVars::FormedSlots());
+		TestTrue(TEXT("no defender over budget"), MaxPerDefender <= FCombatCVars::FormedSlots());
+		// Unit-level cap: 5 defenders x 2 = 10 assigned of 12 seekers.
+		TestEqual(TEXT("unit-level cap binds at pressure"), Records[0].AssignedAttackers, 10);
+		int32 Pressing = 0;
+		int32 Seeking = 0;
+		for (const FAssignSeekerState& S : Run1)
+		{
+			Pressing += (S.State == static_cast<uint8>(ECombatPairState::Pressing)) ? 1 : 0;
+			Seeking += (S.State == static_cast<uint8>(ECombatPairState::Seeking)) ? 1 : 0;
+		}
+		// Assigned seekers enter Pressing too (state = at the ring); the 2
+		// over-cap seekers press behind them. Nothing stays Seeking.
+		TestEqual(TEXT("12 seekers at the ring (10 paired + 2 over cap)"), Pressing, 12);
+		TestEqual(TEXT("none left seeking"), Seeking, 0);
+		bool bFrontalOnly = true;
+		for (const FAssignSeekerState& S : Run1)
+		{
+			if (S.Target.IsValid())
+			{
+				const int32 Sector = FCombatSolver::SectorIndexFromAngle(S.ContactAngle, 8);
+				bFrontalOnly = bFrontalOnly && (Sector == 0 || Sector == 7);
+			}
+		}
+		TestTrue(TEXT("formed line: exposed frontal sectors fill first"), bFrontalOnly);
+	}
+
+	// -- Release rules: invalid target, handoff, hysteresis, disengage.
+	{
+		Tally.Reset(); // per-tick state: earlier blocks' counts must not leak
+		TArray<FAssignSeekerState> Seekers;
+		TArray<FAssignRecordView> Records2;
+		BuildSyntheticClash(Seekers, Defenders, Records2, 4);
+		Seekers[0].Target = Defenders[3].Entity;
+		Seekers[0].State = static_cast<uint8>(ECombatPairState::Pressing);
+		Defenders[3].bValidTarget = 0;
+		FAssignContext Ctx;
+		Ctx.SectorScratch = &SectorScratch;
+		FCombatSolver::RunAssignPass(Seekers, Defenders, Records2, Tally, Ctx);
+		// EC5: the release is immediate AND the released attacker re-pairs a
+		// LIVE defender within the same pass (the advance IS the handoff).
+		TestTrue(TEXT("invalid target released + re-paired same pass"),
+			Seekers[0].Target.IsValid() && Seekers[0].Target != Defenders[3].Entity);
+	}
+	{
+		// Distance breakup: beyond break radius AND PairAge > hysteresis.
+		Tally.Reset();
+		TArray<FAssignSeekerState> Seekers;
+		TArray<FAssignRecordView> Records2;
+		BuildSyntheticClash(Seekers, Defenders, Records2, 2);
+		Seekers[0].Target = Defenders[0].Entity;
+		Seekers[0].State = static_cast<uint8>(ECombatPairState::Pressing);
+		Seekers[0].PosM = Defenders[0].PosM + FVector2D(20.f, 0.f);
+		Seekers[0].PairAge = 0.1f; // below the 0.4 s hysteresis
+		FAssignContext Ctx;
+		Ctx.SectorScratch = &SectorScratch;
+		FCombatSolver::RunAssignPass(Seekers, Defenders, Records2, Tally, Ctx);
+		TestTrue(TEXT("breakup needs hysteresis (young pair survives distance)"), Seekers[0].Target.IsValid());
+		Seekers[0].PairAge = 0.5f;
+		FCombatSolver::RunAssignPass(Seekers, Defenders, Records2, Tally, Ctx);
+		TestFalse(TEXT("breakup fires past hysteresis"), Seekers[0].Target.IsValid());
+	}
+	{
+		// Disengage: dead record -> mass release in the same pass.
+		Tally.Reset();
+		TArray<FAssignSeekerState> Seekers;
+		TArray<FAssignRecordView> Records2;
+		BuildSyntheticClash(Seekers, Defenders, Records2, 4);
+		for (int32 i = 0; i < Seekers.Num(); ++i)
+		{
+			Seekers[i].Target = Defenders[i % 5].Entity;
+			Seekers[i].State = static_cast<uint8>(ECombatPairState::Pressing);
+			Seekers[i].RecordIndex = 0;
+		}
+		Records2[0].bDead = 1; // unit disengaged
+		FAssignContext Ctx;
+		Ctx.SectorScratch = &SectorScratch;
+		FCombatSolver::RunAssignPass(Seekers, Defenders, Records2, Tally, Ctx);
+		bool bAllReleased = true;
+		for (const FAssignSeekerState& S : Seekers)
+		{
+			bAllReleased = bAllReleased && !S.Target.IsValid();
+		}
+		TestTrue(TEXT("disengage mass-releases inbound pairs same pass"), bAllReleased);
+	}
+
+	// -- Shuffled mode: same seed -> reproducible; budgets still hold.
+	{
+		Tally.Reset();
+		TArray<FAssignSeekerState> RunA;
+		TArray<FAssignRecordView> RecordsA;
+		BuildSyntheticClash(RunA, Defenders, RecordsA, 12);
+		TArray<FAssignSeekerState> RunB = RunA;
+		TArray<FAssignRecordView> RecordsB = RecordsA;
+		FRandomStream StreamA(31337);
+		FRandomStream StreamB(31337);
+		FAssignContext Ctx;
+		Ctx.SectorScratch = &SectorScratch;
+		Ctx.ShuffleStream = &StreamA;
+		FCombatSolver::RunAssignPass(RunA, Defenders, RecordsA, Tally, Ctx);
+		Tally.Reset(); // each run starts from fresh per-tick state
+		Ctx.ShuffleStream = &StreamB;
+		FCombatSolver::RunAssignPass(RunB, Defenders, RecordsB, Tally, Ctx);
+		bool bIdentical = true;
+		for (int32 i = 0; i < RunA.Num(); ++i)
+		{
+			bIdentical = bIdentical && RunA[i].Target == RunB[i].Target && RunA[i].ContactAngle == RunB[i].ContactAngle;
+		}
+		TestTrue(TEXT("shuffled mode, same seed: reproducible"), bIdentical);
+	}
+
+	return true;
 }
 
 // ---------------------------------------------------------------------------
