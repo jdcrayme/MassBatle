@@ -377,25 +377,25 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 
 			// Phase 2 C3 settle (the plan's §4.1 flow: settled = stop and turn
 			// to the slot facing). Inside the slot's arrival basin the
-			// commanded speed ramps to zero: the pure pursuit form still
-			// commands ~1 m/s at SlotReachEps, so entities micro-orbit the
-			// slot forever -- velocity heading never drops below the rest eps
-			// and per-entity facing never settles (measured: S7 offYaw 38/40).
+			// commanded speed is CAPPED, not zeroed: the pure pursuit form
+			// still commands ~1 m/s at SlotReachEps so entities micro-orbit
+			// the slot forever -- velocity heading never drops below the rest
+			// eps and per-entity facing never settles (S7 measured offYaw
+			// 38-40). A hard stop instead parks entities up to eps short of
+			// center and trips the separation gates (funcon S6 measured
+			// 0.293 m). The cap keeps the pursuit's exact-center convergence
+			// (v -> pursuit -> 0) with a damped final meter.
 			if (bFallInServo)
 			{
 				const float DistM = FVector2D::Distance(PosM, SlotPosM);
 				constexpr float BasinR = 2.f * FUnitServoConstants::SlotReachEps;
 				if (DistM < BasinR)
 				{
-					// HARD stop inside SlotReachEps (not a ramp): any residual
-					// commanded speed keeps the velocity above the rest eps and
-					// the settle rotation never accumulates (measured: ramp
-					// forms leave offYaw at 38-40 of 40). The accel clamp makes
-					// the stop smooth; entities coast to rest within the eps
-					// disk and C5's rest-facing owns them from there.
-					DesiredVel = DistM < FUnitServoConstants::SlotReachEps
-						? FVector2D::ZeroVector
-						: DesiredVel * FMath::Clamp(DistM / BasinR, 0.f, 1.f);
+					constexpr float BasinCapM = 0.5f; // m/s, the damped close
+					if (DesiredVel.SizeSquared() > BasinCapM * BasinCapM)
+					{
+						DesiredVel = DesiredVel.GetSafeNormal() * BasinCapM;
+					}
 				}
 			}
 

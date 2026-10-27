@@ -1,0 +1,825 @@
+﻿{
+	"devices": [
+		{
+			"deviceName": "FROST",
+			"instance": "F62443C8437CF33C3A67EDB9BEB3B235",
+			"instanceName": "FROST-15364",
+			"platform": "WindowsEditor",
+			"oSVersion": "Windows 10 (22H2) [10.0.19045.6466] ",
+			"model": "Default",
+			"gPU": "NVIDIA GeForce GTX 1660 Ti",
+			"cPUModel": "Intel(R) Core(TM) i7-9700F CPU @ 3.00GHz",
+			"rAMInGB": 16,
+			"renderMode": "SM6",
+			"rHI": "",
+			"appInstanceLog": ""
+		}
+	],
+	"reportCreatedOn": "2026.10.27-14.58.55",
+	"succeeded": 0,
+	"succeededWithWarnings": 0,
+	"failed": 1,
+	"notRun": 0,
+	"inProcess": 0,
+	"totalDuration": 2.6865699291229248,
+	"comparisonExported": false,
+	"comparisonExportDirectory": "",
+	"tests": [
+		{
+			"testDisplayName": "S3_SqueezeMorph",
+			"fullTestPath": "Battle.Func.S3_SqueezeMorph",
+			"tags": [],
+			"state": "Fail",
+			"deviceInstance": [
+				"F62443C8437CF33C3A67EDB9BEB3B235"
+			],
+			"duration": 2.6865699291229248,
+			"dateTime": "2026.10.27-14.58.52",
+			"entries": [
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogAudio: Audio Device unregistered from world 'L_MassBattle_Demo01'.",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.52"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogStreaming: FlushAsyncLoading(184): 1 QueuedPackages, 0 AsyncPackages",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.52"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogAudio: Audio Device (ID: 1) registered with world 'L_MassBattle_T0_Functional'.",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.52"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogStaticMesh: Waiting on static mesh StaticMesh /Engine/BasicShapes/Plane.Plane being ready before playing",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.52"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogDemoBattle: EXEC_RESULT DemoGameMode discovered 0 level units",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.52"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogDemoBattle: EXEC_RESULT DemoPC ready",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.52"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT SpawnSpec Actor=UnitActor_0 Loc=(-4000.0,-1600.0)cm SpawnPos=(-4000.0,-1600.0)cm",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.52"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT SpawnRoster Unit=1:1 Entities=40 Row=0 Name=UnitActor_0",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.52"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT SpawnPerf Unit=1:1 Micros=182.8 PerEntity=4.57",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.52"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT SpawnSpec Actor=UnitActor_1 Loc=(-6500.0,-1600.0)cm SpawnPos=(-6500.0,-1600.0)cm",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.52"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT SpawnRoster Unit=2:1 Entities=40 Row=0 Name=UnitActor_1",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.52"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT SpawnPerf Unit=2:1 Micros=42.8 PerEntity=1.07",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.52"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT S3_PassQueue Spawned leader=(-40,-16) follower=(-65,-16) files=20",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.52"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT S3_PassQueue March orders issued",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.52"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT PlanPath Unit=1:1 Length=80.0m Points=42",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.52"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT PlanPath Unit=2:1 Length=112.6m Points=59",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.52"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogDemoBattle: EXEC_RESULT DemoClickProbe none (no garrison structures registered)",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.52"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogDemoBattle: EXEC_RESULT DemoSpawn spawned=0 of 0",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.52"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT PassDecision Unit=1:1 MORPH files 20->3 (pass 4.5m)",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.53"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT PassThroughProbe Unit=1:1 tick=1 anchorX=-4.95 selfCav=0 otherCav=0 policy=0 limit=140.0",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.53"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT PassThroughProbe Unit=2:1 tick=1 anchorX=-21.22 selfCav=0 otherCav=0 policy=0 limit=175.0",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.53"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT PassThroughProbe Unit=1:1 tick=2 anchorX=-4.93 selfCav=0 otherCav=0 policy=0 limit=140.0",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.53"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT PassThroughProbe Unit=2:1 tick=2 anchorX=-21.19 selfCav=0 otherCav=0 policy=0 limit=175.0",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.53"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT PassThroughProbe Unit=1:1 tick=3 anchorX=-4.91 selfCav=0 otherCav=0 policy=0 limit=140.0",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.53"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT PassThroughProbe Unit=2:1 tick=3 anchorX=-21.16 selfCav=0 otherCav=0 policy=0 limit=175.0",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.53"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT PassThroughProbe Unit=1:1 tick=240 anchorX=0.62 selfCav=0 otherCav=0 policy=0 limit=140.0",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.54"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT PassThroughProbe Unit=2:1 tick=240 anchorX=-14.25 selfCav=0 otherCav=0 policy=0 limit=175.0",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.54"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT PassThroughProbe Unit=1:1 tick=480 anchorX=6.22 selfCav=0 otherCav=0 policy=0 limit=140.0",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.54"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT PassThroughProbe Unit=2:1 tick=480 anchorX=-7.26 selfCav=0 otherCav=0 policy=0 limit=175.0",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.54"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT PassDecision Unit=2:1 MORPH files 20->3 (pass 4.5m)",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.54"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT PassThroughProbe Unit=1:1 tick=720 anchorX=11.82 selfCav=0 otherCav=0 policy=0 limit=140.0",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.54"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT PassThroughProbe Unit=2:1 tick=720 anchorX=-0.26 selfCav=0 otherCav=0 policy=0 limit=175.0",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.54"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT UnstuckLadder Entity=28:1 Unit=1:1 Level=1 DistToSlot=2.80",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.54"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT UnstuckLadder Entity=59:1 Unit=2:1 Level=1 DistToSlot=4.19",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.54"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT UnstuckLadder Entity=31:1 Unit=1:1 Level=1 DistToSlot=6.33",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.54"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT UnstuckLadder Entity=28:1 Unit=1:1 Level=2 DistToSlot=4.92",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.54"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT UnstuckLadder Entity=59:1 Unit=2:1 Level=2 DistToSlot=3.67",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.54"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT UnstuckLadder Entity=54:1 Unit=2:1 Level=1 DistToSlot=3.46",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.54"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT UnstuckLadder Entity=31:1 Unit=1:1 Level=2 DistToSlot=8.40",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.54"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT UnstuckLadder Entity=28:1 Unit=1:1 Level=3 DistToSlot=7.04",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.54"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT UnstuckSlotSwap Entity=28:1 Unit=1:1 With=31:1 SlotA=39 SlotB=38",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.54"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT UnstuckLadder Entity=59:1 Unit=2:1 Level=3 DistToSlot=3.33",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.54"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT PassThroughProbe Unit=1:1 tick=960 anchorX=17.42 selfCav=0 otherCav=0 policy=0 limit=140.0",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.54"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT PassThroughProbe Unit=2:1 tick=960 anchorX=6.61 selfCav=0 otherCav=0 policy=0 limit=165.3",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.54"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT UnstuckLadder Entity=54:1 Unit=2:1 Level=0 DistToSlot=0.34",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.54"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT UnstuckLadder Entity=31:1 Unit=1:1 Level=3 DistToSlot=10.49",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.54"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT UnstuckSlotSwap Entity=31:1 Unit=1:1 With=28:1 SlotA=38 SlotB=39",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.54"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT UnstuckLadder Entity=28:1 Unit=1:1 Level=4 DistToSlot=10.64",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.54"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT UnstuckHandoff Entity=28:1 Unit=1:1 (terminal level 4)",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.54"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT UnstuckLadder Entity=59:1 Unit=2:1 Level=4 DistToSlot=3.35",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.54"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT UnstuckHandoff Entity=59:1 Unit=2:1 (terminal level 4)",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.54"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT PassDecision Unit=1:1 REDEPLOY files 3->20 (past exit)",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.54"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT PassDecision Unit=2:1 REDEPLOY files 3->20 (past exit)",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.54"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT ArriveRefront Unit=1:1 Facing=90.0 Files=20",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.55"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT S3_PassQueue both crossed ticks=3878 queueTicks=433 maxFront=0.00m maxBeyondTail=2.54m",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.55"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT ArriveRefront Unit=2:1 Facing=90.0 Files=20",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.55"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT UnstuckLadder Entity=59:1 Unit=2:1 Level=0 DistToSlot=0.33",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.55"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT S3_PassQueue settle done ticks=336",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.55"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT S3QueueStats leaderMorphs=1 followerMorphs=1 minLeaderFiles=3 queueTicks=433 maxBeyondTail=2.54m",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.55"
+				},
+				{
+					"event":
+					{
+						"type": "Error",
+						"message": "UnitSqueezeMorphTest0: T1.7 FAIL: follower front pushed 2.54 m past the leader's tail (grind-through, audit H5)",
+						"context": "",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": 0,
+					"timestamp": "2026.10.27-14.58.55"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT S3Unit leader files=20 passLocked=0 strays=0 minSep=0.736m",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.55"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT S3Unit follower files=20 passLocked=0 strays=0 minSep=0.442m",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.55"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT S3Assert escalations=12 (budget 400) ok=0",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.55"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT S3_SqueezeMorph Complete Result=Failed Msg=S3 assertions failed",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-14.58.55"
+				},
+				{
+					"event":
+					{
+						"type": "Error",
+						"message": "S3_SqueezeMorph finished with result 4",
+						"context": "",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "E:\\Unreal Projects\\MassBattle\\Plugins\\MassBattle\\Source\\MassBattleTest\\Private\\MassBattleFuncTestHarness.cpp",
+					"lineNumber": 282,
+					"timestamp": "2026.10.27-14.58.55"
+				}
+			],
+			"warnings": 0,
+			"errors": 2,
+			"artifacts": []
+		}
+	]
+}

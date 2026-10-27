@@ -90,4 +90,9 @@ namespace FUnitLocomotion
 	 *  HandoffDistM of the final slot; unlatch only past 1.5x (avoidance
 	 *  nudges must not flip the target regime at the boundary). */
 	MASSBATTLE_API bool FallInHandoffLatch(bool bLocked, float DistFinalSlotM, float HandoffDistM);
+
+	/** Phase 2 C3: the effective morph distance for a layout of NumRanks
+	 *  ranks -- max(cvar, 2 x rank depth). ONE home for the floor so the
+	 *  resolve blend and the locomotion throttle gate agree exactly. */
+	MASSBATTLE_API float FallInMorphDistance(float MorphDistanceCvarM, int32 NumRanks, float RankSpacingM);
 }

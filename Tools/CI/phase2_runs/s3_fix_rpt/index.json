@@ -1,0 +1,44 @@
+﻿{
+	"devices": [
+		{
+			"deviceName": "FROST",
+			"instance": "F2F445074C0B94D8FA7EBA83847632B6",
+			"instanceName": "FROST-10068",
+			"platform": "WindowsEditor",
+			"oSVersion": "Windows 10 (22H2) [10.0.19045.6466] ",
+			"model": "Default",
+			"gPU": "NVIDIA GeForce GTX 1660 Ti",
+			"cPUModel": "Intel(R) Core(TM) i7-9700F CPU @ 3.00GHz",
+			"rAMInGB": 16,
+			"renderMode": "SM6",
+			"rHI": "",
+			"appInstanceLog": ""
+		}
+	],
+	"reportCreatedOn": "2026.10.27-15.16.10",
+	"succeeded": 1,
+	"succeededWithWarnings": 0,
+	"failed": 0,
+	"notRun": 0,
+	"inProcess": 0,
+	"totalDuration": 2.5800685882568359,
+	"comparisonExported": false,
+	"comparisonExportDirectory": "",
+	"tests": [
+		{
+			"testDisplayName": "S3_SqueezeMorph",
+			"fullTestPath": "Battle.Func.S3_SqueezeMorph",
+			"tags": [],
+			"state": "Success",
+			"deviceInstance": [
+				"F2F445074C0B94D8FA7EBA83847632B6"
+			],
+			"duration": 2.5800685882568359,
+			"dateTime": "2026.10.27-15.16.07",
+			"entries": [],
+			"warnings": 0,
+			"errors": 0,
+			"artifacts": []
+		}
+	]
+}

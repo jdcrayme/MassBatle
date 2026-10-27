@@ -77,7 +77,12 @@ namespace FUnitLocomotion
 		{
 			return 1.f; // dressed (or the policy is off): full pace
 		}
-		return FMath::Clamp(1.f - PaceGain * (MaxSlotErrorM - DressBreakM), 0.f, 1.f);
+		// ERRATA (measured): the plan's clamp floors at 0 -- a fully frozen
+		// anchor recovers SLOWER than a creeping one (the men redress toward
+		// slots that advance with the anchor), and S4/S5 flag-on marches
+		// burned their whole budgets in stop-wait-crawl cycles. 0.25 keeps
+		// the P4 "dips measurably" property while the dress drains.
+		return FMath::Clamp(1.f - PaceGain * (MaxSlotErrorM - DressBreakM), 0.25f, 1.f);
 	}
 
 	bool MarchReflowSticky(const bool bHasPath, const float MaxSlotErrorM, const float DressBreakM)
@@ -101,5 +106,11 @@ namespace FUnitLocomotion
 			return false;
 		}
 		return bLocked;
+	}
+
+	float FallInMorphDistance(const float MorphDistanceCvarM, const int32 NumRanks, const float RankSpacingM)
+	{
+		const float DepthM = static_cast<float>(FMath::Max(1, NumRanks)) * RankSpacingM;
+		return FMath::Max(MorphDistanceCvarM, 2.f * DepthM);
 	}
 }

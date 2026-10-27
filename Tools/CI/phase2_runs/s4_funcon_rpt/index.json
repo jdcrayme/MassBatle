@@ -1,0 +1,309 @@
+﻿{
+	"devices": [
+		{
+			"deviceName": "FROST",
+			"instance": "2AFBD01D45DAFE4B98AACF9D54B06A3E",
+			"instanceName": "FROST-11472",
+			"platform": "WindowsEditor",
+			"oSVersion": "Windows 10 (22H2) [10.0.19045.6466] ",
+			"model": "Default",
+			"gPU": "NVIDIA GeForce GTX 1660 Ti",
+			"cPUModel": "Intel(R) Core(TM) i7-9700F CPU @ 3.00GHz",
+			"rAMInGB": 16,
+			"renderMode": "SM6",
+			"rHI": "",
+			"appInstanceLog": ""
+		}
+	],
+	"reportCreatedOn": "2026.10.27-15.38.07",
+	"succeeded": 0,
+	"succeededWithWarnings": 0,
+	"failed": 1,
+	"notRun": 0,
+	"inProcess": 0,
+	"totalDuration": 1.9852064847946167,
+	"comparisonExported": false,
+	"comparisonExportDirectory": "",
+	"tests": [
+		{
+			"testDisplayName": "S4_WidthOverride",
+			"fullTestPath": "Battle.Func.S4_WidthOverride",
+			"tags": [],
+			"state": "Fail",
+			"deviceInstance": [
+				"2AFBD01D45DAFE4B98AACF9D54B06A3E"
+			],
+			"duration": 1.9852064847946167,
+			"dateTime": "2026.10.27-15.38.05",
+			"entries": [
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogAudio: Audio Device unregistered from world 'L_MassBattle_Demo01'.",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-15.38.05"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogStreaming: FlushAsyncLoading(184): 1 QueuedPackages, 0 AsyncPackages",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-15.38.05"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogAudio: Audio Device (ID: 1) registered with world 'L_MassBattle_T0_Functional'.",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-15.38.05"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogStaticMesh: Waiting on static mesh StaticMesh /Engine/BasicShapes/Plane.Plane being ready before playing",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-15.38.05"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogDemoBattle: EXEC_RESULT DemoGameMode discovered 0 level units",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-15.38.05"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogDemoBattle: EXEC_RESULT DemoPC ready",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-15.38.05"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT Phase2Flags applied (6 cvars)",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-15.38.05"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT SpawnSpec Actor=UnitActor_0 Loc=(-4000.0,0.0)cm SpawnPos=(-4000.0,0.0)cm",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-15.38.05"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT SpawnRoster Unit=1:1 Entities=40 Row=0 Name=UnitActor_0",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-15.38.05"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT SpawnPerf Unit=1:1 Micros=187.0 PerEntity=4.67",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-15.38.05"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT S4_WidthOverride Spawned (-40,0) filesAtSpawn=20",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-15.38.05"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT S4_WidthOverride march order files=10 goal=(40,0)m",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-15.38.05"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT WidthOverride Unit=1:1 Files 20->10",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-15.38.05"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT PlanPath Unit=1:1 Length=80.0m Points=42",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-15.38.05"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT StragglerThrottle Unit=1:1 ON err=13.19m factor=0.00",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-15.38.05"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogDemoBattle: EXEC_RESULT DemoClickProbe none (no garrison structures registered)",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-15.38.05"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogDemoBattle: EXEC_RESULT DemoSpawn spawned=0 of 0",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-15.38.05"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT StragglerThrottle Unit=1:1 OFF err=1.80m",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-15.38.05"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT StragglerThrottle Unit=1:1 ON err=11.62m factor=0.00",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-15.38.06"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT StragglerThrottle Unit=1:1 OFF err=1.79m",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-15.38.06"
+				},
+				{
+					"event":
+					{
+						"type": "Info",
+						"message": "LogMassBattle: EXEC_RESULT S4_WidthOverride Complete Result=Error Msg=march timed out",
+						"context": "log",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "",
+					"lineNumber": -1,
+					"timestamp": "2026.10.27-15.38.06"
+				},
+				{
+					"event":
+					{
+						"type": "Error",
+						"message": "S4_WidthOverride finished with result 2",
+						"context": "",
+						"artifact": "00000000000000000000000000000000"
+					},
+					"filename": "E:\\Unreal Projects\\MassBattle\\Plugins\\MassBattle\\Source\\MassBattleTest\\Private\\MassBattleFuncTestHarness.cpp",
+					"lineNumber": 282,
+					"timestamp": "2026.10.27-15.38.07"
+				}
+			],
+			"warnings": 0,
+			"errors": 1,
+			"artifacts": []
+		}
+	]
+}

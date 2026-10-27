@@ -387,8 +387,8 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 		{
 			const float RemainingM = FMath::Max(0.f, PathM.TotalLength - Formation.PathS * 0.01f);
 			const int32 NumRanksLayout = FMath::Max(1, FMath::CeilToInt(static_cast<float>(Formation.NumSlots) / Formation.NumFiles));
-			const float DepthM = static_cast<float>(NumRanksLayout) * RankSpacingM;
-			AlphaUnit = FUnitLocomotion::FallInBlendAlpha(RemainingM, FMath::Max(MorphDistCvarM, 2.f * DepthM));
+			AlphaUnit = FUnitLocomotion::FallInBlendAlpha(RemainingM,
+				FUnitLocomotion::FallInMorphDistance(MorphDistCvarM, NumRanksLayout, RankSpacingM));
 		}
 
 		// ---- Batched reflow (arch §8.4): 0.5 s cadence or rank-gap trigger ----
@@ -460,7 +460,19 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 		bool bIntervalReflowDue = false;
 		if ((bMarchSticky || bFinalOwnedNoPath) && !bRankGap)
 		{
+			// Stickiness (B3) / finals-owned (C): decay without consuming --
+			// a later tear or rank gap reflows on the first due tick.
 			Scheduler.Cooldown = FMath::Max(0.f, Scheduler.Cooldown - DT);
+		}
+		else if (!bFiling && (bLayoutRedecision || bScheduledFinalDue))
+		{
+			// Re-decision / scheduled final assignment: fire WITHOUT touching
+			// the interval cadence. Flag-off byte-compatibility demands the
+			// legacy short-circuit exactly -- the pre-phase-2 condition never
+			// called ConsumeIfDue on these paths, and shifting the cadence by
+			// up to half a second flips cadence-sensitive gates (S3 measured:
+			// grind-through at the pass mouth).
+			bIntervalReflowDue = true;
 		}
 		else
 		{

@@ -101,7 +101,7 @@ namespace
 	// Phase 2 C master switch (defined beside the blend in
 	// FormationSlotResolveProcessor.cpp; TAutoConsoleVariable in one TU,
 	// FindConsoleVariable in readers -- the ServoProcessor pattern).
-	int32 GetProgressiveFallIn()
+	int32 LocomotionFallInEnabled()
 	{
 		if (const IConsoleVariable* Cvar = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Movement.ProgressiveFallIn")))
 		{
@@ -210,6 +210,11 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 	const float WalkSpeed = GBattleMovementWalkSpeed.GetValueOnGameThread();
 	const float FacingDeltaRate = GBattleMovementFacingDeltaRate.GetValueOnGameThread();
 	const float Hysteresis = GBattleMovementSpeedHysteresis.GetValueOnGameThread();
+	// Phase 2 C: the fall-in master switch + morph distance (defined beside
+	// the blend in FormationSlotResolveProcessor.cpp; reader pattern).
+	const bool bFallInCvar = LocomotionFallInEnabled() != 0;
+	const IConsoleVariable* MorphDistCvar = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Movement.MorphDistance"));
+	const float MorphDistanceCvarM = MorphDistCvar ? MorphDistCvar->GetFloat() : 24.f;
 
 	// §8.6 mobility input (audit H3): the set of cavalry-owned units (units
 	// are class-uniform, so chunk membership is the unit's class).
@@ -923,11 +928,46 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 		// frame of latency -- the same channel as ReflowCooldown).
 		if (GBattleMovementStragglerPace.GetValueOnGameThread() != 0 && bHasPath && CommandedSpeedM > 0.f)
 		{
-			const float PaceFactor = FUnitLocomotion::StragglerPaceFactor(
-				Formation.MaxSlotErrorM,
-				GBattleMovementDressBreak.GetValueOnGameThread(),
-				GBattleMovementPaceGain.GetValueOnGameThread());
-			CurrentLimit *= PaceFactor;
+			// The throttle must NOT engage inside the fall-in blend: freezing
+			// the anchor mid-morph freezes CROSSED intermediate targets that
+			// cannot drain (measured: S4 flag-on re-spiked to err 11.6 m at
+			// the scheduled final assignment and stalled at factor 0). Inside
+			// the morph zone the tear IS the intended shape change; the blend
+			// owns convergence. Same formula + floor as the resolve's alpha.
+			float AlphaNow = 1.f;
+			if (bFallInCvar)
+			{
+				const float RemainingNowM = FMath::Max(0.f, PathM.TotalLength - Formation.PathS * 0.01f);
+				const int32 NumRanksNow = FMath::Max(1, FMath::CeilToInt(static_cast<float>(Formation.NumSlots) / Formation.NumFiles));
+				AlphaNow = FUnitLocomotion::FallInBlendAlpha(RemainingNowM,
+					FUnitLocomotion::FallInMorphDistance(MorphDistanceCvarM, NumRanksNow, Formation.RankSpacing * 0.01f));
+			}
+			if (AlphaNow <= KINDA_SMALL_NUMBER)
+			{
+				const float PaceFactor = FUnitLocomotion::StragglerPaceFactor(
+					Formation.MaxSlotErrorM,
+					GBattleMovementDressBreak.GetValueOnGameThread(),
+					GBattleMovementPaceGain.GetValueOnGameThread());
+				CurrentLimit *= PaceFactor;
+			// Phase 2 D2 observability: one line per throttle engagement and
+			// per recovery (event rate, game thread).
+			static TMap<FUnitHandle, bool> PaceThrottled;
+			const bool bWas = PaceThrottled.FindOrAdd(Unit) == true;
+			if (PaceFactor < 1.f && !bWas)
+			{
+				PaceThrottled[Unit] = true;
+				UE_LOG(LogMassBattle, Display,
+					TEXT("EXEC_RESULT StragglerThrottle Unit=%u:%u ON err=%.2fm factor=%.2f"),
+					Unit.Index, Unit.Serial, Formation.MaxSlotErrorM, PaceFactor);
+			}
+			else if (PaceFactor >= 1.f && bWas)
+			{
+				PaceThrottled[Unit] = false;
+				UE_LOG(LogMassBattle, Display,
+					TEXT("EXEC_RESULT StragglerThrottle Unit=%u:%u OFF err=%.2fm"),
+					Unit.Index, Unit.Serial, Formation.MaxSlotErrorM);
+			}
+			}
 		}
 
 		// ---- Narrow-pass decision (arch §8.6, T1.7): field paths only --
@@ -1138,7 +1178,7 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 					// path drop. The ONE exception is the H2 safety-net width
 					// restore above: it re-parameterizes the layout, so it
 					// keeps its re-slot even under the master switch.
-					if (GetProgressiveFallIn() != 0)
+					if (LocomotionFallInEnabled() != 0)
 					{
 						if (bRestoredFiles)
 						{

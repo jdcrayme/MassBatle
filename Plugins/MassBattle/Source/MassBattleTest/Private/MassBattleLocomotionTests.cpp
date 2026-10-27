@@ -321,8 +321,9 @@ bool FSpeedLimits_StragglerPaceAndStickiness::RunTest(const FString& Parameters)
 	TestEqual(TEXT("below threshold: full pace"), FUnitLocomotion::StragglerPaceFactor(1.0f, Break, Gain), 1.f);
 	TestEqual(TEXT("at threshold: full pace"), FUnitLocomotion::StragglerPaceFactor(Break, Break, Gain), 1.f);
 	TestTrue(TEXT("0.5 m of tear: -0.1"), FMath::IsNearlyEqual(FUnitLocomotion::StragglerPaceFactor(Break + 0.5f, Break, Gain), 0.9f, 1e-6f));
-	TestTrue(TEXT("4 m of tear: -0.8"), FMath::IsNearlyEqual(FUnitLocomotion::StragglerPaceFactor(Break + 4.f, Break, Gain), 0.2f, 1e-6f));
-	TestEqual(TEXT("massive tear: floored at 0"), FUnitLocomotion::StragglerPaceFactor(Break + 100.f, Break, Gain), 0.f);
+	TestTrue(TEXT("3 m of tear: -0.6"), FMath::IsNearlyEqual(FUnitLocomotion::StragglerPaceFactor(Break + 3.f, Break, Gain), 0.4f, 1e-6f));
+	TestTrue(TEXT("massive tear: floored at 0.25 (a frozen anchor recovers slower than a creeping one)"),
+		FMath::IsNearlyEqual(FUnitLocomotion::StragglerPaceFactor(Break + 100.f, Break, Gain), 0.25f, 1e-6f));
 	TestEqual(TEXT("gain 0 = off"), FUnitLocomotion::StragglerPaceFactor(Break + 5.f, Break, 0.f), 1.f);
 
 	// Phase 2 B3 stickiness truth table: sticky needs a path AND a dressed

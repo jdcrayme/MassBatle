@@ -36,7 +36,7 @@ namespace
 	// FormationSlotResolveProcessor.cpp) -- within SlotReachEps and slow, an
 	// entity rotates to its slot yaw (the TW settle look) instead of keeping
 	// the walk heading. The garrison Z servo stays gated on garrison mode.
-	int32 GetProgressiveFallIn()
+	int32 IntegrateFallInEnabled()
 	{
 		if (const IConsoleVariable* Cvar = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Movement.ProgressiveFallIn")))
 		{
@@ -113,7 +113,7 @@ void UIntegrateProcessor::Execute(FMassEntityManager& EntityManager, FMassExecut
 	const float DT = Context.GetDeltaTimeSeconds();
 	const float FacingDeltaRate = GetFacingDeltaRate();
 	const float SettleYawRate = GetSettleYawRate();
-	const bool bRestFacingAll = GetProgressiveFallIn() != 0;
+	const bool bRestFacingAll = IntegrateFallInEnabled() != 0;
 	IntegrateQuery.ForEachEntityChunk(Context, [DT, FacingDeltaRate, SettleYawRate, bRestFacingAll](FMassExecutionContext& Context)
 	{
 		const FUnitFormationSharedFragment& Formation = *Context.GetSharedFragmentPtr<FUnitFormationSharedFragment>();
