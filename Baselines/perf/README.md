@@ -6,9 +6,13 @@ gate; committed to git so regressions are diffable in review.
     Baselines/perf/<machine-tag>/<gate>.json
 
 - `<machine-tag>` — short hardware tag, e.g. `ref-i7-9700F-1660Ti`
-  (the reference machine, roadmap R10, spec in `Docs/reference-machine.md`).
-- `<gate>` — what produced the numbers: `gate-unit` (per-commit tier wall time),
-  `nightly-smoke` (packaged boot + Gauntlet smoke), later `perf-gates` (B.6).
+  (the reference machine, roadmap R10, spec in `Docs/spec/reference-machine.md`).
+- `<gate>` — what produced the numbers: `nightly-smoke` (packaged boot +
+  Gauntlet smoke; carries the T1.8 soak metrics since the audit M18 fix --
+  `soak_stuck_final` / `soak_separation_final` / `soak_archetypes` parsed
+  from the soak log's FINAL settled line). The Phase 0 `gate-unit.json`
+  artifact was deleted (audit nit: no CI writer ever produced it; it drifted
+  as a static file). Later: `perf-gates` (B.6).
 
 ## Schema
 

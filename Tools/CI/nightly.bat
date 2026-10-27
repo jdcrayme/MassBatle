@@ -56,9 +56,15 @@ if errorlevel 1 (
     echo [nightly] gauntlet smoke FAILED ^(no clean TEST COMPLETE^)
     exit /b 1
 )
+REM Audit L3: the marker alone can be faked by a crash AFTER it -- the
+REM process exit code is checked too.
+if not "%GAUNTLET_EXIT%"=="0" (
+    echo [nightly] gauntlet smoke FAILED ^(process exit %GAUNTLET_EXIT% with a clean marker^)
+    exit /b 1
+)
 
 echo [nightly 3b/5] Running T1.8 movement mini-soak on staged build...
-set SOAK_LOG=%NIGHT_DIR%gauntlet_soak.log
+set SOAK_LOG=%NIGHT_DIR%\gauntlet_soak.log
 if exist "%SOAK_LOG%" del "%SOAK_LOG%"
 "%GAME_EXE%" -unattended -nosplash -nullrhi -nopause -abslog="%SOAK_LOG%" -gauntlet=BattleMovementSoak
 set SOAK_EXIT=%ERRORLEVEL%
@@ -69,6 +75,11 @@ if errorlevel 1 (
     echo [nightly] T1.8 movement soak FAILED ^(no clean TEST COMPLETE^)
     exit /b 1
 )
+REM Audit L3: marker + process exit code (same failure mode as the smoke).
+if not "%SOAK_EXIT%"=="0" (
+    echo [nightly] T1.8 movement soak FAILED ^(process exit %SOAK_EXIT% with a clean marker^)
+    exit /b 1
+)
 
 echo [nightly 4/5] Writing candidate baseline + comparing against the committed reference...
 REM Audit H2 fix: the nightly writes a CANDIDATE under last_nightly/ (untracked)
@@ -77,7 +88,7 @@ REM (overwritten + committed) only when the compare passes, so a regression
 REM fails the nightly and leaves the reference untouched.
 set REF_BASELINE=%PROJ_DIR%\Baselines\perf\ref-i7-9700F-1660Ti\nightly-smoke.json
 set CAND_BASELINE=%NIGHT_DIR%\candidate-nightly-smoke.json
-python "%THIS_DIR%write_baseline.py" --gate nightly-smoke --smoke-log "%GAUNTLET_LOG%" --out "%CAND_BASELINE%" --seed-from "%REF_BASELINE%"
+python "%THIS_DIR%write_baseline.py" --gate nightly-smoke --smoke-log "%GAUNTLET_LOG%" --soak-log "%SOAK_LOG%" --out "%CAND_BASELINE%" --seed-from "%REF_BASELINE%"
 if errorlevel 1 (
     echo [nightly] baseline write FAILED
     exit /b 1
@@ -101,8 +112,18 @@ copy /y "%CAND_BASELINE%" "%REF_BASELINE%" >nul
 echo [nightly 5/5] Committing baseline...
 cd /d "%PROJ_DIR%"
 git add Baselines/perf
-git commit -m "phase0: nightly baseline update (automated)" --no-verify
-if errorlevel 1 echo [nightly] note: nothing to commit (non-fatal)
+git commit -m "nightly: baseline update (automated)" --no-verify
+set COMMIT_EXIT=%ERRORLEVEL%
+if not "%COMMIT_EXIT%"=="0" (
+    REM git commit exits 1 for "nothing to commit" (non-fatal); any other
+    REM code is a real failure and must fail the nightly (audit L7).
+    git status --porcelain Baselines/perf | findstr /r "." >nul
+    if not errorlevel 1 (
+        echo [nightly] BASELINE COMMIT FAILED ^(git exit %COMMIT_EXIT%, staged changes remain^)
+        exit /b 1
+    )
+    echo [nightly] note: nothing to commit (non-fatal)
+)
 
 echo [nightly] DONE started=%START_TS% ended=%DATE% %TIME%
 endlocal

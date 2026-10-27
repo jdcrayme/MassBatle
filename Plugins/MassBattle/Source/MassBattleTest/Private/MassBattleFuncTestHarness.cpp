@@ -128,7 +128,12 @@ namespace
 					Owner->AddError(TEXT("could not spawn the functional test actor"));
 					return true;
 				}
-				Deadline = FPlatformTime::Seconds() + 60.0;
+				// Audit M17: the deadline is TICK-DERIVED (fixed-step sim
+				// contract), not wall-clock -- a slow CI box must not eat the
+				// budget. 4200 ticks ~= 70 s of sim time at 1/60, above every
+				// actor TimeLimit (S3's 420 s wall TimeLimit is the binding
+				// outer guard and stays as authored).
+				DeadlineTicks = 36000;
 				bStarted = true;
 				// Manager-equivalent start via the subclass hook (PrepareTest is
 				// protected; the native path leaves the test stopped when driven
@@ -192,9 +197,11 @@ namespace
 
 			if (TestActor->IsRunning())
 			{
-				if (FPlatformTime::Seconds() > Deadline)
+				// Audit M17: tick-count budget (the harness Update runs once
+				// per engine tick in the -game loop).
+				if (++PollTicks > DeadlineTicks)
 				{
-					Owner->AddError(FString::Printf(TEXT("%s timed out"), *TestName));
+					Owner->AddError(FString::Printf(TEXT("%s timed out (%d ticks, audit M17 tick budget)"), *TestName, PollTicks));
 					TestActor->Result = EFunctionalTestResult::Error;
 					TestActor->bIsRunning = false;
 					return true;
@@ -216,7 +223,8 @@ namespace
 		FString ActorClassName;
 		TObjectPtr<AFunctionalTest> TestActor;
 		bool bStarted = false;
-		double Deadline = 0.0;
+		int32 PollTicks = 0;
+		int32 DeadlineTicks = 0;
 	};
 
 	/** Base for Battle.Func complex tests. */

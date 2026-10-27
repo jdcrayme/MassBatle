@@ -57,7 +57,11 @@ def main():
             missing_baseline.append(name)
             lines.append("%-28s %14s %14.4g %10s  NEW" % (name, "-", value, "-"))
             continue
-        tol = max(float(base.get("tolerance", args.tolerance)), 0.0) or args.tolerance
+        # Audit nit: 0.0 tolerance is legal (exact gates like soak_stuck_*)
+        # -- only a NEGATIVE tolerance falls back to the CLI default.
+        tol = float(base.get("tolerance", args.tolerance))
+        if tol < 0.0:
+            tol = args.tolerance
         limit = base["value"] * (1.0 + tol)
         if value > limit:
             verdict = "REGRESSION"
@@ -72,6 +76,7 @@ def main():
 
     for name in base_metrics:
         if name not in cand_metrics:
+            missing_baseline.append(name)
             lines.append("%-28s %14.4g %14s %10s  MISSING-IN-CANDIDATE"
                          % (name, base_metrics[name].get("value"), "-", "-"))
 
@@ -80,6 +85,14 @@ def main():
           % (len(regressions), len(improvements), len(pending), len(missing_baseline)))
     if regressions:
         print("[compare] FAIL: %s" % ", ".join(regressions))
+        return 1
+    if missing_baseline:
+        # Audit L1: a metric whose producer disappears must not compare
+        # against itself forever -- a reference metric missing from the
+        # candidate is a failure (pending stays non-fatal: null = the
+        # schema's deliberately-unmeasured state).
+        print("[compare] FAIL: reference metrics missing from candidate: %s"
+              % ", ".join(missing_baseline))
         return 1
     print("[compare] PASS")
     return 0

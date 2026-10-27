@@ -1,7 +1,7 @@
 {
 	"FileVersion": 3,
 	"FriendlyName": "MassBattle",
-	"Description": "Total War-style battle simulation on Mass entities + GAS unit actors. See Docs/tw-battle-system-architecture.md.",
+	"Description": "Total War-style battle simulation on Mass entities + GAS unit actors. See Docs/spec/architecture.md.",
 	"Category": "Gameplay",
 	"CanContainContent": false,
 	"Installed": false,

@@ -318,6 +318,32 @@ bool FSlots_BatchedReflowIdempotent::RunTest(const FString& Parameters)
 	TestTrue(TEXT("rank gap fires immediately despite cooldown"), GapScheduler.ConsumeIfDue(0.016f, true));
 	TestFalse(TEXT("...and the cooldown applies after"), GapScheduler.ConsumeIfDue(0.016f, false));
 
+	// Audit L19: ASSIGNMENT idempotence (not just scheduler cadence) --
+	// assigning twice with unchanged inputs yields the identical bijection.
+	{
+		TArray<FVector2D> Positions;
+		TArray<FVector2D> Slots;
+		for (int32 i = 0; i < 24; ++i)
+		{
+			Positions.Add(FVector2D((i % 6) * 1.35f + 0.1f * (i / 6), (i / 6) * 1.35f));
+			Slots.Add(FVector2D((i % 6) * 1.2f, (i / 6) * 1.2f));
+		}
+		TArray<int32> First, Second;
+		FSlotAssigner::Assign(Positions, Slots, 6, TArray<int32>(), 2, First);
+		FSlotAssigner::Assign(Positions, Slots, 6, First, 2, Second);
+		TestEqual(TEXT("assign-twice: same length"), Second.Num(), First.Num());
+		bool bIdentical = true;
+		for (int32 i = 0; i < First.Num(); ++i)
+		{
+			if (First[i] != Second[i])
+			{
+				bIdentical = false;
+				break;
+			}
+		}
+		TestTrue(TEXT("assign-twice: identical assignment (audit L19)"), bIdentical);
+	}
+
 	return true;
 }
 

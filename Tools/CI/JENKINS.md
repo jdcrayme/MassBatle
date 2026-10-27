@@ -33,6 +33,17 @@ Optional: a Windows Task Scheduler "at logon" entry running the start line keeps
 Jenkins alive across reboots so the `H 2 * * *` nightly cron always fires. This
 is process supervision only -- Jenkins remains the orchestration host (A4).
 
+## Checkout requirements (audit M19)
+
+- `*.uasset` / `*.umap` ride git-lfs; the build node needs the git-lfs plugin
+  (or git-lfs on PATH) AND a real smudge: plain `checkout scm` suffices only
+  when the plugin is installed -- a checkout that skips the smudge leaves
+  pointer blobs in the tree and every build fails immediately.
+- Sanity check at the top of any pipeline (before UBT): the project file must
+  parse as JSON. A pointer blob fails this in one line:
+  `python -c "import json;json.load(open('MassBattle.uproject'))"`
+- `*.uproject` is NOT an LFS type (audit M19 fix): it rides normal git text.
+
 ## Jobs (defined via HTTP API; auth = `-u admin:<token from api-token.txt>`)
 
 | Job | Type | Definition | Schedule |
@@ -60,8 +71,11 @@ Scripted management (all without crumb; API token bypasses CSRF):
 - CSRF crumbs are session-bound in 2.580; scripted access must use the API
   token (Basic auth with an API token skips the crumb).
 - The git plugin refuses `file:///` (local-directory) remotes unless the
-  controller runs with `-Dhudson.plugins.git.GitSCM.ALLOW_LOCAL_CHECKOUT=true`
-  (this flag is part of the start line above).
+  controller runs with `-Dhudson.plugins.git.GitSCM.ALLOW_LOCAL_CHECKOUT=true`.
+  Audit L6 correction: this flag is NOT part of the start line above -- add it
+  to the `java -jar jenkins.war` invocation when adopting a `file:///` remote
+  (the current repo remote is not local-directory, so the running controller
+  does not carry it).
 - Once a pipeline job adopts its Jenkinsfile `parameters {}`, plain POST
   `/build` returns 400 — use `/buildWithParameters?TIER=unit`.
 - The first nightly ran via `nightly.bat` directly (manual first-run evidence,

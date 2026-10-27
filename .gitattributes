@@ -4,7 +4,10 @@
 # Core Unreal Engine file types
 *.uasset filter=lfs diff=lfs merge=lfs -text
 *.umap filter=lfs diff=lfs merge=lfs -text
-*.uproject filter=lfs diff=lfs merge=lfs -text
+# Audit M19: .uproject is a small TEXT file -- LFS routing it made every
+# clone yield a 129-byte pointer blob as the project file (unbuildable
+# without git-lfs smudge). It now rides normal git text.
+
 
 # Common binary assets
 *.fbx filter=lfs diff=lfs merge=lfs -text

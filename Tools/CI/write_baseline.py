@@ -28,6 +28,12 @@ MACHINE_SPEC = {
 
 LINE_TS = re.compile(r"^\[(\d+)\.(\d+)\.(\d+)-(\d+)\.(\d+)\.(\d+):(\d{3})\]")
 
+# Audit M18: the T1.8 soak FINAL line carries the machine-readable soak gate:
+# "FINAL settled stuck=%d separation=%d archetypes=%d (spawn %d) ..."
+SOAK_FINAL = re.compile(
+    r"GAUNTLET BattleMovementSoak FINAL settled stuck=(\d+) separation=(\d+)"
+    r" archetypes=(\d+) \(spawn (\d+)\)")
+
 
 def smoke_duration_seconds(log_path):
     """Wall-clock seconds spanned by the log's frame timestamps (uses the log's
@@ -48,10 +54,30 @@ def smoke_duration_seconds(log_path):
     return round(last - first, 3)
 
 
+def soak_final_metrics(log_path):
+    """Parse the soak controller's FINAL settled line into baseline metrics.
+    Returns a dict (possibly empty when the log carries no FINAL line)."""
+    best = {}
+    with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            m = SOAK_FINAL.search(line)
+            if m:
+                best = {
+                    "soak_stuck_final": int(m.group(1)),
+                    "soak_separation_final": int(m.group(2)),
+                    "soak_archetypes": int(m.group(3)),
+                    "soak_archetypes_spawn": int(m.group(4)),
+                }
+    return best
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--gate", required=True)
     ap.add_argument("--smoke-log", default=None)
+    ap.add_argument("--soak-log", default=None,
+                    help="T1.8 gauntlet soak log; parses the FINAL settled "
+                         "line into soak_* metrics (audit M18)")
     ap.add_argument("--spawn-us", type=float, default=None)
     ap.add_argument("--baselines-dir", default=None,
                     help="defaults to <repo>/Baselines/perf relative to this script")
@@ -107,6 +133,19 @@ def main():
             doc["metrics"].setdefault(
                 "smoke_test_duration_s", {"value": None, "unit": "s", "tolerance": 0.5})
             doc["metrics"]["smoke_test_duration_s"]["value"] = dur
+    if args.soak_log:
+        soak = soak_final_metrics(args.soak_log)
+        if not soak:
+            # Audit L1 discipline: a missing measurement must not silently
+            # seed forward -- the writer FAILS so the nightly stops here.
+            print("[baseline] FAIL: --soak-log given but no FINAL settled line found", file=sys.stderr)
+            return 2
+        for name, value in soak.items():
+            doc["metrics"].setdefault(
+                name, {"value": None,
+                       "unit": "count",
+                       "tolerance": 0.0 if name.startswith("soak_stuck") or name.startswith("soak_sep") else 0.0})
+            doc["metrics"][name]["value"] = value
     if args.spawn_us is not None:
         doc["metrics"].setdefault(
             "entity_spawn_80_us", {"value": None, "unit": "us", "tolerance": 0.5})

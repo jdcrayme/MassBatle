@@ -1,1 +1,1 @@
-Phase 0 deliverable per roadmap R8 (automation host, Gauntlet nightly, baseline JSON storage). Pre-phase-0 records only the reference machine: see Docs/reference-machine.md.
+Phase 0 deliverable per roadmap R8 (automation host, Gauntlet nightly, baseline JSON storage). Pre-phase-0 records only the reference machine: see Docs/spec/reference-machine.md (audit L17 pointer fix).

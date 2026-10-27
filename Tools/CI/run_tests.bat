@@ -46,4 +46,10 @@ echo [run_tests] engine exit code: %ENGINE_EXIT%
 python "%THIS_DIR%summarize_run.py" --tier %TIER% --log "%LOG_FILE%" --report "%REPORT_DIR%\index.json" --out "%THIS_DIR%last_run.json"
 set SUMMARY_EXIT=%ERRORLEVEL%
 
+REM Audit L3: the engine exit code is part of the verdict -- a nonzero
+REM engine exit with a parseable log must not pass the gate.
+if not "%ENGINE_EXIT%"=="0" if %SUMMARY_EXIT%=="0" (
+    echo [run_tests] FAIL: engine exit %ENGINE_EXIT% with a clean summary ^(audit L3^)
+    endlocal & exit /b 1
+)
 endlocal & exit /b %SUMMARY_EXIT%

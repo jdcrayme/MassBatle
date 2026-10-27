@@ -1,3 +1,154 @@
-version https://git-lfs.github.com/spec/v1
-oid sha256:a582ecf3702b33c08ae250abb2858aff0a9fc37c339e87a344fd5f0b536c75d5
-size 2800
+{
+  "FileVersion": 3,
+  "EngineAssociation": "5.8",
+  "Category": "",
+  "Description": "",
+  "Modules": [
+    {
+      "Name": "MassBattleGame",
+      "Type": "Runtime",
+      "LoadingPhase": "Default"
+    }
+  ],
+  "Plugins": [
+    {
+      "Name": "ModelingToolsEditorMode",
+      "Enabled": true,
+      "TargetAllowList": [
+        "Editor"
+      ]
+    },
+    {
+      "Name": "AIModuleToolset",
+      "Enabled": true
+    },
+    {
+      "Name": "AllToolsets",
+      "Enabled": true
+    },
+    {
+      "Name": "AutomationTestToolset",
+      "Enabled": true
+    },
+    {
+      "Name": "ConfigSettingsToolset",
+      "Enabled": true
+    },
+    {
+      "Name": "ConversationToolset",
+      "Enabled": true
+    },
+    {
+      "Name": "DataflowAgent",
+      "Enabled": true
+    },
+    {
+      "Name": "ChaosClothAssetToolset",
+      "Enabled": true
+    },
+    {
+      "Name": "AnimationAssistantToolset",
+      "Enabled": true
+    },
+    {
+      "Name": "DataRegistryToolset",
+      "Enabled": true
+    },
+    {
+      "Name": "EditorToolset",
+      "Enabled": true
+    },
+    {
+      "Name": "GameFeaturesToolset",
+      "Enabled": true
+    },
+    {
+      "Name": "GameplayTagsToolset",
+      "Enabled": true
+    },
+    {
+      "Name": "GASToolsets",
+      "Enabled": true
+    },
+    {
+      "Name": "HairModelingToolset",
+      "Enabled": true
+    },
+    {
+      "Name": "LiveCodingToolset",
+      "Enabled": true
+    },
+    {
+      "Name": "MCPClientToolset",
+      "Enabled": true
+    },
+    {
+      "Name": "NiagaraToolsets",
+      "Enabled": true
+    },
+    {
+      "Name": "PCGToolset",
+      "Enabled": true
+    },
+    {
+      "Name": "PhysicsToolsets",
+      "Enabled": true
+    },
+    {
+      "Name": "PluginToolset",
+      "Enabled": true
+    },
+    {
+      "Name": "SlateInspectorToolset",
+      "Enabled": true
+    },
+    {
+      "Name": "StateTreeToolset",
+      "Enabled": true
+    },
+    {
+      "Name": "ToolsetRegistry",
+      "Enabled": true
+    },
+    {
+      "Name": "UMGToolSet",
+      "Enabled": true
+    },
+    {
+      "Name": "WorldConditionsToolset",
+      "Enabled": true
+    },
+    {
+      "Name": "SequencerAnimMixerToolset",
+      "Enabled": true
+    },
+    {
+      "Name": "SemanticSearchToolset",
+      "Enabled": true
+    },
+    {
+      "Name": "ModelContextProtocol",
+      "Enabled": true
+    },
+    {
+      "Name": "MassGameplay",
+      "Enabled": true
+    },
+    {
+      "Name": "MassAI",
+      "Enabled": true
+    },
+    {
+      "Name": "GameplayAbilities",
+      "Enabled": true
+    },
+    {
+      "Name": "MassBattle",
+      "Enabled": true
+    },
+    {
+      "Name": "Gauntlet",
+      "Enabled": true
+    }
+  ]
+}

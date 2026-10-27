@@ -40,8 +40,26 @@ private:
 	int32 SoakEscalations = 0;
 	int32 SettleTicks = 0;
 	bool bTestModeOk = false;
+	// Audit M16: the gate carries a generous DURING-soak budget (disclosed)
+	// next to the settled final state -- the old shape manufactured its own
+	// settle and gated nothing but tautologies.
+	int32 FieldWideOrders = 0;
+	// Audit M16: the STALL signal is persistence, not churn -- entities at
+	// ladder level >= 3 in a sample, tracked as the worst sample. A jammed
+	// formation parks entities at deep levels sample after sample; contact
+	// churn spikes recover between samples.
+	int32 MaxDuringStuckDeep = 0;
+	// Audit L14: units skipped by the final assert (roster/formation lookup
+	// failed) must be visible -- a unit whose fragment vanished escapes the
+	// stuck/separation accounting otherwise.
+	int32 SkippedUnitsAtAssert = 0;
 
-	static constexpr float SoakDurationSeconds = 600.f;
+	// Effective knobs (CVAR-overridable; defaults preserve the T1.8
+	// baseline byte-for-byte).
+	int32 UnitsPerRow = 4;          // Battle.Movement.SoakGrid x units per row (grid = N x N/2... 4x2 = 8)
+	int32 UnitRows = 2;             // Battle.Movement.SoakRows
+	float SoakDuration = 600.f;     // Battle.Movement.SoakDuration
+
 	static constexpr float OrderIntervalSeconds = 10.f;
 	static constexpr float SampleIntervalSeconds = 5.f;
 };

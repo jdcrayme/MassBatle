@@ -91,8 +91,11 @@ def main():
             print("[summarize] report counts agree with log parse (succeeded=%s failed=%s)"
                   % (report_counts.get("succeeded"), report_counts.get("failed")))
         else:
-            print("[summarize] WARNING: report counts %s disagree with log parse passed=%d failed=%d"
+            # Audit L5: a Success-in-log / Fail-in-report discrepancy used to
+            # only warn -- the disagreement is itself a failure.
+            print("[summarize] ERROR: report counts %s disagree with log parse passed=%d failed=%d"
                   % (report_counts, len(passed), len(failed)))
+            ok = False
 
     summary = {
         "tier": args.tier,
