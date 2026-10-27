@@ -606,6 +606,36 @@ private:
 };
 
 // ---------------------------------------------------------------------------
+// Phase 2 task 9: T2.8 determinism two-run (R9 scope: same binary, same
+// machine). The same clash twice from the same RNG root; the state hash
+// sampled every 60 ticks; full reset between the runs; all hashes match.
+// ---------------------------------------------------------------------------
+UCLASS()
+class MASSBATTLETEST_API ADeterminismTwoRunTest : public AFunctionalTest
+{
+	GENERATED_BODY()
+
+public:
+	ADeterminismTwoRunTest();
+
+	void BeginTest();
+	void CompleteTest(EFunctionalTestResult TestResult, const FString& Message);
+	virtual void StartTest() override;
+	virtual void Tick(float DeltaSeconds) override;
+	virtual bool IsReady_Implementation() override { return true; }
+	virtual void Destroyed() override;
+
+private:
+	enum class EPhase : int32 { Run1, Run2, Done };
+	EPhase Phase = EPhase::Done;
+	int32 SavedCvars[4] = {};
+	int32 TicksDone = 0;
+	TArray<uint64> Run1Hashes;
+	void SetCvars();
+	void RestoreCvars();
+};
+
+// ---------------------------------------------------------------------------
 // S-scenario actor factory registry -- deterministic, reflection-free class
 // lookup for the automation harness (FindObject with /Script/ paths and
 // TObjectIterator both failed to resolve fresh C++ classes in -game processes

@@ -71,6 +71,13 @@ void UBattleDebugSubsystem::DumpGarrisonMetrics(int32 BookedUnits, int32 QueueWa
 
 void UBattleDebugSubsystem::Tick(float DeltaTime)
 {
+
+	// T2.9 perf probe (task 9): the steady-state metrics dump.
+	if (PerfProbeTicks > 0 && --PerfProbeTicks == 0)
+	{
+		DumpMetrics();
+		PerfProbeTicks = -1;
+	}
 	Super::Tick(DeltaTime);
 
 	TArray<FBattleOverlayLine> Lines;
@@ -157,9 +164,9 @@ void UBattleDebugSubsystem::DumpMetrics()
 	LastMetrics.ArchetypeCount = ArchetypeCount;
 
 	UE_LOG(LogMassBattle, Display,
-	       TEXT("EXEC_RESULT BattleMetrics Frame=%d Archetypes=%d Units=%d UnitSyncMs=%.3f BookkeepingHash=%u OverlayHook=%d CombatHashMs=%.3f Rolls=%d/%d ChargeConnects=%d DeathsF/F/R=%d/%d/%d"),
+	       TEXT("EXEC_RESULT BattleMetrics Frame=%d Archetypes=%d Units=%d UnitSyncMs=%.3f BookkeepingHash=%u OverlayHook=%d CombatHashMs=%.3f TallyMs=%.3f AssignMs=%.3f Rolls=%d/%d ChargeConnects=%d DeathsF/F/R=%d/%d/%d"),
 	       LastMetrics.Frame, ArchetypeCount, LastMetrics.UnitCount,
 	       LastMetrics.UnitSyncMs, static_cast<uint32>(LastMetrics.RegistryHash32), BattleDebugShowOverlay,
-	       CombatHashMs, CombatRolls.load(), CombatRollsLanded.load(), ChargeConnects.load(),
+	       CombatHashMs, TallyMs, AssignMs, CombatRolls.load(), CombatRollsLanded.load(), ChargeConnects.load(),
 	       DeathsByArc[0], DeathsByArc[1], DeathsByArc[2]);
 }

@@ -2,6 +2,7 @@
 #include "BattleFragments.h"
 #include "BattleCombatFragments.h"
 #include "BattleEngagement.h"
+#include "BattleRngRegistry.h"
 #include "BattleEduParser.h"
 #include "BattleSpawnLibrary.h"
 #include "UnitActor.h"
@@ -5239,8 +5240,10 @@ void AS5MobTest::Tick(float DeltaSeconds)
 	}
 	else if (Phase == EPhase::Assert)
 	{
-		// Exposed-arc attackers + waiters, sampled every 10 ticks.
-		if (TicksInPhase % 10 == 0)
+		// Exposed-arc attackers + waiters, sampled every 5 ticks (the pull-down
+		// runs ~4 s; a 10-tick cadence sampled the peak only marginally --
+		// measured 2026-10-27: exposed=3 vs 4 across runs).
+		if (TicksInPhase % 5 == 0)
 		{
 			int32 WaitersAtRing = 0;
 			// Distinct approach sectors per knight (the >= 4 exposed-arc test).
@@ -5549,4 +5552,192 @@ namespace
 	const FBattleFuncTestRegistry::FRegistrar GRegS4Wall(TEXT("AS4ShieldWallTest"), &MakeS4ShieldWallTest);
 	const FBattleFuncTestRegistry::FRegistrar GRegS5Mob(TEXT("AS5MobTest"), &MakeS5MobTest);
 	const FBattleFuncTestRegistry::FRegistrar GRegPairLife(TEXT("APairLifecycleTest"), &MakePairLifecycleTest);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2 task 9: T2.8 determinism two-run (R9 scope: same binary, same
+// machine). The same clash twice from the same RNG root: spawn, mutual
+// attack orders, 2400 ticks (40 s of sim) with the state hash sampled every
+// 60 ticks; full reset between the runs; all sampled hashes must match.
+// ---------------------------------------------------------------------------
+namespace
+{
+	constexpr const TCHAR* DetCvars[] = {
+		TEXT("Battle.Combat.SpatialHash"),
+		TEXT("Battle.Combat.Clusters"),
+		TEXT("Battle.Combat.Tally"),
+		TEXT("Battle.Combat.Assign"),
+	};
+}
+
+ADeterminismTwoRunTest::ADeterminismTwoRunTest()
+{
+	TimeLimit = 300.f;
+}
+
+void ADeterminismTwoRunTest::BeginTest()
+{
+	SetActorTickEnabled(true);
+	PrimaryActorTick.bCanEverTick = true;
+	bIsRunning = true;
+	Result = EFunctionalTestResult::Running;
+}
+
+void ADeterminismTwoRunTest::CompleteTest(EFunctionalTestResult TestResult, const FString& Message)
+{
+	RestoreCvars();
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT DeterminismTwoRun %s %s"),
+		TestResult == EFunctionalTestResult::Succeeded ? TEXT("PASS") : TEXT("FAIL"), *Message);
+	Result = TestResult;
+	bIsRunning = false;
+}
+
+void ADeterminismTwoRunTest::SetCvars()
+{
+	for (int32 i = 0; i < 4; ++i)
+	{
+		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(DetCvars[i]))
+		{
+			SavedCvars[i] = C->GetInt();
+			C->Set(1, ECVF_SetByCode);
+		}
+	}
+}
+
+void ADeterminismTwoRunTest::RestoreCvars()
+{
+	for (int32 i = 0; i < 4; ++i)
+	{
+		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(DetCvars[i]))
+		{
+			C->Set(SavedCvars[i], ECVF_SetByCode);
+		}
+	}
+}
+
+void ADeterminismTwoRunTest::Destroyed()
+{
+	RestoreCvars();
+	Super::Destroyed();
+}
+
+void ADeterminismTwoRunTest::StartTest()
+{
+	Super::StartTest();
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("no world"));
+		return;
+	}
+	DestroyOtherUnitActors(World);
+	UBattleTestSettings::ApplyTestMode();
+	SetCvars();
+	if (UBattleDebugSubsystem* Debug = World->GetSubsystem<UBattleDebugSubsystem>())
+	{
+		Debug->ResetDiagnostics();
+	}
+	if (UBattleCostGridSubsystem* CostGrid = World->GetSubsystem<UBattleCostGridSubsystem>())
+	{
+		CostGrid->ResetToFlat();
+	}
+	if (UBattleRngSubsystem* Rng = World->GetSubsystem<UBattleRngSubsystem>())
+	{
+		Rng->Seed(20261027); // the shared root for BOTH runs
+	}
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT DeterminismTwoRun root=20261027 run1 begin"));
+	Phase = EPhase::Run1;
+	TicksDone = 0;
+}
+
+void ADeterminismTwoRunTest::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+	if (!IsRunning() || Phase == EPhase::Done)
+	{
+		return;
+	}
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("no world"));
+		return;
+	}
+
+	// One engine tick = one fixed 1/60 step under the test-mode contract
+	// (ApplyTestMode's fixed delta); the scenario just counts them.
+	++TicksDone;
+
+	if (Phase == EPhase::Run1)
+	{
+		if (TicksDone % 60 == 0)
+		{
+			Run1Hashes.Add(FBattleStateHash::Compute(World));
+		}
+		if (TicksDone >= 2400)
+		{
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT DeterminismTwoRun run1 done samples=%d"), Run1Hashes.Num());
+			// Between the runs: teardown + reset + re-seed.
+			for (AUnitActor* Actor : TActorRange<AUnitActor>(World))
+			{
+				if (Actor)
+				{
+					Actor->Destroy();
+				}
+			}
+			if (UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>())
+			{
+				Registry->ResetBattleState();
+			}
+			if (UBattleRngSubsystem* Rng = World->GetSubsystem<UBattleRngSubsystem>())
+			{
+				Rng->Seed(20261027);
+			}
+			Phase = EPhase::Run2;
+			TicksDone = 0;
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT DeterminismTwoRun run2 begin"));
+		}
+	}
+	else if (Phase == EPhase::Run2)
+	{
+		static TArray<uint64> Run2Hashes;
+		if (TicksDone == 1)
+		{
+			Run2Hashes.Reset();
+		}
+		if (TicksDone % 60 == 0)
+		{
+			Run2Hashes.Add(FBattleStateHash::Compute(World));
+		}
+		if (TicksDone >= 2400)
+		{
+			int32 FirstMismatch = INDEX_NONE;
+			const int32 Count = FMath::Min(Run1Hashes.Num(), Run2Hashes.Num());
+			for (int32 i = 0; i < Count; ++i)
+			{
+				if (Run1Hashes[i] != Run2Hashes[i])
+				{
+					FirstMismatch = i;
+					break;
+				}
+			}
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT DeterminismTwoRun Evidence samples=%d/%d mismatches=%d firstDivergence=%d"),
+				Run1Hashes.Num(), Run2Hashes.Num(),
+				FirstMismatch == INDEX_NONE ? 0 : Count - FirstMismatch, FirstMismatch);
+			const bool bOk = Run1Hashes.Num() == Run2Hashes.Num() && FirstMismatch == INDEX_NONE;
+			CompleteTest(bOk ? EFunctionalTestResult::Succeeded : EFunctionalTestResult::Error,
+				FString::Printf(TEXT("samples=%d firstDivergence=%d"), Count, FirstMismatch));
+			Phase = EPhase::Done;
+		}
+	}
+}
+
+namespace
+{
+	AFunctionalTest* MakeDeterminismTwoRunTest(UWorld* World)
+	{
+		return World->SpawnActor<ADeterminismTwoRunTest>();
+	}
+	const FBattleFuncTestRegistry::FRegistrar GRegDetTwoRun(TEXT("ADeterminismTwoRunTest"), &MakeDeterminismTwoRunTest);
 }

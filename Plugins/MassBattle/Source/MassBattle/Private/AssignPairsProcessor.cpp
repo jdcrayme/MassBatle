@@ -9,6 +9,7 @@
 #include "BattleMovementFragments.h"
 #include "BattleExecCommands.h"
 #include "BattleDebugSubsystem.h"
+#include "HAL/PlatformTime.h"
 #include "MassBattleModule.h"
 
 #include "MassExecutionContext.h"
@@ -371,7 +372,12 @@ void UAssignPairsProcessor::Execute(FMassEntityManager& EntityManager, FMassExec
 	TArray<int32> SectorScratch;
 	SectorScratch.Reserve(Defenders.Num() * 16);
 	AssignContext.SectorScratch = &SectorScratch;
+	const double AssignStart = FPlatformTime::Seconds();
 	FCombatSolver::RunAssignPass(Seekers, Defenders, Records, Tally, AssignContext);
+	if (UBattleDebugSubsystem* Debug = World->GetSubsystem<UBattleDebugSubsystem>())
+	{
+		Debug->RecordAssignMs((FPlatformTime::Seconds() - AssignStart) * 1000.0);
+	}
 
 	// ---- Write back: pair fragments + ring points (A12 press ring). ----
 	{

@@ -385,6 +385,11 @@ public:
 
 	// -- Phase 2 save/load skeleton (A8, R7; spec §3.5; game thread) --
 
+	/** Full battle reset (test/diagnostic: the T2.8 two-run needs identical
+	 *  slot serials across runs). Destroys every unit's entities, clears the
+	 *  slot bookkeeping to the pristine state. Game thread, Mass idle. */
+	void ResetBattleState();
+
 	/** Snapshot the registry runtime state (rosters, orders, serials,
 	 *  attributes, engagement records) + RNG stream states into the
 	 *  schema-versioned save struct. Entities are NOT serialized (v1). */

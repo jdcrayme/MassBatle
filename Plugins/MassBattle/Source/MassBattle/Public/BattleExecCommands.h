@@ -54,4 +54,7 @@ namespace BattleExec
 
 	// -- Phase 2 task 8 (M3 demo fixtures; brief A10, geometry-only) --
 	MASSBATTLE_API void CombatSpawnClash(const TArray<FString>& Args, UWorld* World);
+
+	// -- Phase 2 task 9 (T2.9 perf stress; B.6 1k-in-contact shape) --
+	MASSBATTLE_API void CombatPerfStress(const TArray<FString>& Args, UWorld* World);
 }

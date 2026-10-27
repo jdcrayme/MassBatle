@@ -1,4 +1,5 @@
 #include "BattleMovementSoakController.h"
+#include "BattleEngagement.h"
 #include "BattleFragments.h"
 #include "BattleMovementFragments.h"
 #include "BattleGarrison.h"
@@ -232,6 +233,11 @@ void UBattleMovementSoakController::OnTick(float TimeDelta)
 		// gate (stuck = 0, separation = 0) must be achievable, so the random
 		// orders never deliberately drive one unit's 24 m frontage through
 		// another's standing formation.
+		// Phase 2 clash mix (Battle.Combat.SoakClash=1): the flag read once at
+		// the spawn phase (the R-C9 byte-identity: flag off = no attack orders
+		// issued, the movement spine identical).
+		const bool bClashSoak = FCombatCVars::SoakClash() != 0;
+		ClashOrders = 0;
 		// Garrison variant (Battle.Garrison.SoakOrders=1): ~15% garrison into
 		// a seeded structure, ~15% exit; flag off keeps the exact baseline
 		// draw sequence (R-G1).
@@ -282,7 +288,20 @@ void UBattleMovementSoakController::OnTick(float TimeDelta)
 					Goal = FVector2D(Stream.FRandRange(-7000.f, 7000.f), Stream.FRandRange(-7000.f, 7000.f));
 					++FieldWideOrders;
 				}
-				Registry->IssueMoveOrder(Unit, Goal, Stream.FRandRange(0.f, 360.f));
+				// Phase 2 clash mix (Battle.Combat.SoakClash=1, R-C9): ~25% of
+				// the orders become AttackMove toward a field point -- the soak
+				// then ends engaged-but-settled (the units fight where they
+				// meet; the same stuck/separation/archetype gates judge it).
+				// Flag off = the T1.8 baseline byte-for-byte.
+				if (bClashSoak && Stream.FRand() < 0.25f)
+				{
+					Registry->IssueAttackMoveOrder(Unit, Goal, Stream.FRandRange(0.f, 360.f));
+					++ClashOrders;
+				}
+				else
+				{
+					Registry->IssueMoveOrder(Unit, Goal, Stream.FRandRange(0.f, 360.f));
+				}
 			}
 		}
 
@@ -559,13 +578,13 @@ void UBattleMovementSoakController::OnTick(float TimeDelta)
 			&& SeparationViolations <= SepBudget
 			&& bDressOk;
 		UE_LOG(LogGauntlet, Display,
-			TEXT("GAUNTLET BattleMovementSoak FINAL settled stuck=%d separation=%d archetypes=%d (spawn %d) garrisoned=%d unsettled=%d phases=[None=%d App=%d Queue=%d Ingress=%d Occupy=%d Settled=%d Egress=%d] duringSoak escalations=%d/%d duringSoak separationEvents=%d/%d duringSoak maxDeepStuck=%d/%d dressErr=%.2f/%.1fm(phase2=%d) fieldWide=%d skippedUnits=%d testMode=%d ok=%d"),
+			TEXT("GAUNTLET BattleMovementSoak FINAL settled stuck=%d separation=%d archetypes=%d (spawn %d) garrisoned=%d unsettled=%d phases=[None=%d App=%d Queue=%d Ingress=%d Occupy=%d Settled=%d Egress=%d] duringSoak escalations=%d/%d duringSoak separationEvents=%d/%d duringSoak maxDeepStuck=%d/%d dressErr=%.2f/%.1fm(phase2=%d) fieldWide=%d skippedUnits=%d clashOrders=%d testMode=%d ok=%d"),
 			StuckNow, SeparatedNow, ArchetypesNow, ArchetypeCountAtSpawn,
 			GarrisonedNow, GarrisonedUnsettled,
 			PhaseCounts[0], PhaseCounts[1], PhaseCounts[2], PhaseCounts[3], PhaseCounts[4], PhaseCounts[5], PhaseCounts[6],
 			DuringEsc, EscBudget, SeparationViolations, SepBudget, MaxDuringStuckDeep, DeepStuckBudget,
 			MaxDressErrorM, DressBoundM, bPhase2FlagsOn ? 1 : 0,
-			FieldWideOrders, SkippedUnitsAtAssert,
+			FieldWideOrders, SkippedUnitsAtAssert, ClashOrders,
 			bTestModeOk ? 1 : 0, bOk ? 1 : 0);
 		Phase = EPhase::Done;
 		FinishTest(bOk ? 0 : 1);

@@ -1306,16 +1306,4 @@ bool FCombat_ClusterRecords::RunTest(const FString& Parameters)
 	return true;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDeterminismTwoRunSkeleton,
-	"Battle.Func.DeterminismTwoRun",
-	(EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter))
-
-bool FDeterminismTwoRunSkeleton::RunTest(const FString& Parameters)
-{
-	// T2.8 (task 9): 5-min mixed clash, same seed twice, per-tick state-hash
-	// equality (R9 scope: same binary, same machine).
-	AddError(TEXT("skeleton: DeterminismTwoRun lands with task 9"));
-	return false;
-}
-
 #endif // WITH_DEV_AUTOMATION_TESTS

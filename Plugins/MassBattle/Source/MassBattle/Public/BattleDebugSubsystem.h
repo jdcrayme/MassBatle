@@ -54,6 +54,18 @@ public:
 	void RecordCombatHashMs(double Ms) { CombatHashMs = Ms; }
 	double GetCombatHashMs() const { return CombatHashMs; }
 
+	/** Phase 2 (task 9, T2.9): the game-thread pairing costs (tally + assign).
+	 *  Recorded by the tally/assign processors; dumped in BattleMetrics. */
+	void RecordTallyMs(double Ms) { TallyMs = Ms; }
+	void RecordAssignMs(double Ms) { AssignMs = Ms; }
+	double GetTallyMs() const { return TallyMs; }
+	double GetAssignMs() const { return AssignMs; }
+
+	/** T2.9 perf probe: dump the metrics line at N ticks after arming (the
+	 *  Exec fixtures run before the sim advances; the probe samples the
+	 *  steady state). Disarms after the dump. */
+	void ArmPerfProbe(int32 InTicks) { PerfProbeTicks = InTicks; }
+
 	// -- Phase 2 combat diagnostics (task 7; worker-writers, atomics) --
 	void RecordCombatRoll(bool bLanded) { ++CombatRolls; if (bLanded) { ++CombatRollsLanded; } }
 	int32 GetCombatRolls() const { return CombatRolls; }
@@ -112,6 +124,9 @@ private:
 
 	/** Phase 2 combat pass costs (B.4; DumpMetrics line). */
 	double CombatHashMs = 0.0;
+	double TallyMs = 0.0;
+	double AssignMs = 0.0;
+	int32 PerfProbeTicks = -1;
 	std::atomic<int32> CombatRolls{0};
 	std::atomic<int32> CombatRollsLanded{0};
 	std::atomic<int32> ChargeConnects{0};

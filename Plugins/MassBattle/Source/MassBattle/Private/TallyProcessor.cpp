@@ -8,6 +8,7 @@
 #include "BattleMovementFragments.h"
 
 #include "MassExecutionContext.h"
+#include "BattleDebugSubsystem.h"
 #include "MassCommonFragments.h"
 #include "HAL/IConsoleManager.h"
 
@@ -58,6 +59,7 @@ void UTallyProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 	}
 
 	// Fresh each tick (arch §7.2): reset, count, stamp. No state to desync.
+	const double TallyStart = FPlatformTime::Seconds();
 	FCombatTallyTable& Tally = Registry->GetTallyScratch();
 	FCombatCoverageTable& Coverage = Registry->GetCoverageScratch();
 	Tally.Reset();
@@ -87,6 +89,10 @@ void UTallyProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 	if (!Hash)
 	{
 		return;
+	}
+	if (UBattleDebugSubsystem* Debug = World->GetSubsystem<UBattleDebugSubsystem>())
+	{
+		Debug->RecordTallyMs((FPlatformTime::Seconds() - TallyStart) * 1000.0);
 	}
 	CoverageQuery.ForEachEntityChunk(Context, [&Tally, &Coverage, Hash, Tick](FMassExecutionContext& Context)
 	{

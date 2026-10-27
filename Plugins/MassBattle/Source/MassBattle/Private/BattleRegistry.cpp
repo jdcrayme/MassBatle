@@ -11,6 +11,7 @@
 #include "Engine/World.h"
 #include "MassEntitySubsystem.h"
 #include "MassEntityView.h"
+#include "MassCommandBuffer.h"
 
 namespace
 {
@@ -704,6 +705,42 @@ void UUnitRegistrySubsystem::NotifyCombatEntityDeathInternal(FMassEntityHandle E
 			CoverageScratch.Stamps[i] = 0u;
 		}
 	}
+}
+
+void UUnitRegistrySubsystem::ResetBattleState()
+{
+	// Destroy the live rosters first (the actor teardown path does this for
+	// actor-backed units; registry-only units need the explicit pass).
+	UE_MT_SCOPED_WRITE_ACCESS(AccessDetector);
+	if (UMassEntitySubsystem* Entities = GetWorld() ? GetWorld()->GetSubsystem<UMassEntitySubsystem>() : nullptr)
+	{
+		FMassEntityManager& EntityManager = Entities->GetMutableEntityManager();
+		if (!EntityManager.IsProcessing())
+		{
+			for (const TPair<FUnitHandle, FUnitRuntimeState>& Pair : Units)
+			{
+				for (const FMassEntityHandle& Entity : Pair.Value.Roster)
+				{
+					if (EntityManager.IsEntityValid(Entity))
+					{
+						EntityManager.Defer().DestroyEntity(Entity);
+					}
+				}
+			}
+			EntityManager.FlushCommands();
+		}
+	}
+	Units.Reset();
+	SpecsByIndex.Reset();
+	NextGenerationByIndex.Reset();
+	FreeIndices.Reset();
+	NextIndex = 1;
+	DirtyStats.Reset();
+	Engagements.Reset();
+	Engagements.Reserve(MaxEngagementRecords);
+	TallyScratch.Reset();
+	CoverageScratch.Reset();
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT ResetBattleState ok"));
 }
 
 // -- Phase 2 save/load skeleton (A8, spec §3.5) --

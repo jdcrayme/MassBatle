@@ -798,6 +798,65 @@ void CombatSpawnClash(const TArray<FString>& Args, UWorld* World)
 	}
 }
 
+void CombatPerfStress(const TArray<FString>& Args, UWorld* World)
+{
+	UUnitRegistrySubsystem* Registry = World ? World->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	UBattleCostGridSubsystem* CostGrid = World ? World->GetSubsystem<UBattleCostGridSubsystem>() : nullptr;
+	if (!Registry || !CostGrid)
+	{
+		UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT PerfStress FAIL no world subsystems"));
+		return;
+	}
+	CostGrid->ResetToFlat();
+	for (const TCHAR* Name : { TEXT("Battle.Combat.SpatialHash"), TEXT("Battle.Combat.Clusters"),
+		TEXT("Battle.Combat.Tally"), TEXT("Battle.Combat.Assign") })
+	{
+		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(Name))
+		{
+			C->Set(1, ECVF_SetByCode);
+		}
+	}
+	// Two 500-man lines in contact (the B.6 1k stress shape): 25 files x 20
+	// ranks at 1.2 m -- the tile holds it; the front ranks interpenetrate the
+	// dilation and the cluster pass emits the engagement.
+	const FString FixturePath = FPaths::ProjectContentDir() / TEXT("Data/EDU/golden_edu_v1.txt");
+	FString EduText;
+	TArray<FEduUnit> Rows;
+	FEduParseError Err;
+	if (!FFileHelper::LoadFileToString(EduText, *FixturePath)
+		|| !FBattleEduParser::Parse(EduText, Rows, Err))
+	{
+		UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT PerfStress FAIL EDU fixture"));
+		return;
+	}
+	auto SpawnLine = [&](int32 Row, int32 Count, const FVector2D& PosM, float Yaw) -> FUnitHandle
+	{
+		FBattleRowStats Stats;
+		FString Error;
+		if (!FBattleRowStats::FromEdu(Rows[Row], Stats, Error))
+		{
+			return FUnitHandle();
+		}
+		FUnitSpawnSpec Spec;
+		Spec.EduRowIndex = Row;
+		Spec.SoldierCount = Count;
+		Spec.UnitName = Stats.TypeName;
+		Spec.SpawnPos = PosM * 100.f;
+		Spec.SpawnYaw = Yaw;
+		Spec.NumRanks = 20; // deep blocks: 25 x 20 = 500 per side
+		return UBattleSpawnLibrary::SpawnUnit(World, Spec, Stats).Unit;
+	};
+	const FUnitHandle A = SpawnLine(0, 500, FVector2D(-10.f, 0.f), 0.f);
+	const FUnitHandle B = SpawnLine(0, 500, FVector2D(10.f, 0.f), 180.f);
+	Registry->IssueAttackUnitOrder(A, B);
+	if (UBattleDebugSubsystem* Debug = World->GetSubsystem<UBattleDebugSubsystem>())
+	{
+		Debug->ArmPerfProbe(100); // the steady state, ~1.7 s after the clash
+	}
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT PerfStress OK A=%u:%u B=%u:%u (1000 entities in contact; the probe dumps BattleMetrics at tick 100)"),
+		A.Index, A.Serial, B.Index, B.Serial);
+}
+
 void CombatSaveProbe(const TArray<FString>& Args, UWorld* World)
 {
 	UUnitRegistrySubsystem* Registry = World ? World->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
@@ -952,6 +1011,12 @@ static FAutoConsoleCommandWithWorldAndArgs GBattleCombatSaveProbe(
 	TEXT("Battle.Combat.SaveProbe"),
 	TEXT("Capture -> clear -> restore round-trip at registry level; EXEC_RESULT SaveProbe PASS/FAIL"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BattleExec::CombatSaveProbe));
+
+
+static FAutoConsoleCommandWithWorldAndArgs GBattleCombatPerfStress(
+	TEXT("Battle.Combat.PerfStress"),
+	TEXT("Spawns the T2.9 1k-in-contact stress fixture (two 500-man lines) and orders the clash; read TallyMs/AssignMs from BattleMetrics"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BattleExec::CombatPerfStress));
 
 static FAutoConsoleCommandWithWorldAndArgs GBattleCombatSpawnClash(
 	TEXT("Battle.Combat.SpawnClash"),

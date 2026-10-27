@@ -59,6 +59,10 @@ private:
 	// bounded when a phase-2 movement flag is on).
 	float MaxDressErrorM = 0.f;
 
+	// Phase 2 task 9 (R-C9): the clash-mix order count (logged in the FINAL
+	// line; 0 when Battle.Combat.SoakClash is off).
+	int32 ClashOrders = 0;
+
 	// Effective knobs (CVAR-overridable; defaults preserve the T1.8
 	// baseline byte-for-byte).
 	int32 UnitsPerRow = 4;          // Battle.Movement.SoakGrid x units per row (grid = N x N/2... 4x2 = 8)

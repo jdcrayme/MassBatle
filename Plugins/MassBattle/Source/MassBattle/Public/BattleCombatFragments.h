@@ -91,6 +91,10 @@ struct FCombatPairFragment : public FMassFragment
 	/** Remaining mount pool of the paired defender (hits before the rider
 	 *  pool; humans have none -- spec §4.8 composite model). */
 	UPROPERTY() int16 DefenderMountRemaining = 0;
+	/** Rolls this pair has made (the deterministic roll seed's run-invariant
+	 *  input: GFrameCounter differs across runs, a per-entity count does not
+	 *  -- the A13 deviation note). */
+	UPROPERTY() uint16 RollCount = 0;
 };
 
 /** Charge state machine per-entity fields (spec §4.9, worker-written by the

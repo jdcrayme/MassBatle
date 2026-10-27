@@ -99,12 +99,16 @@ void UCombatResolutionProcessor::Execute(FMassEntityManager& EntityManager, FMas
 				const float P = FMeleeMath::HitChance(Attack, Defense);
 
 				// Roll: deterministic per-entity hash (the worker cannot touch
-				// the game-thread RNG registry -- A13 deviation logged in the
-				// progress log; seed-derived, no wall-clock, T2.8-safe).
+				// the game-thread RNG registry -- the A13 deviation logged in
+				// the progress log; seed-derived, no wall-clock). The tick
+				// input is the pair's OWN roll count -- GFrameCounter differs
+				// across two runs of the same seed (T2.8 would diverge); a
+				// per-entity count is run-invariant.
 				const uint32 H = (Context.GetEntity(i).Index * 2654435761u)
-					^ (static_cast<uint32>(GFrameCounter) * 40503u)
-					^ static_cast<uint32>(Context.GetEntity(i).SerialNumber);
+					^ (static_cast<uint32>(Pair.RollCount) * 40503u)
+					^ (static_cast<uint32>(Context.GetEntity(i).SerialNumber) * 2685821657u);
 				const float Roll = static_cast<float>(H & 0xFFFFFFu) / 16777215.f;
+				++Pair.RollCount;
 				const bool bLanded = Roll < P * FMath::Max(0.f, Stats[i].Lethality);
 
 				if (Debug)

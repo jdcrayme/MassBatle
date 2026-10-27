@@ -7,7 +7,7 @@
     "os": "Windows 10 Home 19045"
   },
   "engineCL": 58902052,
-  "date": "2026-10-26T06:10:12",
+  "date": "2026-10-27T18:35:29",
   "metrics": {
     "smoke_test_duration_s": {
       "value": 21.678,
@@ -15,7 +15,7 @@
       "tolerance": 0.5
     },
     "entity_spawn_80_us": {
-      "value": 35.1,
+      "value": 4.8,
       "unit": "us",
       "tolerance": 0.5
     }

@@ -283,6 +283,10 @@ namespace
 				{
 					Life->BeginTest();
 				}
+				else if (ADeterminismTwoRunTest* Det = Cast<ADeterminismTwoRunTest>(TestActor))
+				{
+					Det->BeginTest();
+				}
 				// T0.9: apply + assert the test-mode contract at scenario start
 				// (roadmap B.0: assert ACTIVE engine settings, not CVars being
 				// set; the -game process does not seed the contract on its own).
@@ -709,3 +713,24 @@ bool FCombatSmoke::RunTest(const FString& Parameters)
 }
 
 #endif // WITH_DEV_AUTOMATION_TESTS
+
+// ---------------------------------------------------------------------------
+// Phase 2 task 9: T2.8 determinism two-run.
+// ---------------------------------------------------------------------------
+
+IMPLEMENT_CUSTOM_COMPLEX_AUTOMATION_TEST(FDeterminismTwoRun, FBattleFuncTestBase,
+	"Battle.Func.DeterminismTwoRun", (EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter))
+
+void FDeterminismTwoRun::GetTests(TArray<FString>& OutBeautifiedNames, TArray<FString>& OutTestCommands) const
+{
+	OutBeautifiedNames.Add(TEXT("DeterminismTwoRun"));
+	OutTestCommands.Add(TEXT(""));
+}
+
+bool FDeterminismTwoRun::RunTest(const FString& Parameters)
+{
+	IFunctionalTestingModule::Get().MarkPendingActivation();
+	ADD_LATENT_AUTOMATION_COMMAND(FOpenBattleFuncMap(this));
+	ADD_LATENT_AUTOMATION_COMMAND(FRunBattleFuncTest(this, TEXT("DeterminismTwoRun"), TEXT("ADeterminismTwoRunTest")));
+	return true;
+}
