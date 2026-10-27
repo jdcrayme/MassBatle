@@ -29,6 +29,20 @@ inline uint32 GetTypeHash(const FUnitHandle& Handle)
 	return HashCombine(::GetTypeHash(Handle.Index), ::GetTypeHash(Handle.Serial));
 }
 
+/** Weapon reach class (spec §4.5: >= Spear grants the second-rank budget
+ *  bonus; arch §9.1 spear reach). Mapped from the EDU stat_pri tech type at
+ *  spawn (task 2 step 1); the class SET and mapping are A6 placeholders the
+ *  Phase-6 T6.1 audit owns -- the ordering (>= Spear) is the load-bearing
+ *  structure. Lives on the spatial-hash entry as uint8 (spec §3.3). */
+enum class EBattleWeaponReach : uint8
+{
+	Short = 0,
+	Normal = 1,
+	Spear = 2,
+	LongSpear = 3,
+	Pike = 4
+};
+
 /** Plain-struct mirror of the closed GAS attribute set (arch §10.1). Cached in
  *  the registry; UnitSync derives the shared-fragment multipliers from it. */
 struct MASSBATTLE_API FBattleAttributeSnapshot

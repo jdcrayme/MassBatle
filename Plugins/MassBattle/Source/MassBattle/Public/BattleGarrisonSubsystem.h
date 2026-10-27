@@ -86,6 +86,14 @@ public:
 	 *  (occupancy, capacity, leases, queue waits). */
 	void DumpStructures() const;
 
+	/** Phase 2 A9 guard: the unit is committed to the garrison flow (holds a
+	 *  booking or waits in a queue) -- not a valid melee target and never an
+	 *  attack initiator (F11). */
+	bool IsUnitCommittedToGarrison(FUnitHandle Unit) const
+	{
+		return Bookings.Contains(Unit) || QueueWaits.Contains(Unit);
+	}
+
 private:
 	/** Live records by id; registration order defines the 1-based ids. */
 	TMap<uint32, FGarrisonStructureRecord> Structures;

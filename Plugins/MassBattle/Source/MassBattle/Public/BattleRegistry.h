@@ -4,6 +4,10 @@
 // access for worker processors (UE_MT_SCOPED_READ_ACCESS(AccessDetector)) --
 // the detector and the external-subsystem traits are baked in now so the
 // discipline exists before the first worker reads it.
+// Phase 2 (task 2, spec §3.2): registry-owned engagement records + preallocated
+// combat scratch, the attack order surface (A4), and the F2 pair-cleanup hook
+// on HandleUnitDeath. Game-thread written; worker passes read through the
+// access detector (assign pass, task 6).
 #pragma once
 
 #include "CoreMinimal.h"
@@ -11,6 +15,217 @@
 #include "Misc/MTAccessDetector.h"
 #include "BattleTypes.h"
 #include "BattleRegistry.generated.h"
+
+struct FBattleSaveData;
+
+/** Engagement-record mode (spec §3.2, arch §6.3). Flank keeps the frontal
+ *  pressure formula; Mob uses the A14-floored mob formula. */
+enum class EEngagementMode : uint8
+{
+	Frontal = 0,
+	Flank = 1,
+	Mob = 2
+};
+
+/** Registry-owned per-(attacker unit, defender unit) engagement record (spec
+ *  §3.2). Recomputed at 4 Hz by the cluster pass (task 5); the assign pass
+ *  (task 6) reads it. Plain struct -- Iris-ready (B.8 item 7). */
+struct FEngagementRecord
+{
+	EEngagementMode Mode = EEngagementMode::Frontal;
+	/** Segment parameters of the defender line assigned to the attacker
+	 *  (meters, seam convention; flanks wrap the end). */
+	float FrontageStart = 0.f;
+	float FrontageEnd = 0.f;
+	/** Frontal = DefenderAlive x FormedSlots; Mob = Min(AttackerAlive,
+	 *  Max(DefenderAlive x MobPressureFactor, MaxMobSlots)) -- the A14 floor. */
+	int32 DesiredPressure = 0;
+	/** Tallied fresh each tick by the tally pass; never persisted across
+	 *  ticks (arch §7.2: no state to desync). */
+	int32 AssignedAttackers = 0;
+	/** 1 = released (disengage / mass release); pruned at the cluster pass. */
+	uint8 bDead = 0;
+};
+
+/** (attacker unit, defender unit) record key. Ordered: the record is stored
+ *  once, from the attacker's perspective (the solver looks it up that way). */
+struct FEngagementKey
+{
+	FUnitHandle Attacker;
+	FUnitHandle Defender;
+
+	bool operator==(const FEngagementKey& Other) const
+	{
+		return Attacker == Other.Attacker && Defender == Other.Defender;
+	}
+};
+
+inline uint32 GetTypeHash(const FEngagementKey& Key)
+{
+	return HashCombine(::GetTypeHash(Key.Attacker), ::GetTypeHash(Key.Defender));
+}
+
+/**
+ * Open-address tally table keyed by defender entity handle (spec §3.2 scratch;
+ * EC9: preallocated per battle, Reset() zeroes without deallocating, counts
+ * are derived fresh each tick). Power-of-two capacity, linear probing.
+ */
+struct FCombatTallyTable
+{
+	void Initialize(int32 InCapacity)
+	{
+		const int32 Pow2 = FMath::RoundUpToPowerOfTwo(FMath::Max(16, InCapacity));
+		Keys.SetNumUninitialized(Pow2);
+		Counts.Init(0, Pow2);
+		Reset();
+	}
+
+	/** Clears all entries: invalid keys + zero counts. Keeps the allocation. */
+	void Reset()
+	{
+		for (int32 i = 0; i < Keys.Num(); ++i)
+		{
+			Keys[i] = FMassEntityHandle();
+			Counts[i] = 0;
+		}
+	}
+
+	/** Index of Key's slot, inserting if absent. Returns INDEX_NONE when full
+	 *  (capacity is a per-battle constant; the tally pass treats that as an
+	 *  internal error and drops the increment -- never grows per tick). */
+	int32 FindOrAdd(FMassEntityHandle Key)
+	{
+		if (!Key.IsValid() || Keys.Num() == 0)
+		{
+			return INDEX_NONE;
+		}
+		const uint32 Hash = GetTypeHash(Key);
+		uint32 Slot = Hash & static_cast<uint32>(Keys.Num() - 1);
+		for (int32 Probe = 0; Probe < Keys.Num(); ++Probe)
+		{
+			if (!Keys[Slot].IsValid())
+			{
+				Keys[Slot] = Key;
+				Counts[Slot] = 0;
+				return static_cast<int32>(Slot);
+			}
+			if (Keys[Slot] == Key)
+			{
+				return static_cast<int32>(Slot);
+			}
+			Slot = (Slot + 1) & static_cast<uint32>(Keys.Num() - 1);
+		}
+		return INDEX_NONE;
+	}
+
+	/** Index of Key's slot WITHOUT inserting; INDEX_NONE when absent. */
+	int32 Find(FMassEntityHandle Key) const
+	{
+		if (!Key.IsValid() || Keys.Num() == 0)
+		{
+			return INDEX_NONE;
+		}
+		uint32 Slot = GetTypeHash(Key) & static_cast<uint32>(Keys.Num() - 1);
+		for (int32 Probe = 0; Probe < Keys.Num(); ++Probe)
+		{
+			if (!Keys[Slot].IsValid())
+			{
+				return INDEX_NONE;
+			}
+			if (Keys[Slot] == Key)
+			{
+				return static_cast<int32>(Slot);
+			}
+			Slot = (Slot + 1) & static_cast<uint32>(Keys.Num() - 1);
+		}
+		return INDEX_NONE;
+	}
+
+	int32 GetCount(FMassEntityHandle Key) const
+	{
+		const int32 Idx = Find(Key);
+		return Idx != INDEX_NONE ? Counts[Idx] : 0;
+	}
+
+	TArray<FMassEntityHandle> Keys;
+	TArray<int32> Counts;
+};
+
+/**
+ * Per-defender coverage cache with a valid-tick stamp (spec §3.2 scratch).
+ * Same open-address shape; entries older than the current tick are stale and
+ * recompute on read (the assign pass stamps via Store).
+ */
+struct FCombatCoverageTable
+{
+	void Initialize(int32 InCapacity)
+	{
+		const int32 Pow2 = FMath::RoundUpToPowerOfTwo(FMath::Max(16, InCapacity));
+		Keys.SetNumUninitialized(Pow2);
+		Values.Init(0.f, Pow2);
+		Stamps.Init(0u, Pow2);
+		Reset();
+	}
+
+	void Reset()
+	{
+		for (int32 i = 0; i < Keys.Num(); ++i)
+		{
+			Keys[i] = FMassEntityHandle();
+			Values[i] = 0.f;
+			Stamps[i] = 0u;
+		}
+	}
+
+	/** Insert-or-update; returns the slot index. */
+	int32 Store(FMassEntityHandle Key, float Value, uint32 Tick)
+	{
+		if (!Key.IsValid() || Keys.Num() == 0)
+		{
+			return INDEX_NONE;
+		}
+		uint32 Slot = GetTypeHash(Key) & static_cast<uint32>(Keys.Num() - 1);
+		for (int32 Probe = 0; Probe < Keys.Num(); ++Probe)
+		{
+			if (!Keys[Slot].IsValid() || Keys[Slot] == Key)
+			{
+				Keys[Slot] = Key;
+				Values[Slot] = Value;
+				Stamps[Slot] = Tick;
+				return static_cast<int32>(Slot);
+			}
+			Slot = (Slot + 1) & static_cast<uint32>(Keys.Num() - 1);
+		}
+		return INDEX_NONE;
+	}
+
+	/** Coverage for Key if stamped at Tick; INDEX_NONE when absent/stale. */
+	int32 Find(FMassEntityHandle Key, uint32 Tick) const
+	{
+		if (!Key.IsValid() || Keys.Num() == 0)
+		{
+			return INDEX_NONE;
+		}
+		uint32 Slot = GetTypeHash(Key) & static_cast<uint32>(Keys.Num() - 1);
+		for (int32 Probe = 0; Probe < Keys.Num(); ++Probe)
+		{
+			if (!Keys[Slot].IsValid())
+			{
+				return INDEX_NONE;
+			}
+			if (Keys[Slot] == Key)
+			{
+				return Stamps[Slot] == Tick ? static_cast<int32>(Slot) : INDEX_NONE;
+			}
+			Slot = (Slot + 1) & static_cast<uint32>(Keys.Num() - 1);
+		}
+		return INDEX_NONE;
+	}
+
+	TArray<FMassEntityHandle> Keys;
+	TArray<float> Values;
+	TArray<uint32> Stamps;
+};
 
 /**
  * Handle registry + roster bookkeeping + dirty-flag fan-out.
@@ -55,7 +270,10 @@ public:
 	const TArray<FMassEntityHandle>* FindRoster(FUnitHandle Handle) const;
 
 	/** Death-path bookkeeping (arch §5.3): remove one entity from the unit's
-	 *  roster. Called by the death-signal receiver on the game thread. */
+	 *  roster. Called by the death-signal receiver on the game thread.
+	 *  Phase 2 (F2): also the single pair-cleanup hook -- drops the dead
+	 *  entity's scratch entries (tally/coverage) so the next fresh-tally pass
+	 *  never counts a corpse. */
 	void HandleUnitDeath(FUnitHandle Unit, FMassEntityHandle Entity, int32 RosterIndex);
 
 
@@ -98,6 +316,61 @@ public:
 	const FUnitOrder* FindOrder(FUnitHandle Handle) const;
 	uint32 GetOrderSerial(FUnitHandle Handle) const;
 
+	// -- Phase 2 attack order surface (brief A4, task 2; game thread) --
+
+	/** Order the unit to attack a specific enemy unit. A9 guard: garrisoned /
+	 *  garrison-committed attacker or target rejects with an EXEC_RESULT line
+	 *  (garrisoned units are not valid melee targets and never seek, F11).
+	 *  Serial bump on success; the intent fragment is stamped by the assign
+	 *  pass's order-consumption block (task 6). */
+	bool IssueAttackUnitOrder(FUnitHandle Handle, FUnitHandle TargetHandle);
+	/** AttackMove: march to the anchor and auto-engage en route. An optional
+	 *  TargetHandle pre-designates the first target. Same A9 guard. */
+	bool IssueAttackMoveOrder(FUnitHandle Handle, const FVector2D& AnchorPosCm, float FacingYawDeg,
+		float CommandedSpeedMps = 0.f, FUnitHandle TargetHandle = FUnitHandle());
+
+	// -- Phase 2 engagement records + scratch (spec §3.2, task 2; game thread) --
+
+	/** Insert-or-refresh the (Attacker, Defender) record. Returns nullptr when
+	 *  the store is at capacity and the key is new (preallocated store grows
+	 *  at battle start only, EC9). */
+	FEngagementRecord* CreateOrRefreshEngagement(FUnitHandle Attacker, FUnitHandle Defender);
+	const FEngagementRecord* FindEngagement(FUnitHandle Attacker, FUnitHandle Defender) const;
+	FEngagementRecord* FindEngagementMutable(FUnitHandle Attacker, FUnitHandle Defender);
+
+	/** Mass-release support (spec §4.7): flags every record where Unit is the
+	 *  attacker OR defender dead; the assign pass releases inbound pairs the
+	 *  same pass it observes the flags. Returns the flagged count. */
+	int32 FlagUnitEngagementsDead(FUnitHandle Unit);
+
+	/** Removes dead-flagged records (cluster pass, 4 Hz). Returns removed. */
+	int32 PruneDeadEngagements();
+
+	/** Records in a deterministic (attacker index, defender index) order --
+	 *  hash/debug/save consumers iterate this, never the map directly. */
+	TArray<FEngagementKey> GetSortedEngagementKeys() const;
+	int32 GetEngagementCount() const { return Engagements.Num(); }
+
+	/** Combat scratch (preallocated at Initialize, reset each pass, EC9). */
+	FCombatTallyTable& GetTallyScratch() { return TallyScratch; }
+	FCombatCoverageTable& GetCoverageScratch() { return CoverageScratch; }
+	/** F2 hook side: drop one dead entity's scratch entries. */
+	void NotifyCombatEntityDeath(FMassEntityHandle Entity);
+
+	/** Scope-free inner half (HandleUnitDeath already holds the write scope). */
+	void NotifyCombatEntityDeathInternal(FMassEntityHandle Entity);
+
+	// -- Phase 2 save/load skeleton (A8, R7; spec §3.5; game thread) --
+
+	/** Snapshot the registry runtime state (rosters, orders, serials,
+	 *  attributes, engagement records) + RNG stream states into the
+	 *  schema-versioned save struct. Entities are NOT serialized (v1). */
+	void CaptureBattleState(FBattleSaveData& OutData) const;
+	/** Rebuild registry runtime state from the snapshot (capture -> clear ->
+	 *  restore round-trip; entity rebuild-from-spec + payload overwrite is the
+	 *  T6.3 maturity path). Returns false on a schema-version mismatch. */
+	bool RestoreBattleState(const FBattleSaveData& InData);
+
 	// -- introspection (debug overlay / state hash) --
 
 	int32 GetUnitCount() const;
@@ -137,4 +410,15 @@ private:
 
 	/** Units whose attribute snapshot changed and UnitSync has not consumed. */
 	TSet<FUnitHandle> DirtyStats;
+
+	// -- Phase 2 combat state (spec §3.2; game thread only) --
+
+	/** Engagement records keyed (attacker, defender). Reserved at Initialize
+	 *  to the battle-scale cap; grows at battle start only (EC9). */
+	TMap<FEngagementKey, FEngagementRecord> Engagements;
+
+	/** Scratch tables (spec §3.2): open-address tally + stamped coverage
+	 *  cache; preallocated once, Reset() per pass, never reallocated. */
+	FCombatTallyTable TallyScratch;
+	FCombatCoverageTable CoverageScratch;
 };

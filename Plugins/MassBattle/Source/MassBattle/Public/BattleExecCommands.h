@@ -45,4 +45,10 @@ namespace BattleExec
 	MASSBATTLE_API void GarrisonMetrics(const TArray<FString>& Args, UWorld* World);
 	MASSBATTLE_API void OrderGarrison(const TArray<FString>& Args, UWorld* World);
 	MASSBATTLE_API void OrderExitGarrison(const TArray<FString>& Args, UWorld* World);
+
+	// -- Phase 2 task 2 (combat data spine probes; brief task 2 step 6) --
+	MASSBATTLE_API void OrderAttackUnit(const TArray<FString>& Args, UWorld* World);
+	MASSBATTLE_API void OrderAttackMove(const TArray<FString>& Args, UWorld* World);
+	MASSBATTLE_API void CombatDumpPairs(const TArray<FString>& Args, UWorld* World);
+	MASSBATTLE_API void CombatSaveProbe(const TArray<FString>& Args, UWorld* World);
 }

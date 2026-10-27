@@ -1,6 +1,7 @@
 #include "BattleStateHash.h"
 #include "BattleFragments.h"
 #include "BattleMovementFragments.h"
+#include "BattleCombatFragments.h"
 #include "BattleRegistry.h"
 #include "Hash/CityHash.h"
 #include "MassEntitySubsystem.h"
@@ -122,6 +123,52 @@ uint64 FBattleStateHash::Compute(UWorld* World)
 			AppendU64(static_cast<uint64>(Formation->GarrisonPhase));
 			AppendU64(static_cast<uint64>(Formation->GarrisonSlotBase));
 			AppendU64(static_cast<uint64>(Formation->GarrisonSlotCount));
+		}
+		// 7. Combat pair/charge terms (spec §3.4): appended AFTER the garrison
+		// terms, same sorted-handle pass, per entity. Pair target handle,
+		// quantized contact angle (1/255), pair state, attack timer (1e-2 s),
+		// charge distance (1 cm) / impact speed (1e-2 m/s), mount HP. A fixed
+		// term count per entity keeps the byte stream position-stable when a
+		// fragment is absent (pre-combat spawn paths append zeros).
+		for (const FMassEntityHandle& Entity : *Roster)
+		{
+			const FMassEntityView EntityView(EntityManager, Entity);
+			if (const FCombatPairFragment* Pair = EntityView.GetFragmentDataPtr<FCombatPairFragment>())
+			{
+				AppendU64(Pair->Target.Index);
+				AppendU64(Pair->Target.SerialNumber);
+				AppendU64(Pair->ContactAngle);
+				AppendU64(static_cast<uint64>(Pair->State));
+				AppendU64(static_cast<uint64>(Quantize2(Pair->AttackTimer)));
+			}
+			else
+			{
+				AppendU64(0);
+				AppendU64(0);
+				AppendU64(0);
+				AppendU64(0);
+				AppendU64(0);
+			}
+			if (const FChargeFragment* Charge = EntityView.GetFragmentDataPtr<FChargeFragment>())
+			{
+				AppendU64(static_cast<uint64>(Quantize2(Charge->DistanceTraveled)));
+				AppendU64(static_cast<uint64>(Quantize2(Charge->ImpactSpeed)));
+				AppendU64(Charge->bConnected);
+			}
+			else
+			{
+				AppendU64(0);
+				AppendU64(0);
+				AppendU64(0);
+			}
+			if (const FHealthFragment* Health = EntityView.GetFragmentDataPtr<FHealthFragment>())
+			{
+				AppendU64(static_cast<uint64>(static_cast<int16>(Health->MountCurHP)));
+			}
+			else
+			{
+				AppendU64(0);
+			}
 		}
 	}
 

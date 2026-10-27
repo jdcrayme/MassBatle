@@ -1,5 +1,6 @@
 #include "BattleSpawnLibrary.h"
 #include "BattleFragments.h"
+#include "BattleCombatFragments.h"
 #include "BattleMovementFragments.h"
 #include "BattleRegistry.h"
 #include "MassBattleModule.h"
@@ -54,6 +55,35 @@ bool FBattleRowStats::FromEdu(const FEduUnit& Row, FBattleRowStats& OutStats, FS
 	OutStats.bCavalry = (Category->GetValue() == TEXT("cavalry"));
 	// Phase 0 fixture classes are melee ('light', 'spear'); bow flag arrives with ranged rows.
 	OutStats.bMelee = !OutStats.bBow;
+
+	// Phase 2 combat fields (task 2 step 1, R-C10): typed extractions of the
+	// EXISTING parsed fixture fields -- no schema/parser change, the T0.2
+	// golden round-trip is untouched. Field identities are A6 placeholders for
+	// the Phase-6 T6.1 audit; the STRUCTURE (reach class gates the second-rank
+	// budget bonus, AP halves armor, lethality multiplies the hit chance,
+	// mounts carry a second pool) ships now.
+	//   stat_pri fixture shape: attack, defense, no, 0, 0, melee,
+	//   <weapon_type simple|blade_piercing>, <tech other|spear>, <n>, <dec>, <dec>
+	if (Pri->Values.Num() > 7)
+	{
+		OutStats.bArmorPiercing = (Pri->Values[6] == TEXT("blade_piercing"));
+		const FString& Tech = Pri->Values[7];
+		OutStats.ReachClass = (Tech == TEXT("spear"))
+			? static_cast<uint8>(EBattleWeaponReach::Spear)
+			: (Tech == TEXT("pike"))
+				? static_cast<uint8>(EBattleWeaponReach::Pike)
+				: (Tech == TEXT("long_spear"))
+					? static_cast<uint8>(EBattleWeaponReach::LongSpear)
+					: static_cast<uint8>(EBattleWeaponReach::Normal);
+	}
+	if (Pri->Values.Num() > 9)
+	{
+		OutStats.Lethality = FCString::Atof(*Pri->Values[9]);
+	}
+	if (Health->Values.Num() > 1 && OutStats.bCavalry)
+	{
+		OutStats.MountHP = FCString::Atoi(*Health->Values[1]); // mount pool, cavalry rows only
+	}
 
 	return true;
 }
@@ -122,6 +152,12 @@ FBattleSpawnResult UBattleSpawnLibrary::SpawnUnit(UWorld* World, const FUnitSpaw
 		FSlotTargetFragment::StaticStruct(),
 		FMovementStateFragment::StaticStruct(),
 		FServoStateFragment::StaticStruct(),
+		// Phase 2 combat spine (spec §3.1, A2): on EVERY battle entity
+		// uniformly -- zero new tags, composition grows, the archetype count
+		// stays 6 (F6).
+		FCombatIntentFragment::StaticStruct(),
+		FCombatPairFragment::StaticStruct(),
+		FChargeFragment::StaticStruct(),
 	};
 	TArray<const UScriptStruct*> Tags;
 	if (Row.bInfantry) { Tags.Add(FInfantryTag::StaticStruct()); }
@@ -189,6 +225,27 @@ FBattleSpawnResult UBattleSpawnLibrary::SpawnUnit(UWorld* World, const FUnitSpaw
 		FHealthFragment& Health = View.GetFragmentData<FHealthFragment>();
 		Health.CurrentHP = Row.BaseHealth;
 		Health.QueuedDamage = 0.f;
+		Health.MountCurHP = static_cast<int16>(Row.MountHP);
+
+		// Phase 2 combat spine init (spec §3.1): unpaired, unengaged, zero
+		// timers. The assign pass (task 6) writes the pair state.
+		FCombatIntentFragment& Intent = View.GetFragmentData<FCombatIntentFragment>();
+		Intent.TargetUnit = FUnitHandle();
+		Intent.LaneIndex = 0;
+		Intent.bAutoEngage = 0;
+
+		FCombatPairFragment& Pair = View.GetFragmentData<FCombatPairFragment>();
+		Pair.Target = FMassEntityHandle();
+		Pair.ContactAngle = 0;
+		Pair.State = ECombatPairState::Seeking;
+		Pair.AttackTimer = 0.f;
+		Pair.PairAge = 0.f;
+		Pair.ChargeBonusRemaining = 0.f;
+
+		FChargeFragment& Charge = View.GetFragmentData<FChargeFragment>();
+		Charge.DistanceTraveled = 0.f;
+		Charge.ImpactSpeed = 0.f;
+		Charge.bConnected = 0;
 
 		// Movement spine init (phase-1 Task 2): spawn transform, zeroed
 		// velocity, initial slot layout, HoldSlot state. Entities spawn at

@@ -49,7 +49,10 @@ struct FBaseStatsFragment : public FMassFragment
 };
 
 /** Per-entity HP pool + pending damage (written by combat resolution, Phase 2+;
- *  Phase 0 only initializes CurrentHP at spawn). */
+ *  Phase 0 only initializes CurrentHP at spawn). Phase 2 (task 2, spec §4.8
+ *  composite model): cavalry = single entity with a rider pool (CurrentHP)
+ *  + mount pool (MountCurHP); landed hits drain the combined pool, entity
+ *  dies at 0. 0 for foot units. */
 USTRUCT()
 struct FHealthFragment : public FMassFragment
 {
@@ -57,6 +60,9 @@ struct FHealthFragment : public FMassFragment
 
 	UPROPERTY() float CurrentHP = 1.f;
 	UPROPERTY() float QueuedDamage = 0.f;
+
+	/** Mount HP pool (0 for foot). No riderless mounts v1 (spec §10). */
+	UPROPERTY() int16 MountCurHP = 0;
 };
 
 /**

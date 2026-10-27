@@ -23,6 +23,19 @@ struct FBattleRowStats
 	float MoraleBase = 0.f;
 	float ChargeDistance = 0.f;
 
+	// Phase 2 combat mapping (task 2 step 1, R-C10): the fixture ALREADY
+	// carries the structure -- stat_pri weapon_type ("blade_piercing") is the
+	// AP flag, stat_pri tech type ("spear") is the weapon class, the first
+	// decimal field is the lethality multiplier, stat_health's second value is
+	// the mount HP, and stat_charge_dist was already mapped. These are typed
+	// extractions of EXISTING parsed fields: no parser/schema change, the T0.2
+	// golden round-trip is untouched (no re-sign). Exact field identities and
+	// constants are A6 placeholders for the Phase-6 T6.1 audit.
+	uint8 ReachClass = static_cast<uint8>(EBattleWeaponReach::Normal); // >= Spear = second rank
+	bool bArmorPiercing = false;
+	float Lethality = 1.f;      // multiplies the hit chance (spec §4.8)
+	int32 MountHP = 0;          // stat_health mount pool (0 for foot)
+
 	// capability tags (arch §3.2) derived from category/class
 	bool bInfantry = false;
 	bool bCavalry = false;

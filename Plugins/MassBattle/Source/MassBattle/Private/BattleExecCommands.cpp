@@ -5,9 +5,11 @@
 #include "BattleExecCommands.h"
 #include "BattleRegistry.h"
 #include "BattleFragments.h"
+#include "BattleCombatFragments.h"
 #include "BattleDeathPath.h"
 #include "BattleRngRegistry.h"
 #include "BattleCostGridSubsystem.h"
+#include "BattleSave.h"
 #include "BattleSpawnLibrary.h"
 #include "BattleStateHash.h"
 #include "BattleUnitTrait.h"
@@ -578,6 +580,175 @@ namespace BattleExec
 		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT OrderExitGarrison %s Unit=%u:%u"),
 			bOk ? TEXT("OK") : TEXT("FAIL"), Matched.Index, Matched.Serial);
 	}
+
+// ---- Phase 2 task 2 (combat data spine probes) ----
+
+namespace
+{
+	/** Resolves a unit by slot index (OrderMove pattern). */
+	FUnitHandle MatchUnitIndex(UUnitRegistrySubsystem* Registry, int32 UnitIndex)
+	{
+		FUnitHandle Matched;
+		for (const FUnitHandle& Handle : Registry->GetSortedHandles())
+		{
+			if (Handle.Index == static_cast<uint32>(UnitIndex))
+			{
+				Matched = Handle;
+				break;
+			}
+		}
+		return Matched;
+	}
+}
+
+void OrderAttackUnit(const TArray<FString>& Args, UWorld* World)
+{
+	UUnitRegistrySubsystem* Registry = World ? World->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	if (!Registry || Args.Num() < 2)
+	{
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT OrderAttackUnit FAIL BadArgs (need: UnitIndex TargetIndex)"));
+		return;
+	}
+	const FUnitHandle Matched = MatchUnitIndex(Registry, FCString::Atoi(*Args[0]));
+	const FUnitHandle Target = MatchUnitIndex(Registry, FCString::Atoi(*Args[1]));
+	if (!Matched.IsValid() || !Target.IsValid())
+	{
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT OrderAttackUnit FAIL NoSuchUnit Unit=%d Target=%d"),
+			FCString::Atoi(*Args[0]), FCString::Atoi(*Args[1]));
+		return;
+	}
+	const bool bOk = Registry->IssueAttackUnitOrder(Matched, Target);
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT OrderAttackUnit %s Unit=%u:%u Target=%u:%u"),
+		bOk ? TEXT("OK") : TEXT("FAIL"), Matched.Index, Matched.Serial, Target.Index, Target.Serial);
+}
+
+void OrderAttackMove(const TArray<FString>& Args, UWorld* World)
+{
+	UUnitRegistrySubsystem* Registry = World ? World->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	if (!Registry || Args.Num() < 3)
+	{
+		UE_LOG(LogMassBattle, Display,
+			TEXT("EXEC_RESULT OrderAttackMove FAIL BadArgs (need: UnitIndex anchorX_m anchorY_m [facingDeg] [speedMps])"));
+		return;
+	}
+	const FUnitHandle Matched = MatchUnitIndex(Registry, FCString::Atoi(*Args[0]));
+	if (!Matched.IsValid())
+	{
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT OrderAttackMove FAIL NoSuchUnit Index=%d"), FCString::Atoi(*Args[0]));
+		return;
+	}
+	const FVector2D AnchorCm(FCString::Atof(*Args[1]) * 100.f, FCString::Atof(*Args[2]) * 100.f);
+	const float Facing = Args.Num() > 3 ? FCString::Atof(*Args[3]) : 0.f;
+	const float Speed = Args.Num() > 4 ? FCString::Atof(*Args[4]) : 0.f;
+	const bool bOk = Registry->IssueAttackMoveOrder(Matched, AnchorCm, Facing, Speed);
+	UE_LOG(LogMassBattle, Display,
+		TEXT("EXEC_RESULT OrderAttackMove %s Unit=%u:%u Anchor=(%.1f,%.1f)m Facing=%.1f Speed=%.2f"),
+		bOk ? TEXT("OK") : TEXT("FAIL"), Matched.Index, Matched.Serial, AnchorCm.X * 0.01f, AnchorCm.Y * 0.01f, Facing, Speed);
+}
+
+void CombatDumpPairs(const TArray<FString>& Args, UWorld* World)
+{
+	UUnitRegistrySubsystem* Registry = World ? World->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	UMassEntitySubsystem* EntitySubsystem = World ? World->GetSubsystem<UMassEntitySubsystem>() : nullptr;
+	if (!Registry || !EntitySubsystem)
+	{
+		UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT DumpPairs FAIL no world/registry"));
+		return;
+	}
+	FMassEntityManager& EntityManager = EntitySubsystem->GetMutableEntityManager();
+
+	int32 Paired = 0;
+	int32 Intents = 0;
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT DumpPairs Begin Units=%d Engagements=%d"),
+		Registry->GetUnitCount(), Registry->GetEngagementCount());
+	for (const FUnitHandle& Handle : Registry->GetSortedHandles())
+	{
+		const TArray<FMassEntityHandle>* Roster = Registry->FindRoster(Handle);
+		if (!Roster)
+		{
+			continue;
+		}
+		for (const FMassEntityHandle& Entity : *Roster)
+		{
+			const FMassEntityView View(EntityManager, Entity);
+			const FCombatPairFragment* Pair = View.GetFragmentDataPtr<FCombatPairFragment>();
+			const FCombatIntentFragment* Intent = View.GetFragmentDataPtr<FCombatIntentFragment>();
+			if (Intent && Intent->TargetUnit.IsValid())
+			{
+				++Intents;
+			}
+			if (!Pair)
+			{
+				continue;
+			}
+			if (Pair->Target.IsValid())
+			{
+				++Paired;
+			}
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT DumpPairs Entity=%u:%u Unit=%u:%u Target=%u:%u State=%d Angle=%d Timer=%.2f Age=%.2f Charge=%.2f Intent=%u:%u Lane=%d"),
+				Entity.Index, Entity.SerialNumber, Handle.Index, Handle.Serial,
+				Pair->Target.Index, Pair->Target.SerialNumber,
+				static_cast<int32>(Pair->State), static_cast<int32>(Pair->ContactAngle),
+				Pair->AttackTimer, Pair->PairAge, Pair->ChargeBonusRemaining,
+				Intent ? Intent->TargetUnit.Index : 0, Intent ? Intent->TargetUnit.Serial : 0,
+				Intent ? static_cast<int32>(Intent->LaneIndex) : -1);
+		}
+	}
+	for (const FEngagementKey& Key : Registry->GetSortedEngagementKeys())
+	{
+		const FEngagementRecord* Record = Registry->FindEngagement(Key.Attacker, Key.Defender);
+		if (!Record)
+		{
+			continue;
+		}
+		UE_LOG(LogMassBattle, Display,
+			TEXT("EXEC_RESULT DumpPairs Engagement A=%u:%u D=%u:%u Mode=%d Frontage=[%.1f,%.1f] Pressure=%d Assigned=%d Dead=%d"),
+			Key.Attacker.Index, Key.Attacker.Serial, Key.Defender.Index, Key.Defender.Serial,
+			static_cast<int32>(Record->Mode), Record->FrontageStart, Record->FrontageEnd,
+			Record->DesiredPressure, Record->AssignedAttackers, static_cast<int32>(Record->bDead));
+	}
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT DumpPairs End Paired=%d Intents=%d"), Paired, Intents);
+}
+
+void CombatSaveProbe(const TArray<FString>& Args, UWorld* World)
+{
+	UUnitRegistrySubsystem* Registry = World ? World->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	if (!Registry)
+	{
+		UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT SaveProbe FAIL no registry"));
+		return;
+	}
+
+	FBattleSaveData Save;
+	Registry->CaptureBattleState(Save);
+	const uint32 HashBefore = Registry->ComputeBookkeepingHash();
+
+	// Clear: unregister every unit, dead-flag + prune the records.
+	for (const FUnitHandle& Handle : Registry->GetSortedHandles())
+	{
+		Registry->UnregisterUnit(Handle);
+	}
+	for (const FEngagementKey& Key : Registry->GetSortedEngagementKeys())
+	{
+		Registry->FlagUnitEngagementsDead(Key.Attacker);
+	}
+	Registry->PruneDeadEngagements();
+	const uint32 HashCleared = Registry->ComputeBookkeepingHash();
+
+	// Restore + compare.
+	const bool bRestored = Registry->RestoreBattleState(Save);
+	const uint32 HashAfter = Registry->ComputeBookkeepingHash();
+	const bool bRoundTrip = bRestored && HashBefore == HashAfter && HashCleared != HashBefore;
+	UE_LOG(LogMassBattle, Display,
+		TEXT("EXEC_RESULT SaveProbe %s Hash=%08x Cleared=%08x After=%08x Units=%d Engagements=%d Schema=%u"),
+		bRoundTrip ? TEXT("PASS") : TEXT("FAIL"),
+		HashBefore, HashCleared, HashAfter,
+		Registry->GetUnitCount(), Registry->GetEngagementCount(), Save.SchemaVersion);
+	if (!bRoundTrip)
+	{
+		UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT SaveProbe FAIL round-trip mismatch"));
+	}
 }
 
 // ---- Command registration (Task 4 portion) ----
@@ -671,3 +842,26 @@ static FAutoConsoleCommandWithWorldAndArgs GBattleOrderExitGarrison(
 	TEXT("Battle.Order.ExitGarrison"),
 	TEXT("<UnitIndex> -- task 4 egress order; EXEC_RESULT OrderExitGarrison"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BattleExec::OrderExitGarrison));
+
+}
+// ---- Phase 2 task 2 registration (combat data spine probes) ----
+
+static FAutoConsoleCommandWithWorldAndArgs GBattleOrderAttackUnit(
+	TEXT("Battle.Order.AttackUnit"),
+	TEXT("<UnitIndex> <TargetIndex> -- task 2 attack order (A9 garrison guard rejects with EXEC_RESULT line); EXEC_RESULT OrderAttackUnit"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BattleExec::OrderAttackUnit));
+
+static FAutoConsoleCommandWithWorldAndArgs GBattleOrderAttackMove(
+	TEXT("Battle.Order.AttackMove"),
+	TEXT("<UnitIndex> <anchorX_m> <anchorY_m> [facingDeg] [speedMps] -- task 2 attack-move order (auto-engage en route); EXEC_RESULT OrderAttackMove"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BattleExec::OrderAttackMove));
+
+static FAutoConsoleCommandWithWorldAndArgs GBattleCombatDumpPairs(
+	TEXT("Battle.Combat.DumpPairs"),
+	TEXT("Dumps per-entity pair/intent fragments + engagement records; EXEC_RESULT DumpPairs lines"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BattleExec::CombatDumpPairs));
+
+static FAutoConsoleCommandWithWorldAndArgs GBattleCombatSaveProbe(
+	TEXT("Battle.Combat.SaveProbe"),
+	TEXT("Capture -> clear -> restore round-trip at registry level; EXEC_RESULT SaveProbe PASS/FAIL"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BattleExec::CombatSaveProbe));

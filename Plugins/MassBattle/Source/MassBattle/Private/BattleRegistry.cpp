@@ -2,6 +2,8 @@
 #include "BattleExternalSubsystemTraits.h"
 #include "BattleFragments.h"
 #include "BattleGarrisonSubsystem.h"
+#include "BattleRngRegistry.h"
+#include "BattleSave.h"
 #include "MassBattleModule.h"
 #include "BattleExecCommands.h"
 #include "HAL/IConsoleManager.h"
@@ -9,6 +11,15 @@
 #include "Engine/World.h"
 #include "MassEntitySubsystem.h"
 #include "MassEntityView.h"
+
+namespace
+{
+	// Battle-scale scratch caps (EC9: preallocated at Initialize, grown at
+	// battle start only). Tally/coverage are keyed per-DEFENDER entity; the
+	// 2x2400-entity target leaves headroom in 8192 slots.
+	constexpr int32 MaxEngagementRecords = 4096;
+	constexpr int32 CombatScratchCapacity = 8192;
+}
 
 void UUnitRegistrySubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
@@ -20,6 +31,12 @@ void UUnitRegistrySubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	FreeIndices.Reset();
 	NextIndex = 1;
 	DirtyStats.Reset();
+	// Phase 2 combat state (task 2): the record store + scratch tables are
+	// preallocated once per battle; passes Reset() them, never reallocate.
+	Engagements.Reset();
+	Engagements.Reserve(MaxEngagementRecords);
+	TallyScratch.Initialize(CombatScratchCapacity);
+	CoverageScratch.Initialize(CombatScratchCapacity);
 	UE_LOG(LogMassBattle, Log, TEXT("UnitRegistry initialized"));
 }
 
@@ -144,6 +161,11 @@ void UUnitRegistrySubsystem::HandleUnitDeath(FUnitHandle Unit, FMassEntityHandle
 		const int32 Removed = State->Roster.RemoveSingle(Entity);
 		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT RosterDeath Unit=%u:%u Entity=%u:%u RosterIndex=%d Removed=%d Size=%d"),
 		       Unit.Index, Unit.Serial, Entity.Index, Entity.SerialNumber, RosterIndex, Removed, State->Roster.Num());
+		// Phase 2 (F2): the single registry pair-cleanup hook. The dead
+		// entity's scratch entries drop here so the next fresh-tally pass
+		// never counts a corpse; inbound pair fragments release through the
+		// assign pass's top-of-pass validation (same-tick handoff, EC5).
+		NotifyCombatEntityDeathInternal(Entity);
 		// F14: a unit dying out mid-occupation releases its garrison booking +
 		// queue hold here (the single correct place per the brief's fact).
 		if (State->Roster.Num() == 0)
@@ -420,4 +442,457 @@ uint32 UUnitRegistrySubsystem::ComputeBookkeepingHash() const
 	}
 	Hash = HashCombine(Hash, ::GetTypeHash(FreeIndices.Num()));
 	return Hash;
+}
+
+// -- Phase 2 attack order surface (brief A4, task 2) --
+
+bool UUnitRegistrySubsystem::IssueAttackUnitOrder(FUnitHandle Handle, FUnitHandle TargetHandle)
+{
+	UE_MT_SCOPED_WRITE_ACCESS(AccessDetector);
+	FUnitRuntimeState* State = Handle.IsValid() ? Units.Find(Handle) : nullptr;
+	const FUnitRuntimeState* TargetState = TargetHandle.IsValid() ? Units.Find(TargetHandle) : nullptr;
+	const TCHAR* Reject = nullptr;
+	if (!State)
+	{
+		Reject = TEXT("BadHandle");
+	}
+	else if (!TargetState)
+	{
+		Reject = TEXT("BadTarget");
+	}
+	else if (TargetState->CurrentOrder.Type == FUnitOrder::EType::Garrison)
+	{
+		Reject = TEXT("TargetGarrisonOrder");
+	}
+	else if (State->CurrentOrder.Type == FUnitOrder::EType::Garrison)
+	{
+		Reject = TEXT("AttackerGarrisonOrder");
+	}
+	if (!Reject)
+	{
+		// A9 (F11): a unit committed to the garrison flow (booked or queuing)
+		// is neither a valid melee target nor an attack initiator.
+		if (UBattleGarrisonSubsystem* Garrison = GetWorld() ? GetWorld()->GetSubsystem<UBattleGarrisonSubsystem>() : nullptr)
+		{
+			if (Garrison->IsUnitCommittedToGarrison(TargetHandle))
+			{
+				Reject = TEXT("TargetGarrisonCommitted");
+			}
+			else if (Garrison->IsUnitCommittedToGarrison(Handle))
+			{
+				Reject = TEXT("AttackerGarrisonCommitted");
+			}
+		}
+	}
+	if (Reject)
+	{
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT AttackOrder REJECT %s Unit=%u:%u Target=%u:%u"),
+		       Reject, Handle.Index, Handle.Serial, TargetHandle.Index, TargetHandle.Serial);
+		return false;
+	}
+	// Identical re-issue is a no-op (M11 pattern): no serial bump, no churn.
+	const FUnitOrder& Prev = State->CurrentOrder;
+	if (Prev.Type == FUnitOrder::EType::AttackUnit && Prev.TargetUnit == TargetHandle)
+	{
+		return true;
+	}
+	FUnitOrder& Order = State->CurrentOrder;
+	Order = FUnitOrder();
+	Order.Type = FUnitOrder::EType::AttackUnit;
+	Order.TargetUnit = TargetHandle;
+	++State->OrderSerial;
+	return true;
+}
+
+bool UUnitRegistrySubsystem::IssueAttackMoveOrder(FUnitHandle Handle, const FVector2D& AnchorPosCm, float FacingYawDeg,
+	float CommandedSpeedMps, FUnitHandle TargetHandle)
+{
+	UE_MT_SCOPED_WRITE_ACCESS(AccessDetector);
+	FUnitRuntimeState* State = Handle.IsValid() ? Units.Find(Handle) : nullptr;
+	const TCHAR* Reject = nullptr;
+	if (!State)
+	{
+		Reject = TEXT("BadHandle");
+	}
+	else if (State->CurrentOrder.Type == FUnitOrder::EType::Garrison)
+	{
+		Reject = TEXT("AttackerGarrisonOrder");
+	}
+	else if (TargetHandle.IsValid() && Units.Find(TargetHandle) &&
+		Units.Find(TargetHandle)->CurrentOrder.Type == FUnitOrder::EType::Garrison)
+	{
+		Reject = TEXT("TargetGarrisonOrder");
+	}
+	if (!Reject && State)
+	{
+		if (UBattleGarrisonSubsystem* Garrison = GetWorld() ? GetWorld()->GetSubsystem<UBattleGarrisonSubsystem>() : nullptr)
+		{
+			if (Garrison->IsUnitCommittedToGarrison(Handle) ||
+				(TargetHandle.IsValid() && Garrison->IsUnitCommittedToGarrison(TargetHandle)))
+			{
+				Reject = TEXT("GarrisonCommitted");
+			}
+		}
+	}
+	if (Reject)
+	{
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT AttackMove REJECT %s Unit=%u:%u Target=%u:%u"),
+		       Reject, Handle.Index, Handle.Serial, TargetHandle.Index, TargetHandle.Serial);
+		return false;
+	}
+	// Identical re-issue is a no-op (M11 pattern).
+	const FUnitOrder& Prev = State->CurrentOrder;
+	if (Prev.Type == FUnitOrder::EType::AttackMove
+		&& FVector2D::DistSquared(Prev.AnchorPos, AnchorPosCm) <= FMath::Square(100.f)
+		&& FMath::Abs(FMath::FindDeltaAngleDegrees(Prev.FacingYaw, FacingYawDeg)) < 1.f
+		&& Prev.CommandedSpeed == CommandedSpeedMps
+		&& Prev.TargetUnit == TargetHandle)
+	{
+		return true;
+	}
+	FUnitOrder& Order = State->CurrentOrder;
+	Order = FUnitOrder();
+	Order.Type = FUnitOrder::EType::AttackMove;
+	Order.AnchorPos = AnchorPosCm;
+	Order.FacingYaw = FacingYawDeg;
+	Order.CommandedSpeed = CommandedSpeedMps;
+	Order.TargetUnit = TargetHandle;
+	++State->OrderSerial;
+	return true;
+}
+
+// -- Phase 2 engagement records + scratch (spec §3.2) --
+
+FEngagementRecord* UUnitRegistrySubsystem::CreateOrRefreshEngagement(FUnitHandle Attacker, FUnitHandle Defender)
+{
+	UE_MT_SCOPED_WRITE_ACCESS(AccessDetector);
+	if (!Attacker.IsValid() || !Defender.IsValid())
+	{
+		return nullptr;
+	}
+	if (Engagements.Num() >= MaxEngagementRecords && !Engagements.Contains({Attacker, Defender}))
+	{
+		return nullptr; // store full: the cluster pass treats this as a cap hit
+	}
+	FEngagementRecord& Record = Engagements.FindOrAdd({Attacker, Defender});
+	Record.bDead = 0; // a refresh revives a dead-flagged record (re-contact)
+	return &Record;
+}
+
+const FEngagementRecord* UUnitRegistrySubsystem::FindEngagement(FUnitHandle Attacker, FUnitHandle Defender) const
+{
+	UE_MT_SCOPED_READ_ACCESS(AccessDetector);
+	return Engagements.Find({Attacker, Defender});
+}
+
+FEngagementRecord* UUnitRegistrySubsystem::FindEngagementMutable(FUnitHandle Attacker, FUnitHandle Defender)
+{
+	UE_MT_SCOPED_WRITE_ACCESS(AccessDetector);
+	return Engagements.Find({Attacker, Defender});
+}
+
+int32 UUnitRegistrySubsystem::FlagUnitEngagementsDead(FUnitHandle Unit)
+{
+	UE_MT_SCOPED_WRITE_ACCESS(AccessDetector);
+	int32 Flagged = 0;
+	for (TPair<FEngagementKey, FEngagementRecord>& Pair : Engagements)
+	{
+		if (Pair.Key.Attacker == Unit || Pair.Key.Defender == Unit)
+		{
+			if (Pair.Value.bDead == 0)
+			{
+				Pair.Value.bDead = 1;
+				++Flagged;
+			}
+		}
+	}
+	return Flagged;
+}
+
+int32 UUnitRegistrySubsystem::PruneDeadEngagements()
+{
+	UE_MT_SCOPED_WRITE_ACCESS(AccessDetector);
+	int32 Removed = 0;
+	for (auto It = Engagements.CreateIterator(); It; ++It)
+	{
+		if (It->Value.bDead != 0)
+		{
+			It.RemoveCurrent();
+			++Removed;
+		}
+	}
+	return Removed;
+}
+
+TArray<FEngagementKey> UUnitRegistrySubsystem::GetSortedEngagementKeys() const
+{
+	UE_MT_SCOPED_READ_ACCESS(AccessDetector);
+	TArray<FEngagementKey> Keys;
+	Keys.Reserve(Engagements.Num());
+	for (const TPair<FEngagementKey, FEngagementRecord>& Pair : Engagements)
+	{
+		Keys.Add(Pair.Key);
+	}
+	// Deterministic order: attacker index, then defender index (serials
+	// tie-break; slots never share an index among live units).
+	Keys.Sort([](const FEngagementKey& A, const FEngagementKey& B)
+	{
+		if (A.Attacker.Index != B.Attacker.Index) { return A.Attacker.Index < B.Attacker.Index; }
+		if (A.Defender.Index != B.Defender.Index) { return A.Defender.Index < B.Defender.Index; }
+		if (A.Attacker.Serial != B.Attacker.Serial) { return A.Attacker.Serial < B.Attacker.Serial; }
+		return A.Defender.Serial < B.Defender.Serial;
+	});
+	return Keys;
+}
+
+void UUnitRegistrySubsystem::NotifyCombatEntityDeath(FMassEntityHandle Entity)
+{
+	UE_MT_SCOPED_WRITE_ACCESS(AccessDetector);
+	NotifyCombatEntityDeathInternal(Entity);
+}
+
+void UUnitRegistrySubsystem::NotifyCombatEntityDeathInternal(FMassEntityHandle Entity)
+{
+	// The tally/coverage passes Reset() per tick and validate handles
+	// top-of-pass, so a zeroed slot is all the cleanup a corpse needs
+	// (spec §3.2: everything derived fresh each tick).
+	for (int32 i = 0; i < TallyScratch.Keys.Num(); ++i)
+	{
+		if (TallyScratch.Keys[i] == Entity)
+		{
+			TallyScratch.Keys[i] = FMassEntityHandle();
+			TallyScratch.Counts[i] = 0;
+		}
+	}
+	for (int32 i = 0; i < CoverageScratch.Keys.Num(); ++i)
+	{
+		if (CoverageScratch.Keys[i] == Entity)
+		{
+			CoverageScratch.Keys[i] = FMassEntityHandle();
+			CoverageScratch.Values[i] = 0.f;
+			CoverageScratch.Stamps[i] = 0u;
+		}
+	}
+}
+
+// -- Phase 2 save/load skeleton (A8, spec §3.5) --
+
+void UUnitRegistrySubsystem::CaptureBattleState(FBattleSaveData& OutData) const
+{
+	UE_MT_SCOPED_READ_ACCESS(AccessDetector);
+	OutData = FBattleSaveData();
+	OutData.SchemaVersion = 1;
+
+	// Units in sorted-handle order (the pass the hash folds).
+	TArray<FUnitHandle> Handles;
+	Handles.Reserve(Units.Num());
+	for (const TPair<FUnitHandle, FUnitRuntimeState>& Pair : Units)
+	{
+		Handles.Add(Pair.Key);
+	}
+	Handles.Sort([](const FUnitHandle& A, const FUnitHandle& B) { return A.Index < B.Index; });
+
+	for (const FUnitHandle& Handle : Handles)
+	{
+		const FUnitRuntimeState* State = Units.Find(Handle);
+		if (!State)
+		{
+			continue;
+		}
+		const FUnitSpawnSpec* Spec = SpecsByIndex.Find(Handle.Index);
+		FUnitSaveEntry& Entry = OutData.Units.AddDefaulted_GetRef();
+		Entry.Index = Handle.Index;
+		Entry.Serial = Handle.Serial;
+		Entry.Generation = State->Generation;
+		Entry.UnitName = Spec ? Spec->UnitName : FString();
+		Entry.EduRowIndex = Spec ? Spec->EduRowIndex : INDEX_NONE;
+		Entry.SoldierCount = Spec ? Spec->SoldierCount : 0;
+		Entry.FormationSpacing = Spec ? Spec->FormationSpacing : 1.2f;
+		Entry.SpawnPos = Spec ? Spec->SpawnPos : FVector2D::ZeroVector;
+		Entry.SpawnYaw = Spec ? Spec->SpawnYaw : 0.f;
+		Entry.NumRanks = Spec ? Spec->NumRanks : 2;
+		Entry.Roster = State->Roster;
+		const FBattleAttributeSnapshot& Attrs = State->CachedAttributes;
+		Entry.Morale = Attrs.Morale;
+		Entry.Fatigue = Attrs.Fatigue;
+		Entry.Experience = Attrs.Experience;
+		Entry.ArmourUpgrade = Attrs.ArmourUpgrade;
+		Entry.MeleeAttackMod = Attrs.MeleeAttackMod;
+		Entry.MeleeDefenseMod = Attrs.MeleeDefenseMod;
+		Entry.RangedAttackMod = Attrs.RangedAttackMod;
+		Entry.SpeedMod = Attrs.SpeedMod;
+		Entry.BlockChanceMod = Attrs.BlockChanceMod;
+		Entry.OrderLatencyAttr = Attrs.OrderLatency;
+		Entry.AmmoPool = Attrs.AmmoPool;
+		const FUnitOrder& Order = State->CurrentOrder;
+		Entry.OrderType = static_cast<uint8>(Order.Type);
+		Entry.OrderAnchorPos = Order.AnchorPos;
+		Entry.OrderFacingYaw = Order.FacingYaw;
+		Entry.OrderCommandedSpeed = Order.CommandedSpeed;
+		Entry.OrderCommandedFiles = Order.CommandedFiles;
+		Entry.OrderStructureId = Order.StructureId;
+		Entry.OrderTargetUnitIndex = Order.TargetUnit.Index;
+		Entry.OrderTargetUnitSerial = Order.TargetUnit.Serial;
+		Entry.OrderSerial = State->OrderSerial;
+		const FUnitOrder& Pending = State->PendingAfterEgress;
+		Entry.PendingOrderType = static_cast<uint8>(Pending.Type);
+		Entry.PendingAnchorPos = Pending.AnchorPos;
+		Entry.PendingFacingYaw = Pending.FacingYaw;
+		Entry.PendingCommandedSpeed = Pending.CommandedSpeed;
+		Entry.PendingCommandedFiles = Pending.CommandedFiles;
+		Entry.PendingStructureId = Pending.StructureId;
+		Entry.PendingTargetUnitIndex = Pending.TargetUnit.Index;
+		Entry.PendingTargetUnitSerial = Pending.TargetUnit.Serial;
+	}
+
+	// Slot bookkeeping the round-trip must reproduce (free-list depth folds
+	// into the bookkeeping hash). Flat key/value pairs in map order -- the
+	// restore rebuilds a map, so order is irrelevant to equality.
+	OutData.FreeIndices = FreeIndices;
+	OutData.FreeSlotGenerationCounters.Reserve(NextGenerationByIndex.Num() * 2);
+	for (const TPair<uint32, int32>& Pair : NextGenerationByIndex)
+	{
+		OutData.FreeSlotGenerationCounters.Add(Pair.Key);
+		OutData.FreeSlotGenerationCounters.Add(Pair.Value);
+	}
+	OutData.NextIndexValue = NextIndex;
+
+	// Engagement records (sorted keys; AssignedAttackers excluded -- derived
+	// fresh each tick, spec §3.2).
+	for (const FEngagementKey& Key : GetSortedEngagementKeys())
+	{
+		const FEngagementRecord* Record = Engagements.Find(Key);
+		if (!Record)
+		{
+			continue;
+		}
+		FEngagementSaveEntry& Entry = OutData.Engagements.AddDefaulted_GetRef();
+		Entry.AttackerIndex = Key.Attacker.Index;
+		Entry.AttackerSerial = Key.Attacker.Serial;
+		Entry.DefenderIndex = Key.Defender.Index;
+		Entry.DefenderSerial = Key.Defender.Serial;
+		Entry.Mode = static_cast<uint8>(Record->Mode);
+		Entry.FrontageStart = Record->FrontageStart;
+		Entry.FrontageEnd = Record->FrontageEnd;
+		Entry.DesiredPressure = Record->DesiredPressure;
+		Entry.bDead = Record->bDead;
+	}
+
+	// RNG stream states (seed-registered per B.5).
+	if (UBattleRngSubsystem* Rng = GetWorld() ? GetWorld()->GetSubsystem<UBattleRngSubsystem>() : nullptr)
+	{
+		OutData.RngRootSeed = Rng->GetRegistry().GetRootSeed();
+		for (const FBattleRngStreamState& StreamState : Rng->GetRegistry().SnapshotStreams())
+		{
+			FRngStreamSaveEntry& Entry = OutData.RngStreams.AddDefaulted_GetRef();
+			Entry.StreamName = StreamState.Name;
+			Entry.CurrentSeed = StreamState.CurrentSeed;
+		}
+	}
+}
+
+bool UUnitRegistrySubsystem::RestoreBattleState(const FBattleSaveData& InData)
+{
+	if (InData.SchemaVersion != 1)
+	{
+		UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT SaveProbe FAIL schema mismatch (have %u, want 1)"), InData.SchemaVersion);
+		return false;
+	}
+	UE_MT_SCOPED_WRITE_ACCESS(AccessDetector);
+	Units.Reset();
+	SpecsByIndex.Reset();
+	DirtyStats.Reset();
+	Engagements.Reset();
+	Engagements.Reserve(MaxEngagementRecords);
+
+	for (const FUnitSaveEntry& Entry : InData.Units)
+	{
+		FUnitHandle Handle;
+		Handle.Index = Entry.Index;
+		Handle.Serial = Entry.Serial;
+		FUnitRuntimeState& State = Units.Add(Handle);
+		State.Generation = Entry.Generation;
+		State.Roster = Entry.Roster;
+		State.OrderSerial = Entry.OrderSerial;
+		FBattleAttributeSnapshot& Attrs = State.CachedAttributes;
+		Attrs.Morale = Entry.Morale;
+		Attrs.Fatigue = Entry.Fatigue;
+		Attrs.Experience = Entry.Experience;
+		Attrs.ArmourUpgrade = Entry.ArmourUpgrade;
+		Attrs.MeleeAttackMod = Entry.MeleeAttackMod;
+		Attrs.MeleeDefenseMod = Entry.MeleeDefenseMod;
+		Attrs.RangedAttackMod = Entry.RangedAttackMod;
+		Attrs.SpeedMod = Entry.SpeedMod;
+		Attrs.BlockChanceMod = Entry.BlockChanceMod;
+		Attrs.OrderLatency = Entry.OrderLatencyAttr;
+		Attrs.AmmoPool = Entry.AmmoPool;
+		FUnitOrder& Order = State.CurrentOrder;
+		Order.Type = static_cast<FUnitOrder::EType>(Entry.OrderType);
+		Order.AnchorPos = Entry.OrderAnchorPos;
+		Order.FacingYaw = Entry.OrderFacingYaw;
+		Order.CommandedSpeed = Entry.OrderCommandedSpeed;
+		Order.CommandedFiles = Entry.OrderCommandedFiles;
+		Order.StructureId = Entry.OrderStructureId;
+		Order.TargetUnit.Index = Entry.OrderTargetUnitIndex;
+		Order.TargetUnit.Serial = Entry.OrderTargetUnitSerial;
+		FUnitOrder& Pending = State.PendingAfterEgress;
+		Pending.Type = static_cast<FUnitOrder::EType>(Entry.PendingOrderType);
+		Pending.AnchorPos = Entry.PendingAnchorPos;
+		Pending.FacingYaw = Entry.PendingFacingYaw;
+		Pending.CommandedSpeed = Entry.PendingCommandedSpeed;
+		Pending.CommandedFiles = Entry.PendingCommandedFiles;
+		Pending.StructureId = Entry.PendingStructureId;
+		Pending.TargetUnit.Index = Entry.PendingTargetUnitIndex;
+		Pending.TargetUnit.Serial = Entry.PendingTargetUnitSerial;
+
+		FUnitSpawnSpec& Spec = SpecsByIndex.Add(Handle.Index);
+		Spec.EduRowIndex = Entry.EduRowIndex;
+		Spec.SoldierCount = Entry.SoldierCount;
+		Spec.UnitName = Entry.UnitName;
+		Spec.FormationSpacing = Entry.FormationSpacing;
+		Spec.SpawnPos = Entry.SpawnPos;
+		Spec.SpawnYaw = Entry.SpawnYaw;
+		Spec.NumRanks = Entry.NumRanks;
+	}
+
+	FreeIndices = InData.FreeIndices;
+	NextGenerationByIndex.Reset();
+	for (int32 i = 0; i + 1 < InData.FreeSlotGenerationCounters.Num(); i += 2)
+	{
+		NextGenerationByIndex.Add(InData.FreeSlotGenerationCounters[i], InData.FreeSlotGenerationCounters[i + 1]);
+	}
+	NextIndex = InData.NextIndexValue;
+
+	for (const FEngagementSaveEntry& Entry : InData.Engagements)
+	{
+		FEngagementKey Key;
+		Key.Attacker.Index = Entry.AttackerIndex;
+		Key.Attacker.Serial = Entry.AttackerSerial;
+		Key.Defender.Index = Entry.DefenderIndex;
+		Key.Defender.Serial = Entry.DefenderSerial;
+		FEngagementRecord& Record = Engagements.Add(Key);
+		Record.Mode = static_cast<EEngagementMode>(Entry.Mode);
+		Record.FrontageStart = Entry.FrontageStart;
+		Record.FrontageEnd = Entry.FrontageEnd;
+		Record.DesiredPressure = Entry.DesiredPressure;
+		Record.bDead = Entry.bDead;
+		Record.AssignedAttackers = 0; // fresh tallied each tick, never persisted
+	}
+
+	if (UBattleRngSubsystem* Rng = GetWorld() ? GetWorld()->GetSubsystem<UBattleRngSubsystem>() : nullptr)
+	{
+		TArray<FBattleRngStreamState> StreamStates;
+		for (const FRngStreamSaveEntry& Entry : InData.RngStreams)
+		{
+			FBattleRngStreamState StreamState;
+			StreamState.Name = Entry.StreamName;
+			StreamState.CurrentSeed = Entry.CurrentSeed;
+			StreamStates.Add(StreamState);
+		}
+		Rng->GetMutableRegistry().RestoreStreams(InData.RngRootSeed, StreamStates);
+	}
+
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SaveProbe Restore Units=%d Engagements=%d RngStreams=%d Schema=%u"),
+	       Units.Num(), Engagements.Num(), InData.RngStreams.Num(), InData.SchemaVersion);
+	return true;
 }
