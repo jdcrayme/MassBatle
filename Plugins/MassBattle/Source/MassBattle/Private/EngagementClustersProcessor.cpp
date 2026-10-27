@@ -2,6 +2,7 @@
 #include "EngagementClustersProcessor.h"
 #include "BattleEngagement.h"
 #include "BattleFragments.h"
+#include "BattleDebugSubsystem.h"
 #include "BattleRegistry.h"
 #include "BattleUnitContact.h"
 #include "BattleMovementFragments.h"
@@ -219,4 +220,31 @@ void UEngagementClustersProcessor::Execute(FMassEntityManager& EntityManager, FM
 	UE_LOG(LogMassBattle, Verbose,
 		TEXT("EngagementClusters units=%d contacts=%d clusters=%d records=%d"),
 		Nodes.Num(), ContactPairs.Num(), ClusterCount, Emitted);
+
+	// B.2 combat overlay row (task 10, F10 pattern): engagement-record debug
+	// (frontage segments + mode + pressure vs assigned) behind the overlay
+	// gate. Colors: Frontal red, Flank orange, Mob magenta.
+	if (UBattleDebugSubsystem* Debug = World->GetSubsystem<UBattleDebugSubsystem>();
+		Debug && Debug->IsOverlayShown())
+	{
+		for (const FEngagementKey& Key : Registry->GetSortedEngagementKeys())
+		{
+			const FEngagementRecord* Record = Registry->FindEngagement(Key.Attacker, Key.Defender);
+			if (!Record || Record->bDead != 0)
+			{
+				continue;
+			}
+			const FUnitHandle* AttackerNode = nullptr;
+			const FUnitHandle* DefenderNode = nullptr;
+			for (const FCombatSolver::FUnitClusterNode& Node : Nodes)
+			{
+				if (Node.Unit == Key.Attacker) { AttackerNode = &Node.Unit; }
+				if (Node.Unit == Key.Defender) { DefenderNode = &Node.Unit; }
+			}
+			(void)AttackerNode;
+			(void)DefenderNode;
+			Debug->EnqueueEngagementLine(Key.Attacker, Key.Defender,
+				static_cast<int32>(Record->Mode), Record->DesiredPressure, Record->AssignedAttackers);
+		}
+	}
 }

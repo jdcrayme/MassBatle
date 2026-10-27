@@ -8,6 +8,7 @@
 #include "CoreMinimal.h"
 #include <atomic>
 #include "Subsystems/WorldSubsystem.h"
+#include "BattleTypes.h"
 #include "BattleDebugSubsystem.generated.h"
 
 /** Per-frame metrics in the B.4 instrumented set (drawn in Phase 2; dumped
@@ -65,6 +66,12 @@ public:
 	 *  Exec fixtures run before the sim advances; the probe samples the
 	 *  steady state). Disarms after the dump. */
 	void ArmPerfProbe(int32 InTicks) { PerfProbeTicks = InTicks; }
+
+	/** B.2 combat overlay row (task 10): engagement-record debug (mode +
+	 *  pressure vs assigned), queued as a colored record line. */
+	void EnqueueEngagementLine(FUnitHandle Attacker, FUnitHandle Defender, int32 Mode,
+		int32 DesiredPressure, int32 AssignedAttackers);
+	bool IsOverlayShown() const;
 
 	// -- Phase 2 combat diagnostics (task 7; worker-writers, atomics) --
 	void RecordCombatRoll(bool bLanded) { ++CombatRolls; if (bLanded) { ++CombatRollsLanded; } }

@@ -1,5 +1,6 @@
 #include "BattleDebugSubsystem.h"
 #include "BattleRegistry.h"
+#include "BattleMovementFragments.h"
 #include "BattleExecCommands.h"
 #include "MassBattleModule.h"
 
@@ -130,6 +131,52 @@ void UBattleDebugSubsystem::RecordUnitSyncMs(double Ms)
 	}
 	LastMetrics.UnitSyncMs += Ms;
 	// Archetype count is filled by DumpMetrics (needs the entity manager).
+}
+
+bool UBattleDebugSubsystem::IsOverlayShown() const
+{
+	return BattleDebugShowOverlay != 0;
+}
+
+void UBattleDebugSubsystem::EnqueueEngagementLine(FUnitHandle Attacker, FUnitHandle Defender, int32 Mode,
+	int32 DesiredPressure, int32 AssignedAttackers)
+{
+	// One queued line per engagement record: From/To span the two unit
+	// anchors at ground level (the record debug is unit-level geometry);
+	// the mode colors: Frontal red, Flank orange, Mob magenta.
+	UWorld* World = GetWorld();
+	UUnitRegistrySubsystem* Registry = World ? World->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	if (!Registry)
+	{
+		return;
+	}
+	auto UnitAnchor = [this, Registry](const FUnitHandle& Handle) -> FVector
+	{
+		UWorld* MyWorld = GetWorld();
+		if (UMassEntitySubsystem* Entities = MyWorld ? MyWorld->GetSubsystem<UMassEntitySubsystem>() : nullptr)
+		{
+			if (const TArray<FMassEntityHandle>* Roster = Registry->FindRoster(Handle);
+				Roster && Roster->Num() > 0)
+			{
+				if (const FUnitFormationSharedFragment* Formation =
+					Entities->GetMutableEntityManager().GetSharedFragmentDataPtr<FUnitFormationSharedFragment>((*Roster)[0]))
+				{
+					const FVector2D Anchor = FVector2D(Formation->AnchorPos) * 0.01f;
+					return FVector(Anchor.X, Anchor.Y, 20.f);
+				}
+			}
+		}
+		return FVector::ZeroVector;
+	};
+	static const FColor ModeColors[3] = { FColor::Red, FColor::Orange, FColor::Magenta };
+	FBattleOverlayLine Line;
+	Line.From = UnitAnchor(Attacker);
+	Line.To = UnitAnchor(Defender);
+	Line.Color = ModeColors[FMath::Clamp(Mode, 0, 2)];
+	EnqueueOverlayLine(Line);
+	UE_LOG(LogMassBattle, Verbose,
+		TEXT("Overlay Engagement A=%u:%u D=%u:%u Mode=%d Pressure=%d Assigned=%d"),
+		Attacker.Index, Attacker.Serial, Defender.Index, Defender.Serial, Mode, DesiredPressure, AssignedAttackers);
 }
 
 void UBattleDebugSubsystem::RecordDeathByArc(int32 Sector, int32 SectorCount)
