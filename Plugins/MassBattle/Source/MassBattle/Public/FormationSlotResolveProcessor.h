@@ -27,4 +27,7 @@ private:
 	FMassEntityQuery ResolveQuery;
 	/** Cached overlay toggle pointer (audit M9; stable for the process). */
 	const IConsoleVariable* ShowOverlayCvar = nullptr;
+	/** Cached DressBreak threshold pointer (phase 2 B3; same M9 pattern --
+	 *  the cvar is defined beside the pace term in UnitLocomotionProcessor). */
+	const IConsoleVariable* DressBreakCvar = nullptr;
 };

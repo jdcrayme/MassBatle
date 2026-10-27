@@ -218,6 +218,16 @@ private:
 	// disclosed budget instead of being exempt from every assert.
 	int32 EscalationsAtPassStart = 0;
 
+	// Phase 2 phase-B gate: the MOVER's dress metric recovers <= 0.5 m within
+	// 4 s (240 ticks) of clearing the standee (asserted when a phase-B flag is
+	// on; logged otherwise). MinSpeedLimitDuringTearCm documents the P4(a)
+	// throttle dip (the contact factor already dips speed at baseline, so the
+	// straggler term's contribution stays a diagnostic here).
+	float MaxSlotErrorAfterPassM = 0.f;
+	int32 MoverSlotErrorRecoveredTicks = -1;
+	float MinSpeedLimitDuringTearCm = FLT_MAX;
+	bool bPhaseBFlagsOn = false;
+
 	/** Cavalry mover (registry handle; spawned directly from the inline EDU
 	 *  row, no AUnitActor shell). */
 	FUnitHandle MoverHandle;

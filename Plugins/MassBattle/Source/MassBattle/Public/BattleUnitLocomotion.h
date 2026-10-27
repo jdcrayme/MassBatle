@@ -67,4 +67,16 @@ namespace FUnitLocomotion
 	 *  the current layout; values above NumSlots clamp to NumSlots (1 file of
 	 *  NumSlots ranks). Returns 0 when the layout is unchanged. */
 	MASSBATTLE_API int32 ResolveCommandedFiles(int32 CommandedFiles, int32 NumSlots, int32 CurrentNumFiles);
+
+	/** Phase 2 B2 straggler pace factor (arch §8.2, F-6): 1.0 while the block
+	 *  is dressed (max slot error at/below DressBreakM); beyond the threshold
+	 *  the factor linearly throttles by PaceGain per meter of tear, floored at
+	 *  0. The anchor rides the throttle through the existing hysteresis. */
+	MASSBATTLE_API float StragglerPaceFactor(float MaxSlotErrorM, float DressBreakM, float PaceGain);
+
+	/** Phase 2 B3 march stickiness predicate (F-7): while a path is active and
+	 *  the block is dressed (max slot error strictly under DressBreakM), the
+	 *  interval reflow + predictive swaps are churn, not information. Rank-gap
+	 *  and layout re-decision triggers bypass this at the call site. */
+	MASSBATTLE_API bool MarchReflowSticky(bool bHasPath, float MaxSlotErrorM, float DressBreakM);
 }

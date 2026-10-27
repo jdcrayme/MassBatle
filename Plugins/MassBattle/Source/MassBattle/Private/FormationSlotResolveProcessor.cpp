@@ -2,6 +2,7 @@
 #include "BattleFragments.h"
 #include "BattleMovementFragments.h"
 #include "BattleSlotAssigner.h"
+#include "BattleUnitLocomotion.h"
 #include "BattleGarrison.h"
 #include "BattlePathFrameLayout.h"
 #include "BattleCompression.h"
@@ -47,6 +48,17 @@ namespace
 		TEXT("Battle.Movement.FanInHysteresis"),
 		0.3f,
 		TEXT("Fan-in peel hysteresis deadband, m; the destination slot must be closer by this much (<= 0 disables the peel)."),
+		ECVF_Default);
+
+	// Phase 2 B3 (F-7): march stickiness -- on a dressed march the 0.5 s
+	// interval reflow + predictive swaps are churn, not information. While a
+	// path is active and the block is dressed (MaxSlotErrorM under the
+	// shared DressBreak threshold) they are skipped; rank-gap and layout
+	// re-decision triggers still re-slot immediately.
+	TAutoConsoleVariable<int32> GBattleMovementMarchStickiness(
+		TEXT("Battle.Movement.MarchStickiness"),
+		0,
+		TEXT("1 = skip the interval reflow + predictive swaps while a path is active and the block is dressed (phase 2 B3)."),
 		ECVF_Default);
 }
 
@@ -101,7 +113,15 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 	}
 	const bool bOverlay = ShowOverlayCvar && ShowOverlayCvar->GetInt() != 0;
 
-	ResolveQuery.ForEachEntityChunk(Context, [DT, bOverlay](FMassExecutionContext& Context)
+	// Phase 2 B3: the shared DressBreak threshold (defined beside the pace
+	// term in UnitLocomotionProcessor.cpp; cached pointer, audit M9 pattern).
+	if (!DressBreakCvar)
+	{
+		DressBreakCvar = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Movement.DressBreak"));
+	}
+	const float DressBreakM = DressBreakCvar ? DressBreakCvar->GetFloat() : 1.8f;
+
+	ResolveQuery.ForEachEntityChunk(Context, [DT, bOverlay, DressBreakM](FMassExecutionContext& Context)
 	{
 		// Audit H4: per-thread scratch reused across chunks and frames
 		// (Reset/Init keep capacity) -- zero steady-state heap traffic from
@@ -191,6 +211,7 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 			// per frame was pure contention against the game-thread drain.
 			UBattleDebugSubsystem* DebugHold = bOverlay && Context.GetWorld() ? Context.GetWorld()->GetSubsystem<UBattleDebugSubsystem>() : nullptr;
 			TArrayView<FSlotTargetFragment> HoldTargets = Context.GetMutableFragmentView<FSlotTargetFragment>();
+			float HoldMaxSlotErrorM = 0.f;
 			for (int32 i = 0; i < NumEntities; ++i)
 			{
 				const int32 Slot = Assignment[i];
@@ -198,15 +219,18 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 				{
 					continue;
 				}
-			// Phase 2 A1 feed-forward: stamp the previous target BEFORE the
-			// overwrite so the servo can form the slot's own velocity. First
-			// write: Prev = the new target (no slot motion on the first frame).
-			const FVector2D NewTargetPos(FVector2D(PostPosM[Slot]) * 100.f);
-			HoldTargets[i].PrevTargetPos = HoldTargets[i].bPrevValid ? HoldTargets[i].TargetPos : NewTargetPos;
-			HoldTargets[i].bPrevValid = 1;
-			HoldTargets[i].TargetPos = NewTargetPos;
-			HoldTargets[i].TargetYaw = PostYaw[Slot];
-			HoldTargets[i].TargetZ = PostZCm[Slot];
+				// Phase 2 A1 feed-forward: stamp the previous target BEFORE the
+				// overwrite so the servo can form the slot's own velocity. First
+				// write: Prev = the new target (no slot motion on the first frame).
+				const FVector2D NewTargetPos(FVector2D(PostPosM[Slot]) * 100.f);
+				HoldTargets[i].PrevTargetPos = HoldTargets[i].bPrevValid ? HoldTargets[i].TargetPos : NewTargetPos;
+				HoldTargets[i].bPrevValid = 1;
+				HoldTargets[i].TargetPos = NewTargetPos;
+				HoldTargets[i].TargetYaw = PostYaw[Slot];
+				HoldTargets[i].TargetZ = PostZCm[Slot];
+
+				// Phase 2 B1: the same reduction rides the garrison branch.
+				HoldMaxSlotErrorM = FMath::Max(HoldMaxSlotErrorM, FVector2D::Distance(EntityPosM[i], PostPosM[Slot]));
 
 				if (DebugHold)
 				{
@@ -219,6 +243,7 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 					DebugHold->EnqueueOverlayLine(Line);
 				}
 			}
+			Formation.MaxSlotErrorM = HoldMaxSlotErrorM;
 			return; // booked-range source replaces the field layout entirely
 		}
 
@@ -350,7 +375,22 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 		// R-G4: reflow NEVER runs while filing a garrison interior path (the
 		// PassLocked column filing owns the shape; spec §4.4).
 		const bool bLayoutRedecision = Formation.Generation != Formation.AssignedGeneration;
-		if (!bFiling && (bLayoutRedecision || Scheduler.ConsumeIfDue(DT, bRankGap)))
+		// Phase 2 B3 march stickiness (F-7): while a path is active and the
+		// block is dressed, the interval reflow + predictive swaps are churn --
+		// skip them. The cooldown still decays, so a later tear reflows on the
+		// first due tick; rank gaps and layout re-decisions bypass the gate.
+		const bool bMarchSticky = GBattleMovementMarchStickiness.GetValueOnAnyThread() != 0
+			&& FUnitLocomotion::MarchReflowSticky(bHasPath, Formation.MaxSlotErrorM, DressBreakM);
+		bool bIntervalReflowDue = false;
+		if (bMarchSticky && !bRankGap)
+		{
+			Scheduler.Cooldown = FMath::Max(0.f, Scheduler.Cooldown - DT);
+		}
+		else
+		{
+			bIntervalReflowDue = Scheduler.ConsumeIfDue(DT, bRankGap);
+		}
+		if (!bFiling && (bLayoutRedecision || bIntervalReflowDue))
 		{
 			TArray<int32>& NewAssignment = TLNewAssignment;
 			const int32 MaxDisplacement = bLayoutRedecision
@@ -394,6 +434,11 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 		UBattleDebugSubsystem* Debug = bOverlay && Context.GetWorld() ? Context.GetWorld()->GetSubsystem<UBattleDebugSubsystem>() : nullptr;
 		TArrayView<FSlotTargetFragment> Targets = Context.GetMutableFragmentView<FSlotTargetFragment>();
 		const float FanInHystM = GBattleMovementFanInHysteresis.GetValueOnAnyThread();
+		// Phase 2 B1: running max over the written targets (zero allocation).
+		// Measured against the target actually written (peel/blend included) --
+		// this is the number the straggler pace term, march stickiness, the
+		// debug HUD and the soak assert all consume.
+		float MaxSlotError = 0.f;
 		for (int32 i = 0; i < NumEntities; ++i)
 		{
 			const int32 Slot = Assignment[i];
@@ -430,6 +475,8 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 			Targets[i].bPrevValid = 1;
 			Targets[i].TargetPos = NewTargetPos;
 			Targets[i].TargetYaw = TargetYawDeg;
+			// Phase 2 B1: fold this entity's error into the unit metric.
+			MaxSlotError = FMath::Max(MaxSlotError, FVector2D::Distance(EntityPosM[i], TargetPosM));
 			// Garrison filing (spec §6): TargetZ interpolates along the path
 			// at the entity's rank arc; field movement stays at ground Z.
 			Targets[i].TargetZ = bFiling && Formation.Path.IsValid()
@@ -450,5 +497,9 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 				Debug->EnqueueOverlayLine(Line);
 			}
 		}
+		// Phase 2 B1: publish the unit's dress metric (game thread reads it
+		// next frame for the straggler pace term; one frame of latency, same
+		// channel contract as ReflowCooldown).
+		Formation.MaxSlotErrorM = MaxSlotError;
 	});
 }

@@ -65,6 +65,30 @@ namespace
 		TEXT("1 = marching-form wheel cap (AnchorCap = v_member * r/(r + HalfFrontage) with a path active). Phase 2 A3."),
 		ECVF_Default);
 
+	// Phase 2 B2 (F-6): straggler pacing -- the exhausted flanker finally
+	// slows the whole unit. The block's max slot error throttles the anchor
+	// after the hysteresis stage; recovery rides the same hysteresis gate.
+	TAutoConsoleVariable<int32> GBattleMovementStragglerPace(
+		TEXT("Battle.Movement.StragglerPace"),
+		0,
+		TEXT("1 = throttle the anchor when MaxSlotErrorM exceeds Battle.Movement.DressBreak (phase 2 B2)."),
+		ECVF_Default);
+
+	// Dress-break threshold, meters: how far the block may tear before the
+	// pace term bites and march stickiness releases the reflow (~1.5x the
+	// 1.2 m file spacing at the reference formation). Shared by B2 and B3.
+	TAutoConsoleVariable<float> GBattleMovementDressBreak(
+		TEXT("Battle.Movement.DressBreak"),
+		1.8f,
+		TEXT("Max slot error where the straggler pace term bites / march stickiness releases, m (phase 2 B2/B3)."),
+		ECVF_Default);
+
+	TAutoConsoleVariable<float> GBattleMovementPaceGain(
+		TEXT("Battle.Movement.PaceGain"),
+		0.2f,
+		TEXT("Straggler pace throttle per meter of tear beyond DressBreak (phase 2 B2)."),
+		ECVF_Default);
+
 	// Audit H2: the T1.7 pass decision commits when the constriction is this
 	// close to the anchor (the lead rank at the mouth) -- not on first sight
 	// anywhere inside the 15 m scan-ahead. 6 m gives the batched reflow ~4 s
@@ -876,6 +900,21 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 		const float CurrentLimitM = CurrentLimit * 0.01f;
 		const float NewLimitM = FUnitLocomotion::ApplyHysteresis(CurrentLimitM, RawLimitM, Hysteresis);
 		CurrentLimit = NewLimitM * 100.f;
+
+		// Phase 2 B2 straggler pace (arch §8.2, F-6): the anchor never outruns
+		// its men. Applied AFTER hysteresis so the throttle rides the existing
+		// state machine; when the men re-dress the factor returns to 1 and the
+		// hysteresis gate walks the limit back up. MaxSlotErrorM arrives from
+		// the FormationSlotResolve reduction (worker -> shared fragment, one
+		// frame of latency -- the same channel as ReflowCooldown).
+		if (GBattleMovementStragglerPace.GetValueOnGameThread() != 0 && bHasPath && CommandedSpeedM > 0.f)
+		{
+			const float PaceFactor = FUnitLocomotion::StragglerPaceFactor(
+				Formation.MaxSlotErrorM,
+				GBattleMovementDressBreak.GetValueOnGameThread(),
+				GBattleMovementPaceGain.GetValueOnGameThread());
+			CurrentLimit *= PaceFactor;
+		}
 
 		// ---- Narrow-pass decision (arch §8.6, T1.7): field paths only --
 		//      garrison interior paths PRE-COMMIT the column (PassLocked = 1

@@ -70,4 +70,18 @@ namespace FUnitLocomotion
 		const int32 Clamped = FMath::Clamp(CommandedFiles, 1, NumSlots);
 		return (Clamped != CurrentNumFiles) ? Clamped : 0;
 	}
+
+	float StragglerPaceFactor(const float MaxSlotErrorM, const float DressBreakM, const float PaceGain)
+	{
+		if (MaxSlotErrorM <= DressBreakM || PaceGain <= 0.f)
+		{
+			return 1.f; // dressed (or the policy is off): full pace
+		}
+		return FMath::Clamp(1.f - PaceGain * (MaxSlotErrorM - DressBreakM), 0.f, 1.f);
+	}
+
+	bool MarchReflowSticky(const bool bHasPath, const float MaxSlotErrorM, const float DressBreakM)
+	{
+		return bHasPath && MaxSlotErrorM < DressBreakM;
+	}
 }

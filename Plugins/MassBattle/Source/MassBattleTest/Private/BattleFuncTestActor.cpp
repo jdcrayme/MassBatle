@@ -743,6 +743,17 @@ namespace
 			|| Int(TEXT("Battle.Movement.MemberClamp")) != 0
 			|| Int(TEXT("Battle.Movement.WheelCapV2")) != 0;
 	}
+
+	bool BattleMovementPhaseBFlagsOn()
+	{
+		auto Int = [](const TCHAR* Name) -> int32
+		{
+			const IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(Name);
+			return C ? C->GetInt() : 0;
+		};
+		return Int(TEXT("Battle.Movement.StragglerPace")) != 0
+			|| Int(TEXT("Battle.Movement.MarchStickiness")) != 0;
+	}
 }
 
 AUnitMarchWheelTest::AUnitMarchWheelTest()
@@ -1414,6 +1425,7 @@ void AUnitPassThroughTest::StartTest()
 		CompleteTest(EFunctionalTestResult::Error, TEXT("no world"));
 		return;
 	}
+	bPhaseBFlagsOn = BattleMovementPhaseBFlagsOn();
 	UBattleTestSettings::ApplyTestMode();
 	TArray<FString> Violations;
 	if (!UBattleTestSettings::AssertTestMode(nullptr, &Violations, World))
@@ -1549,6 +1561,17 @@ void AUnitPassThroughTest::Tick(float DeltaSeconds)
 	}
 	else if (Phase == EPhase::Settle)
 	{
+		// Phase 2 phase-B gate sampling: the MOVER kept marching 40 m past the
+		// standee; its dress metric (B1 reduction, read here at the game
+		// thread) must recover <= 0.5 m within 4 s (240 ticks) of the pass.
+		if (const FUnitFormationSharedFragment* Mover = FindFormation(World, MoverHandle))
+		{
+			MaxSlotErrorAfterPassM = FMath::Max(MaxSlotErrorAfterPassM, Mover->MaxSlotErrorM);
+			if (MoverSlotErrorRecoveredTicks < 0 && Mover->MaxSlotErrorM <= 0.5f)
+			{
+				MoverSlotErrorRecoveredTicks = TicksInPhase;
+			}
+		}
 		// Bounded wake recovery: wait until the standee's formation is
 		// coherent again AND separated, or the budget ends.
 		bool bCoherent = true;
@@ -1581,10 +1604,14 @@ void AUnitPassThroughTest::Tick(float DeltaSeconds)
 			}
 			SepNow = FMath::Sqrt(SepNow);
 		}
-		if ((bCoherent && SepNow >= 0.3f) || TicksInPhase > 900)
+		// The 4 s recovery window must elapse (or the mover must have
+		// recovered) before the settle exits, or the gate below would judge a
+		// truncated window.
+		const bool bMoverGateDone = MoverSlotErrorRecoveredTicks >= 0 || TicksInPhase > 240;
+		if ((bCoherent && SepNow >= 0.3f && bMoverGateDone) || TicksInPhase > 900)
 		{
-			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S2_PassThrough settle done ticks=%d coherent=%d sep=%.3f"),
-				TicksInPhase, bCoherent ? 1 : 0, SepNow);
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S2_PassThrough settle done ticks=%d coherent=%d sep=%.3f moverSlotErrorMax=%.3f recoveredTick=%d phaseBflags=%d"),
+				TicksInPhase, bCoherent ? 1 : 0, SepNow, MaxSlotErrorAfterPassM, MoverSlotErrorRecoveredTicks, bPhaseBFlagsOn ? 1 : 0);
 			Phase = EPhase::Assert;
 			TicksInPhase = 0;
 		}
@@ -1629,6 +1656,19 @@ void AUnitPassThroughTest::Tick(float DeltaSeconds)
 		{
 			AddError(FString::Printf(TEXT("T1.6 FAIL: contact-band speed limit %.1f cm/s unthrottled (audit H3, expected <= 100)"),
 				MaxContactLimitCm));
+			bOk = false;
+		}
+
+		// Phase 2 phase-B gate (B-7 / P4b): the mover's dress metric recovers
+		// <= 0.5 m within 4 s (240 ticks) of clearing the standee. Asserted
+		// when a phase-B flag is on; logged otherwise -- at baseline the
+		// recovery rides the plain servo and is expected to make the window
+		// anyway, but the suite never reddens on the old math.
+		if (bPhaseBFlagsOn
+			&& (MoverSlotErrorRecoveredTicks < 0 || MoverSlotErrorRecoveredTicks > 240))
+		{
+			AddError(FString::Printf(TEXT("phase-B FAIL: mover slot error %.2f m recovered at tick %d (expected <= 0.5 m within 240 ticks)"),
+				MaxSlotErrorAfterPassM, MoverSlotErrorRecoveredTicks));
 			bOk = false;
 		}
 

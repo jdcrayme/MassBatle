@@ -130,6 +130,13 @@ struct FUnitFormationSharedFragment : public FMassSharedFragment
 	 *  worker-written). */
 	UPROPERTY() float ReflowCooldown = 0.f;
 
+	/** Phase 2 B1 (F-6): max over live entities of dist(pos, written move
+	 *  target) in METERS, reduced by FormationSlotResolve (worker) and read
+	 *  game-thread by the UnitLocomotion straggler pace term + diagnostics.
+	 *  Same cross-thread pattern as ReflowCooldown above. Diagnostic: never
+	 *  hashed. */
+	UPROPERTY() float MaxSlotErrorM = 0.f;
+
 	/** Arc-length position of the anchor along Path (cm; UnitLocomotion-owned). */
 	UPROPERTY() float PathS = 0.f;
 
