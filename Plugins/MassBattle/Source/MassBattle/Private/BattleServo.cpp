@@ -56,8 +56,11 @@ namespace FUnitServo
 				}
 				else
 				{
+					// Audit L10: the side comes from the handle COMPARISON, not
+					// the parity of my index alone -- same-parity co-located
+					// pairs fled as one blob under the old rule.
 					Away = FVector2D(-MyDesiredVel.Y, MyDesiredVel.X).GetSafeNormal()
-						* ((MyHandleIndex & 1) ? 1.f : -1.f);
+						* ((MyHandleIndex < N.HandleIndex) ? 1.f : -1.f);
 				}
 				Deflection += Away * Combined;
 				continue;

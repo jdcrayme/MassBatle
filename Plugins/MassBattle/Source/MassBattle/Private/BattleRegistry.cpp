@@ -206,7 +206,15 @@ bool UUnitRegistrySubsystem::IsStatsDirty(FUnitHandle Handle) const
 bool UUnitRegistrySubsystem::IssueMoveOrder(FUnitHandle Handle, const FVector2D& AnchorPosCm, float FacingYawDeg,
 	float CommandedSpeedMps, int32 CommandedFiles)
 {
-	if (!IsHandleValid(Handle))
+	// Audit M7: the order API mutates the registry under an access-detector
+	// write scope (all callers are game-thread today -- discipline, not a
+	// live race -- and the validate-and-fetch now share one scope, closing
+	// the IsHandleValid/Find TOCTOU).
+	UE_MT_SCOPED_WRITE_ACCESS(AccessDetector);
+	// Handle.IsValid() only bit-checks (IsHandleValid would nest a read
+	// scope inside this write scope -- detector violation); the map Find
+	// below IS the stale-handle validation (handle == map key).
+	if (!Handle.IsValid())
 	{
 		return false;
 	}
@@ -214,6 +222,18 @@ bool UUnitRegistrySubsystem::IssueMoveOrder(FUnitHandle Handle, const FVector2D&
 	if (!State)
 	{
 		return false;
+	}
+	// Audit M11: an identical re-issue is a no-op -- no serial bump, no
+	// full A*+Smooth+Resample replan on the game thread. A client issuing
+	// the same order every tick replans once, not every tick.
+	const FUnitOrder& Prev = State->CurrentOrder;
+	if (Prev.Type == FUnitOrder::EType::Move
+		&& FVector2D::DistSquared(Prev.AnchorPos, AnchorPosCm) <= FMath::Square(100.f)
+		&& FMath::Abs(FMath::FindDeltaAngleDegrees(Prev.FacingYaw, FacingYawDeg)) < 1.f
+		&& Prev.CommandedSpeed == CommandedSpeedMps
+		&& Prev.CommandedFiles == CommandedFiles)
+	{
+		return true;
 	}
 	FUnitOrder& Order = State->CurrentOrder;
 	Order.Type = FUnitOrder::EType::Move;
@@ -227,7 +247,8 @@ bool UUnitRegistrySubsystem::IssueMoveOrder(FUnitHandle Handle, const FVector2D&
 
 bool UUnitRegistrySubsystem::IssueStopOrder(FUnitHandle Handle)
 {
-	if (!IsHandleValid(Handle))
+	UE_MT_SCOPED_WRITE_ACCESS(AccessDetector); // audit M7
+	if (!Handle.IsValid())
 	{
 		return false;
 	}
@@ -251,7 +272,9 @@ bool UUnitRegistrySubsystem::IssueStopOrder(FUnitHandle Handle)
 
 bool UUnitRegistrySubsystem::IssueGarrisonOrder(FUnitHandle Handle, uint32 StructureId)
 {
-	if (!IsHandleValid(Handle) || StructureId == 0)
+	UE_MT_SCOPED_WRITE_ACCESS(AccessDetector); // audit M7 (IsHandleValid would
+	// nest a read scope in the write scope; the Find below validates instead)
+	if (!Handle.IsValid() || StructureId == 0)
 	{
 		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT GarrisonOrder REJECT BadHandleOrStructure Unit=%u:%u Structure=%u"),
 			Handle.Index, Handle.Serial, StructureId);
@@ -290,7 +313,8 @@ bool UUnitRegistrySubsystem::IssueGarrisonOrder(FUnitHandle Handle, uint32 Struc
 
 bool UUnitRegistrySubsystem::IssueExitGarrisonOrder(FUnitHandle Handle)
 {
-	if (!IsHandleValid(Handle))
+	UE_MT_SCOPED_WRITE_ACCESS(AccessDetector); // audit M7
+	if (!Handle.IsValid())
 	{
 		return false;
 	}
@@ -342,12 +366,14 @@ bool UUnitRegistrySubsystem::ConsumePendingAfterEgress(FUnitHandle Handle, FUnit
 
 const FUnitOrder* UUnitRegistrySubsystem::FindOrder(FUnitHandle Handle) const
 {
+	UE_MT_SCOPED_READ_ACCESS(AccessDetector); // audit M7
 	const FUnitRuntimeState* State = Units.Find(Handle);
 	return State ? &State->CurrentOrder : nullptr;
 }
 
 uint32 UUnitRegistrySubsystem::GetOrderSerial(FUnitHandle Handle) const
 {
+	UE_MT_SCOPED_READ_ACCESS(AccessDetector); // audit M7
 	const FUnitRuntimeState* State = Units.Find(Handle);
 	return State ? State->OrderSerial : 0;
 }

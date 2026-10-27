@@ -47,6 +47,15 @@ namespace FUnitContact
 	/** §8.6 shove blend: w = clamp(MassRatio * OverlapDepth, 0, 1). */
 	MASSBATTLE_API float ShoveBlend(float MassRatio, float OverlapDepthM);
 
+	/** The formation's unit body OBB (audit L9): ONE construction site for
+	 *  every call site. The pre-fix sites disagreed by half a rank spacing
+	 *  on the centroid offset, making the §8.2 facing lock
+	 *  direction-asymmetric. Inputs at the fragment boundary (cm); body in
+	 *  meters, centroid = anchor - front * (ranks-1)*spacing/2, extent
+	 *  ranks*spacing/2 (front rank at the anchor). */
+	MASSBATTLE_API FUnitOBB MakeUnitBody(const FVector2D& AnchorPosCm, float FacingYawDeg,
+		int32 NumSlots, int32 NumFiles, float RankSpacingCm, float FileSpacingCm);
+
 	/** Displacement speed handed to shoved entities (m/s), blended by w. */
 	constexpr float ShoveSpeed = 1.5f;
 

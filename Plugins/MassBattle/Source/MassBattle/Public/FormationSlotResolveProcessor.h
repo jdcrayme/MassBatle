@@ -9,6 +9,8 @@
 #include "MassProcessor.h"
 #include "FormationSlotResolveProcessor.generated.h"
 
+class IConsoleVariable;
+
 UCLASS()
 class MASSBATTLE_API UFormationSlotResolveProcessor : public UMassProcessor
 {
@@ -23,4 +25,6 @@ protected:
 
 private:
 	FMassEntityQuery ResolveQuery;
+	/** Cached overlay toggle pointer (audit M9; stable for the process). */
+	const IConsoleVariable* ShowOverlayCvar = nullptr;
 };

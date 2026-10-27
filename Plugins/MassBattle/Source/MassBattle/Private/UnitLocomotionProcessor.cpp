@@ -86,16 +86,20 @@ void UUnitLocomotionProcessor::ConfigureQueries(const TSharedRef<FMassEntityMana
 	LocomotionQuery.AddSharedRequirement<FUnitStatsSharedFragment>(EMassFragmentAccess::ReadOnly);
 	LocomotionQuery.AddRequirement<FMovementStateFragment>(EMassFragmentAccess::ReadWrite);
 	LocomotionQuery.AddSubsystemRequirement<UUnitRegistrySubsystem>(EMassFragmentAccess::ReadOnly);
+	// Audit M8 (all movement queries): death-window corpses excluded.
+	LocomotionQuery.AddTagRequirement<FDeadTag>(EMassFragmentPresence::None);
 
 	// Unit bodies for the §8.2 hard rule (no facing change while
-	// interpenetrating): one chunk per unit, read-only.
+	// interpenetrating): one chunk per unit, read-only. Audit M8: no corpses.
 	UnitBodyQuery.AddSharedRequirement<FUnitFormationSharedFragment>(EMassFragmentAccess::ReadOnly);
 	UnitBodyQuery.AddRequirement<FOwnerUnitFragment>(EMassFragmentAccess::ReadOnly);
+	UnitBodyQuery.AddTagRequirement<FDeadTag>(EMassFragmentPresence::None);
 
 	// Same grouping, cavalry rosters only (§8.6 mobility-advantage input).
 	CavalryQuery.AddSharedRequirement<FUnitFormationSharedFragment>(EMassFragmentAccess::ReadOnly);
 	CavalryQuery.AddRequirement<FOwnerUnitFragment>(EMassFragmentAccess::ReadOnly);
 	CavalryQuery.AddTagRequirement<FCavalryTag>(EMassFragmentPresence::All);
+	CavalryQuery.AddTagRequirement<FDeadTag>(EMassFragmentPresence::None);
 }
 
 void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionContext& Context)
@@ -151,15 +155,9 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 		{
 			return; // R-G3 exclusion
 		}
-		const int32 NumRanks = FMath::Max(1, FMath::CeilToInt(static_cast<float>(Formation->NumSlots) / Formation->NumFiles));
-		const float RadL = FMath::DegreesToRadians(Formation->FacingYaw);
-		const FVector2D FrontL(FMath::Cos(RadL), FMath::Sin(RadL));
-		const float HalfRanksM = static_cast<float>(NumRanks - 1) * Formation->RankSpacing * 0.5f * 0.01f;
-		FUnitOBB Body;
-		Body.Center = Formation->AnchorPos * 0.01f - FrontL * HalfRanksM; // centroid, not front rank
-		Body.YawDeg = Formation->FacingYaw;
-		Body.HalfAlongFacing = HalfRanksM + Formation->RankSpacing * 0.5f * 0.01f;
-		Body.HalfAcrossFacing = (Formation->NumFiles * Formation->FileSpacing * 0.5f) * 0.01f;
+		// Audit L9: one body construction site for all callers.
+		const FUnitOBB Body = FUnitContact::MakeUnitBody(Formation->AnchorPos, Formation->FacingYaw,
+			Formation->NumSlots, Formation->NumFiles, Formation->RankSpacing, Formation->FileSpacing);
 		UnitBodies.Add(Body);
 		BodyUnits.Add(Owners[0].Owner);
 	});
@@ -789,13 +787,11 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 		bool bPassThroughActive = false;
 		if (!bGarrisoned)
 		{
-			const float RadMy = FMath::DegreesToRadians(Formation.FacingYaw);
-			const FVector2D FrontMy(FMath::Cos(RadMy), FMath::Sin(RadMy));
-			FUnitOBB MyBody;
-			MyBody.Center = Formation.AnchorPos * 0.01f - FrontMy * HalfDepthM; // centroid
-			MyBody.YawDeg = Formation.FacingYaw;
-			MyBody.HalfAlongFacing = HalfDepthM;
-			MyBody.HalfAcrossFacing = HalfFrontageM;
+			// Audit L9: shared construction -- the old inline shape offset the
+			// centroid by NumRanks*spacing/2 (vs the canonical (NumRanks-1)/2)
+			// and sized the extent differently, half a rank spacing off.
+			const FUnitOBB MyBody = FUnitContact::MakeUnitBody(Formation.AnchorPos, Formation.FacingYaw,
+				Formation.NumSlots, Formation.NumFiles, Formation.RankSpacing, Formation.FileSpacing);
 			const bool bSelfCavalry = CavalryUnits.Contains(Unit);
 			for (int32 BodyIdx = 0; BodyIdx < UnitBodies.Num(); ++BodyIdx)
 			{

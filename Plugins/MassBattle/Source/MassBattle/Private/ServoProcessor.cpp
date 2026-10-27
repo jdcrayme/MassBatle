@@ -53,6 +53,8 @@ void UServoProcessor::ConfigureQueries(const TSharedRef<FMassEntityManager>& Ent
 	ServoQuery.AddRequirement<FOwnerUnitFragment>(EMassFragmentAccess::ReadOnly);
 	// Audit M1 step 3: the forced slot swap reads/writes slot indices.
 	ServoQuery.AddRequirement<FSlotAssignmentFragment>(EMassFragmentAccess::ReadWrite);
+	// Audit M8 (all movement queries): death-window corpses excluded.
+	ServoQuery.AddTagRequirement<FDeadTag>(EMassFragmentPresence::None);
 	ServoQuery.AddSharedRequirement<FUnitFormationSharedFragment>(EMassFragmentAccess::ReadOnly);
 
 	// Frame snapshot: every battle entity's position/velocity/state, all
@@ -62,20 +64,24 @@ void UServoProcessor::ConfigureQueries(const TSharedRef<FMassEntityManager>& Ent
 	SnapshotQuery.AddRequirement<FMassVelocityFragment>(EMassFragmentAccess::ReadOnly);
 	SnapshotQuery.AddRequirement<FMovementStateFragment>(EMassFragmentAccess::ReadOnly);
 	SnapshotQuery.AddRequirement<FOwnerUnitFragment>(EMassFragmentAccess::ReadOnly);
+	SnapshotQuery.AddTagRequirement<FDeadTag>(EMassFragmentPresence::None); // audit M8
 
-	// Unit bodies: one chunk per unit (shared-formation grouped).
+	// Unit bodies: one chunk per unit (shared-formation grouped). Audit M8: no corpses.
 	UnitBodyQuery.AddSharedRequirement<FUnitFormationSharedFragment>(EMassFragmentAccess::ReadOnly);
 	UnitBodyQuery.AddRequirement<FOwnerUnitFragment>(EMassFragmentAccess::ReadOnly);
+	UnitBodyQuery.AddTagRequirement<FDeadTag>(EMassFragmentPresence::None);
 
 	// Same grouping, cavalry rosters only (§8.6 mobility-advantage input).
 	CavalryUnitQuery.AddSharedRequirement<FUnitFormationSharedFragment>(EMassFragmentAccess::ReadOnly);
 	CavalryUnitQuery.AddRequirement<FOwnerUnitFragment>(EMassFragmentAccess::ReadOnly);
 	CavalryUnitQuery.AddTagRequirement<FCavalryTag>(EMassFragmentPresence::All);
+	CavalryUnitQuery.AddTagRequirement<FDeadTag>(EMassFragmentPresence::None); // audit M8
 
 	// Audit M6 companion query: zeroes velocity when the servo stage is gated
 	// out (battle entities only -- FOwnerUnitFragment scopes it).
 	ZeroVelocityQuery.AddRequirement<FMassVelocityFragment>(EMassFragmentAccess::ReadWrite);
 	ZeroVelocityQuery.AddRequirement<FOwnerUnitFragment>(EMassFragmentAccess::ReadOnly);
+	ZeroVelocityQuery.AddTagRequirement<FDeadTag>(EMassFragmentPresence::None); // audit M8
 }
 
 void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionContext& Context)
@@ -177,17 +183,9 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 			return; // R-G3: garrisoned units are neither shove sources nor targets
 		}
 		const FUnitFormationSharedFragment& Formation = *FormationPtr;
-		const int32 NumRanks = FMath::Max(1, FMath::CeilToInt(static_cast<float>(Formation.NumSlots) / Formation.NumFiles));
-		// Body centers on the formation CENTROID (the anchor leads at the
-		// front rank; ranks trail behind the facing).
-		const float RadC = FMath::DegreesToRadians(Formation.FacingYaw);
-		const FVector2D FrontC(FMath::Cos(RadC), FMath::Sin(RadC));
-		const float HalfRanksM = static_cast<float>(NumRanks - 1) * Formation.RankSpacing * 0.5f * 0.01f;
-		FUnitOBB Body;
-		Body.Center = Formation.AnchorPos * 0.01f - FrontC * HalfRanksM;
-		Body.YawDeg = Formation.FacingYaw;
-		Body.HalfAlongFacing = HalfRanksM + Formation.RankSpacing * 0.5f * 0.01f;
-		Body.HalfAcrossFacing = (Formation.NumFiles * Formation.FileSpacing * 0.5f) * 0.01f;
+		// Audit L9: one body construction site for all callers (MakeUnitBody).
+		const FUnitOBB Body = FUnitContact::MakeUnitBody(Formation.AnchorPos, Formation.FacingYaw,
+			Formation.NumSlots, Formation.NumFiles, Formation.RankSpacing, Formation.FileSpacing);
 		UnitBodies.Add(Body);
 		BodyUnits.Add(Owners[0].Owner);
 		BodyMoving.Add(Formation.SpeedLimit > 10.f);

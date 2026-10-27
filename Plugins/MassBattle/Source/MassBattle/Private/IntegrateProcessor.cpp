@@ -1,4 +1,5 @@
 #include "IntegrateProcessor.h"
+#include "BattleFragments.h"
 #include "BattleMovementFragments.h"
 #include "BattleGarrison.h"
 #include "BattleServo.h"
@@ -54,6 +55,11 @@ void UIntegrateProcessor::ConfigureQueries(const TSharedRef<FMassEntityManager>&
 	// practice (F11: no archetype impact -- fragment PRESENCE, not new types).
 	IntegrateQuery.AddRequirement<FSlotTargetFragment>(EMassFragmentAccess::ReadOnly);
 	IntegrateQuery.AddSharedRequirement<FUnitFormationSharedFragment>(EMassFragmentAccess::ReadOnly);
+	// Audit M12: battle entities only. The old shape (velocity + transform)
+	// z-pinned and yaw-snapped ANY Mass entity in the world. Audit M8: no
+	// death-window corpses either.
+	IntegrateQuery.AddRequirement<FOwnerUnitFragment>(EMassFragmentAccess::ReadOnly);
+	IntegrateQuery.AddTagRequirement<FDeadTag>(EMassFragmentPresence::None);
 }
 
 void UIntegrateProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionContext& Context)

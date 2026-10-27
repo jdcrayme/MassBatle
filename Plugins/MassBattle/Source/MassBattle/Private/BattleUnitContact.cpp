@@ -79,4 +79,19 @@ namespace FUnitContact
 	{
 		return FMath::Clamp(MassRatio * OverlapDepthM, 0.f, 1.f);
 	}
+
+	FUnitOBB MakeUnitBody(const FVector2D& AnchorPosCm, float FacingYawDeg,
+		int32 NumSlots, int32 NumFiles, float RankSpacingCm, float FileSpacingCm)
+	{
+		const int32 NumRanks = FMath::Max(1, FMath::CeilToInt(static_cast<float>(NumSlots) / FMath::Max(1, NumFiles)));
+		const float HalfDepthM = static_cast<float>(NumRanks - 1) * RankSpacingCm * 0.5f * 0.01f;
+		const float Rad = FMath::DegreesToRadians(FacingYawDeg);
+		const FVector2D Front(FMath::Cos(Rad), FMath::Sin(Rad));
+		FUnitOBB Body;
+		Body.Center = AnchorPosCm * 0.01f - Front * HalfDepthM;
+		Body.YawDeg = FacingYawDeg;
+		Body.HalfAlongFacing = HalfDepthM + RankSpacingCm * 0.5f * 0.01f;
+		Body.HalfAcrossFacing = (static_cast<float>(NumFiles) * FileSpacingCm * 0.5f) * 0.01f;
+		return Body;
+	}
 }

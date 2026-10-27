@@ -1,4 +1,5 @@
 #include "FormationSlotResolveProcessor.h"
+#include "BattleFragments.h"
 #include "BattleMovementFragments.h"
 #include "BattleSlotAssigner.h"
 #include "BattleGarrison.h"
@@ -52,6 +53,7 @@ namespace
 UFormationSlotResolveProcessor::UFormationSlotResolveProcessor(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 	, ResolveQuery(*this)
+	, ShowOverlayCvar(nullptr)
 {
 	bAutoRegisterWithProcessingPhases = true;
 	SetProcessingPhase(EMassProcessingPhase::PrePhysics);
@@ -69,6 +71,10 @@ void UFormationSlotResolveProcessor::ConfigureQueries(const TSharedRef<FMassEnti
 	ResolveQuery.AddRequirement<FSlotTargetFragment>(EMassFragmentAccess::ReadWrite);
 	ResolveQuery.AddRequirement<FTransformFragment>(EMassFragmentAccess::ReadOnly);
 	ResolveQuery.AddRequirement<FMassVelocityFragment>(EMassFragmentAccess::ReadOnly);
+	// Audit M8: death-window corpses are excluded from the movement chain --
+	// they must not be re-slotted or servoed toward targets while the
+	// destroy is in flight (the Phase 0 M1 standard).
+	ResolveQuery.AddTagRequirement<FDeadTag>(EMassFragmentPresence::None);
 }
 
 void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionContext& Context)
@@ -86,8 +92,16 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 	}
 
 	const float DT = Context.GetDeltaTimeSeconds();
+	// Audit M9: the overlay CVAR is read once per Execute (pointer cached --
+	// stable for the process) so workers do not construct overlay lines and
+	// take the debug mutex per entity per frame while the overlay is off.
+	if (!ShowOverlayCvar)
+	{
+		ShowOverlayCvar = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Debug.ShowOverlay"));
+	}
+	const bool bOverlay = ShowOverlayCvar && ShowOverlayCvar->GetInt() != 0;
 
-	ResolveQuery.ForEachEntityChunk(Context, [DT](FMassExecutionContext& Context)
+	ResolveQuery.ForEachEntityChunk(Context, [DT, bOverlay](FMassExecutionContext& Context)
 	{
 		// Audit H4: per-thread scratch reused across chunks and frames
 		// (Reset/Init keep capacity) -- zero steady-state heap traffic from
@@ -161,18 +175,21 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 				TArray<int32> NewAssignment;
 				FGarrisonLayout::AssignSlots(EntityPosM, PostPosM, Assignment,
 					bLayoutRedecision ? BIG_NUMBER : FGarrisonCVars::MaxSlotDisplacement(), NewAssignment);
+				TArrayView<FSlotAssignmentFragment> HoldSlots = Context.GetMutableFragmentView<FSlotAssignmentFragment>();
 				for (int32 i = 0; i < NumEntities; ++i)
 				{
-					Context.GetMutableFragmentView<FSlotAssignmentFragment>()[i].SlotIndex =
-						NewAssignment[i] >= 0 ? NewAssignment[i] + SlotBase : INDEX_NONE;
+					HoldSlots[i].SlotIndex = NewAssignment[i] >= 0 ? NewAssignment[i] + SlotBase : INDEX_NONE;
+					HoldSlots[i].Generation = Formation.Generation; // audit L12: the mirror is now live
 				}
 				Assignment = MoveTemp(NewAssignment);
 				Formation.AssignedGeneration = Formation.Generation;
 			}
 			Formation.ReflowCooldown = Scheduler.Cooldown;
 
-			// Write move targets + slot-error overlay (A3).
-			UBattleDebugSubsystem* DebugHold = Context.GetWorld() ? Context.GetWorld()->GetSubsystem<UBattleDebugSubsystem>() : nullptr;
+			// Write move targets + slot-error overlay (A3). Audit M9: the
+			// enqueue is gated on the overlay toggle -- the mutex per entity
+			// per frame was pure contention against the game-thread drain.
+			UBattleDebugSubsystem* DebugHold = bOverlay && Context.GetWorld() ? Context.GetWorld()->GetSubsystem<UBattleDebugSubsystem>() : nullptr;
 			TArrayView<FSlotTargetFragment> HoldTargets = Context.GetMutableFragmentView<FSlotTargetFragment>();
 			for (int32 i = 0; i < NumEntities; ++i)
 			{
@@ -353,18 +370,22 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 				FSlotAssigner::ApplyPredictiveSwaps(NewAssignment, Pairs, EntityPosM, SlotPosM);
 			}
 
-			// Adopt.
+			// Adopt (audit L12: stamp the layout generation the slot was
+			// assigned under -- the field was written at spawn and never
+			// touched again before).
+			TArrayView<FSlotAssignmentFragment> SlotsView = Context.GetMutableFragmentView<FSlotAssignmentFragment>();
 			for (int32 i = 0; i < NumEntities; ++i)
 			{
-				Context.GetMutableFragmentView<FSlotAssignmentFragment>()[i].SlotIndex = NewAssignment[i];
+				SlotsView[i].SlotIndex = NewAssignment[i];
+				SlotsView[i].Generation = Formation.Generation;
 			}
 			Assignment = MoveTemp(NewAssignment);
 			Formation.AssignedGeneration = Formation.Generation;
 		}
 		Formation.ReflowCooldown = Scheduler.Cooldown;
 
-		// ---- Write move targets + slot-error overlay (A3) ----
-		UBattleDebugSubsystem* Debug = Context.GetWorld() ? Context.GetWorld()->GetSubsystem<UBattleDebugSubsystem>() : nullptr;
+		// ---- Write move targets + slot-error overlay (A3; M9-gated) ----
+		UBattleDebugSubsystem* Debug = bOverlay && Context.GetWorld() ? Context.GetWorld()->GetSubsystem<UBattleDebugSubsystem>() : nullptr;
 		TArrayView<FSlotTargetFragment> Targets = Context.GetMutableFragmentView<FSlotTargetFragment>();
 		const float FanInHystM = GBattleMovementFanInHysteresis.GetValueOnAnyThread();
 		for (int32 i = 0; i < NumEntities; ++i)
