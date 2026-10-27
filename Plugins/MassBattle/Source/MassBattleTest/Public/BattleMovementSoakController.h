@@ -54,6 +54,11 @@ private:
 	// stuck/separation accounting otherwise.
 	int32 SkippedUnitsAtAssert = 0;
 
+	// Phase 2 D2: worst sampled MaxSlotErrorM across the soak (the dress
+	// metric; sampled with the ~5 s sampler, logged in the FINAL line and
+	// bounded when a phase-2 movement flag is on).
+	float MaxDressErrorM = 0.f;
+
 	// Effective knobs (CVAR-overridable; defaults preserve the T1.8
 	// baseline byte-for-byte).
 	int32 UnitsPerRow = 4;          // Battle.Movement.SoakGrid x units per row (grid = N x N/2... 4x2 = 8)

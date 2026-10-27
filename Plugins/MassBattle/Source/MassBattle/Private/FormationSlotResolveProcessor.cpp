@@ -620,6 +620,25 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 				Debug->EnqueueOverlayLine(Line);
 			}
 		}
+		// Phase 2 D2: final-slot ghost markers (violet crosses -- distinct
+		// channel from the slot-error lines) under the overlay + master
+		// switch: where the unit is converging, visible during the approach.
+		if (bFallIn && bFanIn && Debug)
+		{
+			constexpr float Z = 20.f; // field paths are flat; ground Z
+			for (int32 Slot = 0; Slot < Formation.NumSlots; ++Slot)
+			{
+				const FVector2D G = FinalSlotPosM[Slot] * 100.f;
+				FBattleOverlayLine Ghost;
+				Ghost.From = FVector(G.X - 15.f, G.Y, Z);
+				Ghost.To = FVector(G.X + 15.f, G.Y, Z);
+				Ghost.Color = FColor(170, 0, 255);
+				Debug->EnqueueOverlayLine(Ghost);
+				Ghost.From = FVector(G.X, G.Y - 15.f, Z);
+				Ghost.To = FVector(G.X, G.Y + 15.f, Z);
+				Debug->EnqueueOverlayLine(Ghost);
+			}
+		}
 		// Phase 2 B1: publish the unit's dress metric (game thread reads it
 		// next frame for the straggler pace term; one frame of latency, same
 		// channel contract as ReflowCooldown).

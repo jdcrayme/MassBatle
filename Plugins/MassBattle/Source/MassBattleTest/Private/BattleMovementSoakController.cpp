@@ -310,6 +310,10 @@ void UBattleMovementSoakController::OnTick(float TimeDelta)
 				{
 					continue; // garrison variant: posts sit inside the structure, not in the field body
 				}
+				// Phase 2 D2: the dress metric rides the same 1-per-~5 s sample
+				// (worker-reduced into the shared fragment by
+				// FormationSlotResolve). Worst sample gates the march bound.
+				MaxDressErrorM = FMath::Max(MaxDressErrorM, Formation->MaxSlotErrorM);
 				const int32 NumRanks = FMath::Max(1, FMath::CeilToInt(static_cast<float>(Formation->NumSlots) / Formation->NumFiles));
 				const float Rad = FMath::DegreesToRadians(Formation->FacingYaw);
 				const FVector2D Front(FMath::Cos(Rad), FMath::Sin(Rad));
@@ -525,6 +529,25 @@ void UBattleMovementSoakController::OnTick(float TimeDelta)
 		// deliberate cross-marches; the ladder un-parks them at settle,
 		// where stuck=0 is gated separately). A whole-army jam exceeds it.
 		const int32 DeepStuckBudget = (TotalUnits * 40 * 2) / 5;
+		// Phase 2 D2 march bound (plan P5): the worst sampled MaxSlotErrorM
+		// stays under 6 m. Random-order soaks deliberately cross formations
+		// (Block contact + morphs legitimately tear the block mid-soak); the
+		// bound catches RUNAWAY tears (the pre-phase-2 wheel shed measured
+		// 17 m) not contact churn. Asserted when a phase-2 movement flag is
+		// on; logged otherwise -- the baseline behavior keeps its gate.
+		bool bPhase2FlagsOn = false;
+		for (const TCHAR* Name : { TEXT("Battle.Movement.FeedForward"), TEXT("Battle.Movement.MemberClamp"),
+			TEXT("Battle.Movement.WheelCapV2"), TEXT("Battle.Movement.StragglerPace"),
+			TEXT("Battle.Movement.MarchStickiness"), TEXT("Battle.Movement.ProgressiveFallIn") })
+		{
+			if (const IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(Name); C && C->GetInt() != 0)
+			{
+				bPhase2FlagsOn = true;
+				break;
+			}
+		}
+		constexpr float DressBoundM = 6.f;
+		const bool bDressOk = !bPhase2FlagsOn || MaxDressErrorM <= DressBoundM;
 		const bool bOk = bTestModeOk
 			&& StuckNow == 0
 			&& SeparatedNow == 0
@@ -533,13 +556,15 @@ void UBattleMovementSoakController::OnTick(float TimeDelta)
 			&& SkippedUnitsAtAssert == 0
 			&& MaxDuringStuckDeep <= DeepStuckBudget
 			&& DuringEsc <= EscBudget
-			&& SeparationViolations <= SepBudget;
+			&& SeparationViolations <= SepBudget
+			&& bDressOk;
 		UE_LOG(LogGauntlet, Display,
-			TEXT("GAUNTLET BattleMovementSoak FINAL settled stuck=%d separation=%d archetypes=%d (spawn %d) garrisoned=%d unsettled=%d phases=[None=%d App=%d Queue=%d Ingress=%d Occupy=%d Settled=%d Egress=%d] duringSoak escalations=%d/%d duringSoak separationEvents=%d/%d duringSoak maxDeepStuck=%d/%d fieldWide=%d skippedUnits=%d testMode=%d ok=%d"),
+			TEXT("GAUNTLET BattleMovementSoak FINAL settled stuck=%d separation=%d archetypes=%d (spawn %d) garrisoned=%d unsettled=%d phases=[None=%d App=%d Queue=%d Ingress=%d Occupy=%d Settled=%d Egress=%d] duringSoak escalations=%d/%d duringSoak separationEvents=%d/%d duringSoak maxDeepStuck=%d/%d dressErr=%.2f/%.1fm(phase2=%d) fieldWide=%d skippedUnits=%d testMode=%d ok=%d"),
 			StuckNow, SeparatedNow, ArchetypesNow, ArchetypeCountAtSpawn,
 			GarrisonedNow, GarrisonedUnsettled,
 			PhaseCounts[0], PhaseCounts[1], PhaseCounts[2], PhaseCounts[3], PhaseCounts[4], PhaseCounts[5], PhaseCounts[6],
 			DuringEsc, EscBudget, SeparationViolations, SepBudget, MaxDuringStuckDeep, DeepStuckBudget,
+			MaxDressErrorM, DressBoundM, bPhase2FlagsOn ? 1 : 0,
 			FieldWideOrders, SkippedUnitsAtAssert,
 			bTestModeOk ? 1 : 0, bOk ? 1 : 0);
 		Phase = EPhase::Done;
