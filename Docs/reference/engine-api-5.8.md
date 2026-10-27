@@ -230,6 +230,28 @@ C1–C7 (§0 above). None of them change the Phase 0 architecture; C2 (signal re
 
 ---
 
+## 15. StateTree audit (Phase 2 task 1, I4 — 2026-10-27, pinned 5.8.4 CL 58902052)
+
+Verdict context: the unit FSM decision (arch §6.2, roadmap I4). All paths below verified against the pinned source tree `E:\Unreal\UE_5.8\Engine\Plugins\...`.
+
+| Symbol / fact | Verdict | Evidence |
+|---|---|---|
+| Core plugin | EXISTS, not beta-marked | `Runtime/StateTree/StateTree.uplugin`: `StateTreeModule` (Runtime, PreDefault), `StateTreeTestSuite` (UncookedOnly), `StateTreeDeveloper` (DeveloperTool), `StateTreeEditorModule` (UncookedOnly). `"IsBetaVersion": false`. Description: "General purpose hierarchical state machine" |
+| Actor-level execution | EXISTS | `Runtime/GameplayStateTree/Source/GameplayStateTreeModule/Public/Components/StateTreeComponent.h` — `UStateTreeComponent` (owns `FStateTreeInstanceData InstanceData`, `bIsRunning`), `UStateTreeAIComponent` + schemas. Plugin not beta-marked |
+| Component tick shape | Frame-driven, world DeltaTime | `StateTreeComponent.cpp TickComponent`: builds `FStateTreeExecutionContext Context(Owner, *StateTreeRef.GetStateTree(), InstanceData)` then `Context.Tick(DeltaTime)`; scheduled ticks via `ScheduleTickFrame(Context.GetNextScheduledTick())` — no FTimerManager / wall-clock in the scheduler |
+| **Execution RNG seed** | **WALL-CLOCK BY DEFAULT — determinism trap** | `StateTreeModule/Private/StateTreeExecutionContext.cpp:1513`: `Exec.RandomStream.Initialize(Parameters.RandomSeed.IsSet() ? Parameters.RandomSeed.GetValue() : FPlatformTime::Cycles())`. `UStateTreeComponent::TickComponent` passes NO seed → any task/transition that draws randomness is wall-clock seeded. Safe only with a manually driven `FStateTreeExecutionContext` and an explicit `TOptional<int32> RandomSeed` per tick |
+| State-tree authoring | **EDITOR-ONLY — no runtime compiler** | `FStateTreeCompiler` lives in `StateTreeEditorModule/Public/StateTreeCompiler.h` (UncookedOnly module). `UStateTree::CompileIfChanged()` compiles "if the editor data has changed" (`WITH_EDITORONLY_DATA` EditorData, `StateTree.h:381`). No compile path exists in StateTreeModule → a usable `UStateTree` cannot be produced in a -game process; it must be a pre-compiled saved asset or editor-session authored |
+| Engine's own tests are editor-bound | Corroborates the above | `StateTreeTestSuite` module type `UncookedOnly` — Epic's StateTree tests do not run in -game standalone |
+| Headless state READ | OK | `UStateTreeComponent::GetActiveStateNames()` + `IsRunning()` + public `InstanceData` — readable from C++ without the editor once a tree runs |
+| Mass-side bridge | EXISTS in `MassAI` plugin | `Plugins/AI/MassAI/Source/MassAIBehavior/Public/MassStateTree*` (MassStateTreeExecutionContext/Schema/Subsystem/Trait/Types/Fragments/Processors) — the bridge shipped in the engine, plugin-level beta flag false |
+| **Mass bridge dependency surface** | **REJECT-GRADE for this project** | `MassAIBehavior.Build.cs` pulls `MassZoneGraphNavigation`, `ZoneGraph`, `ZoneGraphAnnotations`, `MassNavMeshNavigation`, `MassRepresentation`, `MassSmartObjects`, `SmartObjectsModule`, `NavigationSystem`, `MassActors`, `MassSpawner`, `MassSimulation` — violates the project posture that Mass Crowds/ZoneGraph stay unlinked (arch R2 / phase-1 A1 family); also rides its own Mass processor pipeline |
+| Actor-path dependency surface | Lean but nonzero | `GameplayStateTreeModule.Build.cs`: AIModule, Core, CoreUObject, Engine, GameplayTags, GameplayTasks, NavigationSystem, PropertyBindingUtils, StateTreeModule |
+| Linkage (for the record) | — | Actor-level: `GameplayStateTreeModule` + `StateTreeModule` (+ enable the `GameplayStateTree` plugin in the .uproject). Mass bridge: `MassAIBehavior` (+ enable `MassAI`) — NOT linked by this project |
+
+Decision consequence: recorded as the ADR-24 proposal (reject-with-evidence) in `Docs/phases/phase-2/progress-engagement.md`; the FSM stays the registry order-consumption pattern (garrison precedent).
+
+---
+
 # Part B — Operational API digest (from Phase 0 brief §4, corrections applied in place)
 
 > **Citation compatibility:** headings below keep the Phase 0 brief's original §4.0–§4.13 numbering, so historical instructions like "cite the digest entry (§4.3)" or "BRIEF §4" resolve here. Where Part A verdicts and this digest ever appear to disagree, **Part A wins** (it was verified line-by-line against the pinned engine source).
