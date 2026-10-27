@@ -455,6 +455,7 @@ private:
 	int32 SavedCombatCvars[4] = {};
 	void SetCombatCvars();
 	void RestoreCombatCvars();
+	void DestroySmokeUnits();
 };
 
 // ---------------------------------------------------------------------------
@@ -492,6 +493,114 @@ private:
 	bool bSawConnect = false;
 	float MaxDefenderDisplacementM = 0.f;
 	TArray<FVector2D> DefenderPositionsAtContact;
+	void SetCvars();
+	void RestoreCvars();
+	void DestroyChargeUnits();
+};
+
+
+// ---------------------------------------------------------------------------
+// Phase 2 task 8: the T2.4/T2.5/T2.7 scenario gates (the exit-criteria
+// scenarios are PR-gate citizens) + the shared clash-spawn helper the
+// Battle.Combat.SpawnClash Exec fixture reuses.
+// ---------------------------------------------------------------------------
+UCLASS()
+class MASSBATTLETEST_API AS4ShieldWallTest : public AFunctionalTest
+{
+	GENERATED_BODY()
+
+public:
+	AS4ShieldWallTest();
+
+	void BeginTest();
+	void CompleteTest(EFunctionalTestResult TestResult, const FString& Message);
+	virtual void StartTest() override;
+	virtual void Tick(float DeltaSeconds) override;
+	virtual bool IsReady_Implementation() override { return true; }
+	virtual void Destroyed() override;
+
+private:
+	enum class EPhase : int32 { Spawn, Engage, Sample, Done };
+	EPhase Phase = EPhase::Spawn;
+	int32 TicksInPhase = 0;
+	UPROPERTY() TObjectPtr<AUnitActor> Attackers;
+	UPROPERTY() TObjectPtr<AUnitActor> Defenders;
+	int32 SavedCvars[4] = {};
+
+	// Melt-curve samples: (defender alive, avg coverage, pressure per alive).
+	struct FMeltSample
+	{
+		int32 Alive = 0;
+		float AvgCoverage = 0.f;
+		float PressurePerAlive = 0.f;
+	};
+	TArray<FMeltSample> Samples;
+	int32 WallHeldSamples = 0;
+	int32 MeltSamples = 0;
+	float WallBudgetAtHighCoverage = 0.f;
+	float MeltBudgetAtLowCoverage = 0.f;
+	void SetCvars();
+	void RestoreCvars();
+};
+
+UCLASS()
+class MASSBATTLETEST_API AS5MobTest : public AFunctionalTest
+{
+	GENERATED_BODY()
+
+public:
+	AS5MobTest();
+
+	void BeginTest();
+	void CompleteTest(EFunctionalTestResult TestResult, const FString& Message);
+	virtual void StartTest() override;
+	virtual void Tick(float DeltaSeconds) override;
+	virtual bool IsReady_Implementation() override { return true; }
+	virtual void Destroyed() override;
+
+private:
+	enum class EPhase : int32 { Spawn, Engage, Assert, Done };
+	EPhase Phase = EPhase::Spawn;
+	int32 TicksInPhase = 0;
+	UPROPERTY() TObjectPtr<AUnitActor> Peasants;
+	UPROPERTY() TObjectPtr<AUnitActor> KnightA;
+	UPROPERTY() TObjectPtr<AUnitActor> KnightB;
+	int32 SavedCvars[4] = {};
+	int32 MaxExposedAttackers = 0;
+	int32 MaxWaitersAtRing = 0;
+	int32 MobStartTick = -1;
+	int32 MobKillTick = -1;
+	void SetCvars();
+	void RestoreCvars();
+};
+
+UCLASS()
+class MASSBATTLETEST_API APairLifecycleTest : public AFunctionalTest
+{
+	GENERATED_BODY()
+
+public:
+	APairLifecycleTest();
+
+	void BeginTest();
+	void CompleteTest(EFunctionalTestResult TestResult, const FString& Message);
+	virtual void StartTest() override;
+	virtual void Tick(float DeltaSeconds) override;
+	virtual bool IsReady_Implementation() override { return true; }
+	virtual void Destroyed() override;
+
+private:
+	enum class EPhase : int32 { Spawn, Pair, Handoff, Disengage, Distance, Assert, Done };
+	EPhase Phase = EPhase::Spawn;
+	int32 TicksInPhase = 0;
+	UPROPERTY() TObjectPtr<AUnitActor> Attackers;
+	UPROPERTY() TObjectPtr<AUnitActor> Defenders;
+	int32 SavedCvars[4] = {};
+	int32 PairedBeforeKill = 0;
+	int32 RePairTicks = -1;
+	int32 DisengageReleaseTicks = -1;
+	int32 DistanceBreakTicks = -1;
+	int32 PairFormedTick = -1;
 	void SetCvars();
 	void RestoreCvars();
 };

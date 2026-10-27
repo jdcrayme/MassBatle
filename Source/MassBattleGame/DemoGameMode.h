@@ -26,6 +26,7 @@ public:
 private:
 	/** Deferred spawn pump: retries until the world + Mass are ready. */
 	void TrySpawnLevelUnits();
+	void RegisterM3Sample();
 
 	/** One-time click-path probe after the level settles: resolves each
 	 *  registered structure's own footprint center through the SAME static

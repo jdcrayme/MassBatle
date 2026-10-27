@@ -97,7 +97,12 @@ void UTallyProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 		}
 		const auto Transforms = Context.GetFragmentView<FTransformFragment>();
 		const auto Owners = Context.GetFragmentView<FOwnerUnitFragment>();
-		const float SpacingM = Formation.FileSpacing * 0.01f;
+		// The coverage radius rides the formation's CURRENT spacing (the
+		// compression scale included): coverage measures the formation's
+		// integrity at its own scale -- a compressed huddle must not read as
+		// fully covered (the EC2 melt needs real gaps to register;
+		// measured 2026-10-27: the raw spacing read coverage 1.0 at 8 alive).
+		const float SpacingM = Formation.FileSpacing * Formation.SpacingScale * 0.01f;
 		const float SearchRadius = FMath::Max(0.1f, SpacingM) * 1.25f;
 		const int32 SectorCount = FMath::Clamp(FCombatCVars::SectorCount(), 1, 16);
 		for (int32 i = 0; i < Context.GetNumEntities(); ++i)
@@ -113,24 +118,21 @@ void UTallyProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 
 			// Same-unit living neighbors within Spacing * 1.25 (self excluded).
 			TArray<FBattleHashEntry> Neighbors;
-			Hash->QueryCircle(PosM, SearchRadius, Neighbors);
+			TArray<FVector2D> NeighborQueryPositionsM;
+			Hash->QueryCircle(PosM, SearchRadius, Neighbors, &NeighborQueryPositionsM);
 			TArray<FVector2D> NeighborPositionsM;
 			uint8 CoveredMask = 0;
 			const float Rad = FMath::DegreesToRadians(Formation.FacingYaw);
 			const FVector2D Forward(FMath::Cos(Rad), FMath::Sin(Rad));
 			const FVector2D Side(-FMath::Sin(Rad), FMath::Cos(Rad));
-			for (const FBattleHashEntry& Neighbor : Neighbors)
+			for (int32 N = 0; N < Neighbors.Num(); ++N)
 			{
+				const FBattleHashEntry& Neighbor = Neighbors[N];
 				if (Neighbor.Unit != MyUnit)
 				{
 					continue;
 				}
-				const int32 Slot = Hash->FindSlotFor(Neighbor.Entity);
-				if (Slot == INDEX_NONE)
-				{
-					continue;
-				}
-				const FVector2D NPos = Hash->GetEntryPositionsM()[Slot];
+				const FVector2D NPos = NeighborQueryPositionsM[N];
 				NeighborPositionsM.Add(NPos);
 				// Covered sector: the neighbor's direction in the defender's
 				// frame (facing-relative, clockwise, 0-255 -- the ContactAngle

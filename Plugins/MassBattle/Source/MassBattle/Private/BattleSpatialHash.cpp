@@ -154,7 +154,8 @@ int32 UBattleSpatialHashSubsystem::FindSlotFor(FMassEntityHandle Entity) const
 	return INDEX_NONE;
 }
 
-void UBattleSpatialHashSubsystem::QueryCircle(const FVector2D& CenterM, float RadiusM, TArray<FBattleHashEntry>& OutEntries) const
+void UBattleSpatialHashSubsystem::QueryCircle(const FVector2D& CenterM, float RadiusM, TArray<FBattleHashEntry>& OutEntries,
+	TArray<FVector2D>* OutPositionsM) const
 {
 	const int32 MinX = FMath::Max(0, FMath::FloorToInt((CenterM.X - RadiusM - OriginM.X) / CellSizeM));
 	const int32 MaxX = FMath::Min(DimCells - 1, FMath::FloorToInt((CenterM.X + RadiusM - OriginM.X) / CellSizeM));
@@ -175,6 +176,10 @@ void UBattleSpatialHashSubsystem::QueryCircle(const FVector2D& CenterM, float Ra
 				if (FVector2D::DistSquared(EntryPositionsM[Slot], CenterM) <= RadiusSq)
 				{
 					OutEntries.Add(SortedEntries[Slot]);
+					if (OutPositionsM)
+					{
+						OutPositionsM->Add(EntryPositionsM[Slot]);
+					}
 				}
 			}
 		}

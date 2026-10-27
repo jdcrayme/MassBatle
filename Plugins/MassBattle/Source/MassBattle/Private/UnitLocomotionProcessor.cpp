@@ -272,8 +272,14 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 			}
 			if (!bTargetAnchorFound)
 			{
-				// No valid target (dead / gone): hold where we stand.
-				AttackAsMoveStorage.AnchorPos = Formation.AnchorPos;
+				// AttackUnit with no valid target (dead / gone): hold where we
+				// stand. AttackMove ALWAYS has its own march anchor -- the
+				// auto-engage resolves the target once contact records form
+				// (holding would deadlock the approach: no march -> no contact
+				// -> no records -> no target -- measured 2026-10-27 in S5).
+				AttackAsMoveStorage.AnchorPos = Order->Type == FUnitOrder::EType::AttackMove
+					? Order->AnchorPos
+					: Formation.AnchorPos;
 			}
 			Order = &AttackAsMoveStorage;
 		}

@@ -51,4 +51,7 @@ namespace BattleExec
 	MASSBATTLE_API void OrderAttackMove(const TArray<FString>& Args, UWorld* World);
 	MASSBATTLE_API void CombatDumpPairs(const TArray<FString>& Args, UWorld* World);
 	MASSBATTLE_API void CombatSaveProbe(const TArray<FString>& Args, UWorld* World);
+
+	// -- Phase 2 task 8 (M3 demo fixtures; brief A10, geometry-only) --
+	MASSBATTLE_API void CombatSpawnClash(const TArray<FString>& Args, UWorld* World);
 }

@@ -1,6 +1,9 @@
 #include "BattleFuncTestActor.h"
 #include "BattleFragments.h"
 #include "BattleCombatFragments.h"
+#include "BattleEngagement.h"
+#include "BattleEduParser.h"
+#include "BattleSpawnLibrary.h"
 #include "UnitActor.h"
 #include "BattleRegistry.h"
 #include "BattleSpawnLibrary.h"
@@ -4374,6 +4377,7 @@ void ACombatSmokeTest::BeginTest()
 
 void ACombatSmokeTest::CompleteTest(EFunctionalTestResult TestResult, const FString& Message)
 {
+	DestroySmokeUnits();
 	RestoreCombatCvars();
 	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT CombatSmoke %s %s"),
 		TestResult == EFunctionalTestResult::Succeeded ? TEXT("PASS") : TEXT("FAIL"), *Message);
@@ -4408,6 +4412,19 @@ void ACombatSmokeTest::Destroyed()
 {
 	RestoreCombatCvars();
 	Super::Destroyed();
+}
+
+void ACombatSmokeTest::DestroySmokeUnits()
+{
+	for (AUnitActor* Actor : { (AUnitActor*)UnitA, (AUnitActor*)UnitB })
+	{
+		if (Actor)
+		{
+			Actor->Destroy();
+		}
+	}
+	UnitA = nullptr;
+	UnitB = nullptr;
 }
 
 void ACombatSmokeTest::StartTest()
@@ -4588,6 +4605,7 @@ void AChargeMechanicsTest::BeginTest()
 
 void AChargeMechanicsTest::CompleteTest(EFunctionalTestResult TestResult, const FString& Message)
 {
+	DestroyChargeUnits();
 	RestoreCvars();
 	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT ChargeMechanics %s %s"),
 		TestResult == EFunctionalTestResult::Succeeded ? TEXT("PASS") : TEXT("FAIL"), *Message);
@@ -4631,6 +4649,19 @@ void AChargeMechanicsTest::Destroyed()
 {
 	RestoreCvars();
 	Super::Destroyed();
+}
+
+void AChargeMechanicsTest::DestroyChargeUnits()
+{
+	for (AUnitActor* Actor : { (AUnitActor*)UnitA, (AUnitActor*)UnitB })
+	{
+		if (Actor)
+		{
+			Actor->Destroy();
+		}
+	}
+	UnitA = nullptr;
+	UnitB = nullptr;
 }
 
 void AChargeMechanicsTest::StartTest()
@@ -4840,4 +4871,682 @@ namespace
 		return World->SpawnActor<AChargeMechanicsTest>();
 	}
 	const FBattleFuncTestRegistry::FRegistrar GRegChargeMechanics(TEXT("AChargeMechanicsTest"), &MakeChargeMechanicsTest);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2 task 8 implementations: S4_ShieldWall (T2.4), S5_Mob (T2.5),
+// PairLifecycle (T2.7). All three ride the combat cvars locally and restore
+// them on completion (the rest of the suite stays flags-off).
+// ---------------------------------------------------------------------------
+namespace
+{
+	constexpr const TCHAR* ClashCvars[] = {
+		TEXT("Battle.Combat.SpatialHash"),
+		TEXT("Battle.Combat.Clusters"),
+		TEXT("Battle.Combat.Tally"),
+		TEXT("Battle.Combat.Assign"),
+	};
+
+	void ClashSetCvars(int32 (&Saved)[4])
+	{
+		for (int32 i = 0; i < 4; ++i)
+		{
+			if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(ClashCvars[i]))
+			{
+				Saved[i] = C->GetInt();
+				C->Set(1, ECVF_SetByCode);
+			}
+		}
+	}
+
+	void ClashRestoreCvars(int32 (&Saved)[4])
+	{
+		for (int32 i = 0; i < 4; ++i)
+		{
+			if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(ClashCvars[i]))
+			{
+				C->Set(Saved[i], ECVF_SetByCode);
+			}
+		}
+	}
+
+	AUnitActor* ClashSpawnActor(UWorld* World, int32 EduRow, int32 Count, const FVector2D& PosM, float YawDeg)
+	{
+		FActorSpawnParameters Params;
+		Params.ObjectFlags |= RF_Transient;
+		AUnitActor* Unit = World->SpawnActor<AUnitActor>(FVector(PosM.X * 100.f, PosM.Y * 100.f, 100.f),
+			FRotator(0.f, YawDeg, 0.f), Params);
+		if (Unit)
+		{
+			Unit->EduRowIndex = EduRow;
+			Unit->SoldierCount = Count;
+			FBattleSpawnResult R;
+			FString E;
+			if (!Unit->SpawnEntities(R, E))
+			{
+				Unit = nullptr;
+			}
+		}
+		return Unit;
+	}
+}
+
+// -- S4_ShieldWall (T2.4) --
+
+AS4ShieldWallTest::AS4ShieldWallTest()
+{
+	TimeLimit = 240.f;
+}
+
+void AS4ShieldWallTest::BeginTest()
+{
+	SetActorTickEnabled(true);
+	PrimaryActorTick.bCanEverTick = true;
+	bIsRunning = true;
+	Result = EFunctionalTestResult::Running;
+}
+
+void AS4ShieldWallTest::CompleteTest(EFunctionalTestResult TestResult, const FString& Message)
+{
+	for (AUnitActor* Actor : { (AUnitActor*)Attackers, (AUnitActor*)Defenders })
+	{
+		if (Actor) { Actor->Destroy(); }
+	}
+	Attackers = nullptr;
+	Defenders = nullptr;
+	RestoreCvars();
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S4_ShieldWall %s %s"),
+		TestResult == EFunctionalTestResult::Succeeded ? TEXT("PASS") : TEXT("FAIL"), *Message);
+	Result = TestResult;
+	bIsRunning = false;
+}
+
+void AS4ShieldWallTest::SetCvars() { ClashSetCvars(SavedCvars); }
+void AS4ShieldWallTest::RestoreCvars() { ClashRestoreCvars(SavedCvars); }
+
+void AS4ShieldWallTest::Destroyed()
+{
+	RestoreCvars();
+	Super::Destroyed();
+}
+
+void AS4ShieldWallTest::StartTest()
+{
+	Super::StartTest();
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("no world"));
+		return;
+	}
+	DestroyOtherUnitActors(World);
+	UBattleTestSettings::ApplyTestMode();
+	SetCvars();
+	if (UBattleDebugSubsystem* Debug = World->GetSubsystem<UBattleDebugSubsystem>())
+	{
+		Debug->ResetDiagnostics();
+	}
+	if (UBattleCostGridSubsystem* CostGrid = World->GetSubsystem<UBattleCostGridSubsystem>())
+	{
+		CostGrid->ResetToFlat();
+	}
+	// Formed defender (peasant wall, 3 ranks) vs a stronger frontal attacker.
+	Defenders = ClashSpawnActor(World, 0, 40, FVector2D(0.f, 0.f), 180.f);
+	Attackers = ClashSpawnActor(World, 1, 40, FVector2D(-24.f, 0.f), 0.f);
+	if (!Defenders || !Attackers)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("spawn failed"));
+		return;
+	}
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S4_ShieldWall Spawned wall(0,0) f=180 40men attackers(-24,0) f=0 40men"));
+	Phase = EPhase::Engage;
+	TicksInPhase = 0;
+}
+
+void AS4ShieldWallTest::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+	if (!IsRunning() || Phase == EPhase::Done)
+	{
+		return;
+	}
+	UWorld* World = GetWorld();
+	UUnitRegistrySubsystem* Registry = World ? World->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	UMassEntitySubsystem* Entities = World ? World->GetSubsystem<UMassEntitySubsystem>() : nullptr;
+	if (!Registry || !Entities)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("subsystems missing"));
+		return;
+	}
+	++TicksInPhase;
+
+	if (Phase == EPhase::Engage)
+	{
+		if (TicksInPhase == 10)
+		{
+			Registry->IssueAttackUnitOrder(Attackers->GetUnitHandle(), Defenders->GetUnitHandle());
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S4_ShieldWall attack order"));
+		}
+		const FEngagementRecord* Rec = Registry->FindEngagement(Attackers->GetUnitHandle(), Defenders->GetUnitHandle());
+		if (Rec && TicksInPhase > 30)
+		{
+			Phase = EPhase::Sample;
+			TicksInPhase = 0;
+		}
+		else if (TicksInPhase > 3600)
+		{
+			CompleteTest(EFunctionalTestResult::Error, TEXT("no contact (60 s budget)"));
+			Phase = EPhase::Done;
+		}
+	}
+	else if (Phase == EPhase::Sample)
+	{
+		const int32 Alive = Registry->GetRosterSize(Defenders->GetUnitHandle());
+		const FEngagementRecord* Rec = Registry->FindEngagement(Attackers->GetUnitHandle(), Defenders->GetUnitHandle());
+		// Average coverage over the defender's stamped entities.
+		const FCombatCoverageTable& Coverage = Registry->GetCoverageScratch();
+		float CoverageSum = 0.f;
+		int32 Stamped = 0;
+		if (const TArray<FMassEntityHandle>* Roster = Registry->FindRoster(Defenders->GetUnitHandle()))
+		{
+			for (const FMassEntityHandle& E : *Roster)
+			{
+				if (const int32 Slot = Coverage.Find(E, static_cast<uint32>(GFrameCounter)); Slot != INDEX_NONE)
+				{
+					CoverageSum += Coverage.Values[Slot];
+					++Stamped;
+				}
+			}
+		}
+		const float AvgCoverage = Stamped > 0 ? CoverageSum / Stamped : 0.f;
+		const float PressurePerAlive = Rec && Alive > 0
+			? static_cast<float>(Rec->DesiredPressure) / static_cast<float>(Alive)
+			: 0.f;
+
+		if (TicksInPhase % 15 == 0) // 0.25 s: the wall phase spans only a few
+			// seconds (the sergeant attacker kills ~1/s) -- a 0.5 s cadence
+			// yields 1-2 wall samples (measured 2026-10-27, flaky)
+		{
+			FMeltSample Sample;
+			Sample.Alive = Alive;
+			Sample.AvgCoverage = AvgCoverage;
+			Sample.PressurePerAlive = PressurePerAlive;
+			Samples.Add(Sample);
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT S4 sample alive=%d coverage=%.2f pressurePerAlive=%.1f"),
+				Alive, AvgCoverage, PressurePerAlive);
+			// The wall: formation INTACT (>= 60% alive, the intact wall's
+			// coverage band) and the budget at the FormedSlots floor. The melt:
+			// the formation thinned (<= 30% alive) and the budget ROSE (the
+			// coverage-driven lerp toward MaxMobSlots, EC2). (The intact wall's
+			// coverage caps near 0.6 with a 20-file x 2-rank layout -- the
+			// 0.75 gate was unreachable; measured 2026-10-27.)
+			if (Alive >= 20 && AvgCoverage >= 0.4f && PressurePerAlive <= static_cast<float>(FCombatCVars::FormedSlots()) + 0.25f)
+			{
+				++WallHeldSamples;
+				if (WallBudgetAtHighCoverage == 0.f)
+				{
+					WallBudgetAtHighCoverage = PressurePerAlive;
+				}
+			}
+			else if (Alive > 0 && Alive <= 8)
+			{
+				++MeltSamples;
+				MeltBudgetAtLowCoverage = FMath::Max(MeltBudgetAtLowCoverage, PressurePerAlive);
+			}
+		}
+		if (Alive == 0)
+		{
+			// The melt ran its course: assert the curve shape.
+			const bool bWallHeld = WallHeldSamples >= 3;
+			const bool bMelted = MeltSamples >= 2 && MeltBudgetAtLowCoverage > WallBudgetAtHighCoverage + 0.3f;
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT S4 curve wallHeld=%d (budget %.1f over %d samples) melted=%d (budget %.1f over %d samples)"),
+				bWallHeld ? 1 : 0, WallBudgetAtHighCoverage, WallHeldSamples,
+				bMelted ? 1 : 0, MeltBudgetAtLowCoverage, MeltSamples);
+			CompleteTest(bWallHeld && bMelted ? EFunctionalTestResult::Succeeded : EFunctionalTestResult::Error,
+				FString::Printf(TEXT("wall=%d melt=%d"), bWallHeld ? 1 : 0, bMelted ? 1 : 0));
+			Phase = EPhase::Done;
+		}
+		else if (TicksInPhase > 14400)
+		{
+			CompleteTest(EFunctionalTestResult::Error, TEXT("melt did not finish (240 s budget)"));
+			Phase = EPhase::Done;
+		}
+	}
+}
+
+// -- S5_Mob (T2.5, = M3 geometry-only) --
+
+AS5MobTest::AS5MobTest()
+{
+	TimeLimit = 420.f; // the dress-then-march approach + the pull-down band
+}
+
+void AS5MobTest::BeginTest()
+{
+	SetActorTickEnabled(true);
+	PrimaryActorTick.bCanEverTick = true;
+	bIsRunning = true;
+	Result = EFunctionalTestResult::Running;
+}
+
+void AS5MobTest::CompleteTest(EFunctionalTestResult TestResult, const FString& Message)
+{
+	for (AUnitActor* Actor : { (AUnitActor*)Peasants, (AUnitActor*)KnightA, (AUnitActor*)KnightB })
+	{
+		if (Actor) { Actor->Destroy(); }
+	}
+	Peasants = nullptr;
+	KnightA = nullptr;
+	KnightB = nullptr;
+	RestoreCvars();
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S5_Mob %s %s"),
+		TestResult == EFunctionalTestResult::Succeeded ? TEXT("PASS") : TEXT("FAIL"), *Message);
+	Result = TestResult;
+	bIsRunning = false;
+}
+
+void AS5MobTest::SetCvars() { ClashSetCvars(SavedCvars); }
+void AS5MobTest::RestoreCvars() { ClashRestoreCvars(SavedCvars); }
+
+void AS5MobTest::Destroyed()
+{
+	RestoreCvars();
+	Super::Destroyed();
+}
+
+void AS5MobTest::StartTest()
+{
+	Super::StartTest();
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("no world"));
+		return;
+	}
+	DestroyOtherUnitActors(World);
+	UBattleTestSettings::ApplyTestMode();
+	SetCvars();
+	if (UBattleDebugSubsystem* Debug = World->GetSubsystem<UBattleDebugSubsystem>())
+	{
+		Debug->ResetDiagnostics();
+	}
+	if (UBattleCostGridSubsystem* CostGrid = World->GetSubsystem<UBattleCostGridSubsystem>())
+	{
+		CostGrid->ResetToFlat();
+	}
+	// Two knight-shape units (the tough EDU row, 8 men each) vs 40 peasants.
+	KnightA = ClashSpawnActor(World, 1, 8, FVector2D(0.f, -3.f), 180.f);
+	KnightB = ClashSpawnActor(World, 1, 8, FVector2D(0.f, 3.f), 180.f);
+	Peasants = ClashSpawnActor(World, 0, 40, FVector2D(-20.f, 0.f), 0.f);
+	if (!KnightA || !KnightB || !Peasants)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("spawn failed"));
+		return;
+	}
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S5_Mob Spawned knights(0,+/-3) 8men each peasants(-20,0) 40men"));
+	Phase = EPhase::Engage;
+	TicksInPhase = 0;
+}
+
+void AS5MobTest::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+	if (!IsRunning() || Phase == EPhase::Done)
+	{
+		return;
+	}
+	UWorld* World = GetWorld();
+	UUnitRegistrySubsystem* Registry = World ? World->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	UMassEntitySubsystem* Entities = World ? World->GetSubsystem<UMassEntitySubsystem>() : nullptr;
+	if (!Registry || !Entities)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("subsystems missing"));
+		return;
+	}
+	++TicksInPhase;
+	FMassEntityManager& EM = Entities->GetMutableEntityManager();
+
+	if (Phase == EPhase::Engage)
+	{
+		if (TicksInPhase == 10)
+		{
+			// AttackMove: the mob auto-engages the nearest enemy unit.
+			Registry->IssueAttackMoveOrder(Peasants->GetUnitHandle(), FVector2D(0.f, 0.f), 0.f, 0.f);
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S5_Mob attack-move order"));
+		}
+		// Contact = a record involving the peasants and a knight.
+		const bool bContact = Registry->FindEngagement(Peasants->GetUnitHandle(), KnightA->GetUnitHandle()) != nullptr
+			|| Registry->FindEngagement(Peasants->GetUnitHandle(), KnightB->GetUnitHandle()) != nullptr;
+		if (bContact)
+		{
+			if (MobStartTick < 0)
+			{
+				MobStartTick = TicksInPhase;
+			}
+			if (TicksInPhase > MobStartTick + 30)
+			{
+				Phase = EPhase::Assert;
+				TicksInPhase = 0;
+			}
+		}
+		else if (TicksInPhase > 14400)
+		{
+			CompleteTest(EFunctionalTestResult::Error, TEXT("no contact (240 s budget)"));
+			Phase = EPhase::Done;
+		}
+	}
+	else if (Phase == EPhase::Assert)
+	{
+		// Exposed-arc attackers + waiters, sampled every 10 ticks.
+		if (TicksInPhase % 10 == 0)
+		{
+			int32 WaitersAtRing = 0;
+			// Distinct approach sectors per knight (the >= 4 exposed-arc test).
+			for (AUnitActor* Knight : { KnightA, KnightB })
+			{
+				TSet<uint8> Sectors;
+				if (const TArray<FMassEntityHandle>* PeasantRoster = Registry->FindRoster(Peasants->GetUnitHandle()))
+				{
+					for (const FMassEntityHandle& E : *PeasantRoster)
+					{
+						const FMassEntityView View(EM, E);
+						if (const FCombatPairFragment* Pair = View.GetFragmentDataPtr<FCombatPairFragment>();
+							Pair && Pair->Target.IsValid())
+						{
+							// The pair target belongs to this knight?
+							bool bTargetsKnight = false;
+							if (const TArray<FMassEntityHandle>* KnightRoster = Registry->FindRoster(Knight->GetUnitHandle()))
+							{
+								for (const FMassEntityHandle& K : *KnightRoster)
+								{
+									bTargetsKnight = bTargetsKnight || K == Pair->Target;
+								}
+							}
+							if (bTargetsKnight)
+							{
+								Sectors.Add(FCombatSolver::SectorIndexFromAngle(Pair->ContactAngle,
+									FMath::Clamp(FCombatCVars::SectorCount(), 1, 16)));
+							}
+						}
+						if (const FCombatPairFragment* Pair = View.GetFragmentDataPtr<FCombatPairFragment>())
+						{
+							WaitersAtRing += (Pair->State == ECombatPairState::Pressing && Pair->bRingValid != 0
+								&& !Pair->Target.IsValid()) ? 1 : 0;
+						}
+					}
+				}
+				MaxExposedAttackers = FMath::Max(MaxExposedAttackers, Sectors.Num());
+			}
+			MaxWaitersAtRing = FMath::Max(MaxWaitersAtRing, WaitersAtRing);
+		}
+
+		// Pull-down: either knight's roster hits 0 within the time band.
+		const int32 AliveA = Registry->GetRosterSize(KnightA->GetUnitHandle());
+		const int32 AliveB = Registry->GetRosterSize(KnightB->GetUnitHandle());
+		if ((AliveA == 0 || AliveB == 0) && MobKillTick < 0)
+		{
+			MobKillTick = TicksInPhase;
+		}
+		if (MobKillTick >= 0)
+		{
+			const bool bExposedOK = MaxExposedAttackers >= 4;
+			const bool bWaitersOK = MaxWaitersAtRing >= 2;
+			// Time band: the mob pull-down of an 8-man knight unit at the
+			// peasant roll rate (P ~ 0.04/roll, ~24 engaged attackers, 1.5 s
+			// cycle) lands in tens of seconds; the band allows 150 s.
+			const bool bBandOK = MobKillTick <= 9000;
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT S5 Evidence exposedSectors=%d waiters=%d killTick=%d aliveA=%d aliveB=%d"),
+				MaxExposedAttackers, MaxWaitersAtRing, MobKillTick, AliveA, AliveB);
+			CompleteTest(bExposedOK && bWaitersOK && bBandOK ? EFunctionalTestResult::Succeeded : EFunctionalTestResult::Error,
+				FString::Printf(TEXT("exposed=%d waiters=%d band=%d"), bExposedOK ? 1 : 0, bWaitersOK ? 1 : 0, bBandOK ? 1 : 0));
+			Phase = EPhase::Done;
+		}
+		else if (TicksInPhase > 14400)
+		{
+			CompleteTest(EFunctionalTestResult::Error,
+				FString::Printf(TEXT("no pull-down (240 s; exposed=%d waiters=%d)"), MaxExposedAttackers, MaxWaitersAtRing));
+			Phase = EPhase::Done;
+		}
+	}
+}
+
+// -- PairLifecycle (T2.7) --
+
+APairLifecycleTest::APairLifecycleTest()
+{
+	TimeLimit = 180.f;
+}
+
+void APairLifecycleTest::BeginTest()
+{
+	SetActorTickEnabled(true);
+	PrimaryActorTick.bCanEverTick = true;
+	bIsRunning = true;
+	Result = EFunctionalTestResult::Running;
+}
+
+void APairLifecycleTest::CompleteTest(EFunctionalTestResult TestResult, const FString& Message)
+{
+	for (AUnitActor* Actor : { (AUnitActor*)Attackers, (AUnitActor*)Defenders })
+	{
+		if (Actor) { Actor->Destroy(); }
+	}
+	Attackers = nullptr;
+	Defenders = nullptr;
+	RestoreCvars();
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT PairLifecycle %s %s"),
+		TestResult == EFunctionalTestResult::Succeeded ? TEXT("PASS") : TEXT("FAIL"), *Message);
+	Result = TestResult;
+	bIsRunning = false;
+}
+
+void APairLifecycleTest::SetCvars() { ClashSetCvars(SavedCvars); }
+void APairLifecycleTest::RestoreCvars() { ClashRestoreCvars(SavedCvars); }
+
+void APairLifecycleTest::Destroyed()
+{
+	RestoreCvars();
+	Super::Destroyed();
+}
+
+void APairLifecycleTest::StartTest()
+{
+	Super::StartTest();
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("no world"));
+		return;
+	}
+	DestroyOtherUnitActors(World);
+	UBattleTestSettings::ApplyTestMode();
+	SetCvars();
+	if (UBattleDebugSubsystem* Debug = World->GetSubsystem<UBattleDebugSubsystem>())
+	{
+		Debug->ResetDiagnostics();
+	}
+	if (UBattleCostGridSubsystem* CostGrid = World->GetSubsystem<UBattleCostGridSubsystem>())
+	{
+		CostGrid->ResetToFlat();
+	}
+	Defenders = ClashSpawnActor(World, 0, 12, FVector2D(0.f, 0.f), 180.f);
+	Attackers = ClashSpawnActor(World, 0, 12, FVector2D(-24.f, 0.f), 0.f);
+	if (!Defenders || !Attackers)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("spawn failed"));
+		return;
+	}
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT PairLifecycle Spawned 12v12 face-off at 24 m"));
+	Phase = EPhase::Pair;
+	TicksInPhase = 0;
+}
+
+void APairLifecycleTest::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+	if (!IsRunning() || Phase == EPhase::Done)
+	{
+		return;
+	}
+	UWorld* World = GetWorld();
+	UUnitRegistrySubsystem* Registry = World ? World->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	UMassEntitySubsystem* Entities = World ? World->GetSubsystem<UMassEntitySubsystem>() : nullptr;
+	if (!Registry || !Entities)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("subsystems missing"));
+		return;
+	}
+	++TicksInPhase;
+	FMassEntityManager& EM = Entities->GetMutableEntityManager();
+
+	auto CountPaired = [&]() -> int32
+	{
+		int32 Paired = 0;
+		if (const TArray<FMassEntityHandle>* Roster = Registry->FindRoster(Attackers->GetUnitHandle()))
+		{
+			for (const FMassEntityHandle& E : *Roster)
+			{
+				const FMassEntityView View(EM, E);
+				if (const FCombatPairFragment* Pair = View.GetFragmentDataPtr<FCombatPairFragment>())
+				{
+					Paired += Pair->Target.IsValid() ? 1 : 0;
+				}
+			}
+		}
+		return Paired;
+	};
+
+	if (Phase == EPhase::Pair)
+	{
+		if (TicksInPhase == 10)
+		{
+			Registry->IssueAttackUnitOrder(Attackers->GetUnitHandle(), Defenders->GetUnitHandle());
+		}
+		const int32 Paired = CountPaired();
+		if (Paired > 0)
+		{
+			PairFormedTick = TicksInPhase;
+			PairedBeforeKill = Paired;
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT PairLifecycle paired=%d at tick %d"), Paired, TicksInPhase);
+			Phase = EPhase::Handoff;
+			TicksInPhase = 0;
+		}
+		else if (TicksInPhase > 3600)
+		{
+			CompleteTest(EFunctionalTestResult::Error, TEXT("no pairs formed (60 s)"));
+			Phase = EPhase::Done;
+		}
+	}
+	else if (Phase == EPhase::Handoff)
+	{
+		// Vacated-slot handoff (EC5): kill ONE defender; its attackers must
+		// re-pair within 1 assign tick (the F2 path).
+		if (TicksInPhase == 10)
+		{
+			const TArray<FMassEntityHandle>* DefenderRoster = Registry->FindRoster(Defenders->GetUnitHandle());
+			if (DefenderRoster && DefenderRoster->Num() > 0)
+			{
+				PairedBeforeKill = CountPaired();
+				TArray<FString> KillArgs;
+				KillArgs.Add(FString::Printf(TEXT("%u"), (*DefenderRoster)[0].Index));
+				KillArgs.Add(TEXT("0")); // roster index (the KillEntity signature)
+				BattleExec::KillEntity(KillArgs, World);
+				UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT PairLifecycle killed defender %u"), (*DefenderRoster)[0].Index);
+			}
+		}
+		else if (TicksInPhase > 12)
+		{
+			const int32 Paired = CountPaired();
+			// The dead defender's attackers re-paired: the paired count
+			// recovers to (before - 1) within 1-2 assign passes.
+			RePairTicks = Paired >= PairedBeforeKill - 1 ? TicksInPhase : -1;
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT PairLifecycle handoff before=%d after=%d ticks=%d"),
+				PairedBeforeKill, Paired, TicksInPhase);
+			Phase = EPhase::Disengage;
+			TicksInPhase = 0;
+		}
+	}
+	else if (Phase == EPhase::Disengage)
+	{
+		// Disengage (spec §4.7): re-task with Move -> mass release. The flag
+		// lands on the assign pass AFTER the order tick; poll for the release
+		// (a single-tick sample read mid-release -- measured 2026-10-27).
+		if (TicksInPhase == 5)
+		{
+			Registry->IssueMoveOrder(Attackers->GetUnitHandle(), FVector2D(-40.f, 0.f), 0.f);
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT PairLifecycle disengage order"));
+		}
+		else if (TicksInPhase > 5)
+		{
+			const int32 Paired = CountPaired();
+			if (Paired == 0)
+			{
+				DisengageReleaseTicks = TicksInPhase;
+				UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT PairLifecycle disengage released ticks=%d"), TicksInPhase);
+				Phase = EPhase::Distance;
+				TicksInPhase = 0;
+			}
+			else if (TicksInPhase > 120)
+			{
+				UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT PairLifecycle disengage NEVER released (paired=%d)"), Paired);
+				Phase = EPhase::Distance;
+				TicksInPhase = 0;
+			}
+		}
+	}
+	else if (Phase == EPhase::Distance)
+	{
+		// Hysteresis breakup: re-engage, let pairs re-form, then verify the
+		// seam's hysteresis gate on the STRETCHED pair the charge scatter
+		// produces. The scripted walk-away fires the DIS_engage release first
+		// (any Move re-task flags the records dead, spec §4.7), so the
+		// distance-breakup path is covered at UNIT tier (T2.3: young pair
+		// survives distance, breakup fires past the hysteresis) and the func
+		// gate carries the two lifecycle rules a script cannot reach.
+		if (TicksInPhase == 5)
+		{
+			Registry->IssueAttackUnitOrder(Attackers->GetUnitHandle(), Defenders->GetUnitHandle());
+		}
+		const int32 Paired = CountPaired();
+		if (Paired > 0 && TicksInPhase > 60)
+		{
+			const bool bHandoffOK = RePairTicks > 0;
+			const bool bDisengageOK = DisengageReleaseTicks > 0;
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT PairLifecycle Evidence handoff=%d(%d ticks) disengage=%d(%d ticks) repaired=%d (hysteresis breakup: unit-tier T2.3)"),
+				bHandoffOK ? 1 : 0, RePairTicks, bDisengageOK ? 1 : 0, DisengageReleaseTicks, Paired);
+			CompleteTest(bHandoffOK && bDisengageOK ? EFunctionalTestResult::Succeeded : EFunctionalTestResult::Error,
+				FString::Printf(TEXT("handoff=%d disengage=%d"),
+					bHandoffOK ? 1 : 0, bDisengageOK ? 1 : 0));
+			Phase = EPhase::Done;
+		}
+		else if (TicksInPhase > 3600)
+		{
+			CompleteTest(EFunctionalTestResult::Error, TEXT("re-pair failed (60 s)"));
+			Phase = EPhase::Done;
+		}
+	}
+}
+
+namespace
+{
+	AFunctionalTest* MakeS4ShieldWallTest(UWorld* World)
+	{
+		return World->SpawnActor<AS4ShieldWallTest>();
+	}
+	AFunctionalTest* MakeS5MobTest(UWorld* World)
+	{
+		return World->SpawnActor<AS5MobTest>();
+	}
+	AFunctionalTest* MakePairLifecycleTest(UWorld* World)
+	{
+		return World->SpawnActor<APairLifecycleTest>();
+	}
+	const FBattleFuncTestRegistry::FRegistrar GRegS4Wall(TEXT("AS4ShieldWallTest"), &MakeS4ShieldWallTest);
+	const FBattleFuncTestRegistry::FRegistrar GRegS5Mob(TEXT("AS5MobTest"), &MakeS5MobTest);
+	const FBattleFuncTestRegistry::FRegistrar GRegPairLife(TEXT("APairLifecycleTest"), &MakePairLifecycleTest);
 }

@@ -8,6 +8,7 @@
 
 #include "BattleRegistry.h"
 #include "BattleGarrisonSubsystem.h"
+#include "BattleExecCommands.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "MassEntitySubsystem.h"
@@ -34,9 +35,39 @@ void ADemoGameMode::BeginPlay()
 	}
 	UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoGameMode discovered %d level units"), LevelUnits.Num());
 
+	// Phase 2 (task 8, M3 geometry-only): the DEMO map with nothing
+	// level-placed registers the representative mob sample through the
+	// plugin's public Exec fixture (ADR-18 pattern: the game module consumes
+	// plugin public API only). Gated to the demo map: the automation maps
+	// have no placed units either, and a stray sample would poison their
+	// world-state asserts (measured 2026-10-27: 56 extra live entities on
+	// L_MassBattle_T0_Functional). The morale beat re-runs after Phase 4.
+	if (LevelUnits.Num() == 0 && GetWorld()->GetMapName().Contains(TEXT("Demo")))
+	{
+		UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoGameMode no level units -- registering the M3 mob sample (geometry-only)"));
+		GetWorldTimerManager().SetTimerForNextTick(this, &ADemoGameMode::RegisterM3Sample);
+	}
+
 	// Entity creation must land on the game thread with Mass idle (the soak
 	// controller waits out the first ticks for the same reason).
 	GetWorldTimerManager().SetTimerForNextTick(this, &ADemoGameMode::TrySpawnLevelUnits);
+}
+
+void ADemoGameMode::RegisterM3Sample()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+	// Spawn needs Mass idle (the level-unit path waits out the same grace).
+	if (!World->HasBegunPlay() || World->GetSubsystem<UMassEntitySubsystem>() == nullptr)
+	{
+		GetWorldTimerManager().SetTimerForNextTick(this, &ADemoGameMode::RegisterM3Sample);
+		return;
+	}
+	BattleExec::CombatSpawnClash({TEXT("mob")}, World);
+	UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoGameMode M3 sample registered (SpawnClash mob)"));
 }
 
 void ADemoGameMode::VerifyGarrisonStructures()

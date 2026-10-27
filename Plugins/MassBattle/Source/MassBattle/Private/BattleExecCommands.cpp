@@ -711,6 +711,93 @@ void CombatDumpPairs(const TArray<FString>& Args, UWorld* World)
 	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT DumpPairs End Paired=%d Intents=%d"), Paired, Intents);
 }
 
+// -- Phase 2 task 8: the M3 demo fixtures (geometry-only, A10). Spawns the
+// representative clash shapes on the flat tile; the demo game mode registers
+// the mob sample when nothing is level-placed.
+namespace
+{
+	FUnitHandle SpawnClashUnitExec(UWorld* World, int32 EduRow, int32 Count, const FVector2D& PosM, float YawDeg)
+	{
+		const FString FixturePath = FPaths::ProjectContentDir() / TEXT("Data/EDU/golden_edu_v1.txt");
+		FString EduText;
+		TArray<FEduUnit> Rows;
+		FEduParseError Err;
+		if (!FFileHelper::LoadFileToString(EduText, *FixturePath)
+			|| !FBattleEduParser::Parse(EduText, Rows, Err)
+			|| !Rows.IsValidIndex(EduRow))
+		{
+			return FUnitHandle();
+		}
+		FBattleRowStats Stats;
+		FString Error;
+		if (!FBattleRowStats::FromEdu(Rows[EduRow], Stats, Error))
+		{
+			return FUnitHandle();
+		}
+		FUnitSpawnSpec Spec;
+		Spec.EduRowIndex = EduRow;
+		Spec.SoldierCount = Count;
+		Spec.UnitName = Stats.TypeName;
+		Spec.SpawnPos = PosM * 100.f;
+		Spec.SpawnYaw = YawDeg;
+		Spec.NumRanks = 3;
+		const FBattleSpawnResult Result = UBattleSpawnLibrary::SpawnUnit(World, Spec, Stats);
+		return Result.Unit;
+	}
+}
+
+void CombatSpawnClash(const TArray<FString>& Args, UWorld* World)
+{
+	UUnitRegistrySubsystem* Registry = World ? World->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	UBattleCostGridSubsystem* CostGrid = World ? World->GetSubsystem<UBattleCostGridSubsystem>() : nullptr;
+	if (!Registry || !CostGrid || Args.Num() < 1)
+	{
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SpawnClash FAIL BadArgs (need: wall|mob|charge)"));
+		return;
+	}
+	CostGrid->ResetToFlat();
+	// The demo fixture rides the combat machinery persistently (visual demo).
+	for (const TCHAR* Name : { TEXT("Battle.Combat.SpatialHash"), TEXT("Battle.Combat.Clusters"),
+		TEXT("Battle.Combat.Tally"), TEXT("Battle.Combat.Assign") })
+	{
+		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(Name))
+		{
+			C->Set(1, ECVF_SetByCode);
+		}
+	}
+
+	const FString Variant = Args[0];
+	if (Variant == TEXT("wall"))
+	{
+		const FUnitHandle Defenders = SpawnClashUnitExec(World, 0, 40, FVector2D(0.f, 0.f), 180.f);
+		const FUnitHandle Attackers = SpawnClashUnitExec(World, 1, 40, FVector2D(-24.f, 0.f), 0.f);
+		Registry->IssueAttackUnitOrder(Attackers, Defenders);
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SpawnClash OK wall defenders=%u:%u attackers=%u:%u"),
+			Defenders.Index, Defenders.Serial, Attackers.Index, Attackers.Serial);
+	}
+	else if (Variant == TEXT("mob"))
+	{
+		const FUnitHandle KnightA = SpawnClashUnitExec(World, 1, 8, FVector2D(0.f, -3.f), 180.f);
+		const FUnitHandle KnightB = SpawnClashUnitExec(World, 1, 8, FVector2D(0.f, 3.f), 180.f);
+		const FUnitHandle Peasants = SpawnClashUnitExec(World, 0, 40, FVector2D(-20.f, 0.f), 0.f);
+		Registry->IssueAttackMoveOrder(Peasants, FVector2D(0.f, 0.f), 0.f);
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SpawnClash OK mob knights=%u:%u+%u:%u peasants=%u:%u"),
+			KnightA.Index, KnightA.Serial, KnightB.Index, KnightB.Serial, Peasants.Index, Peasants.Serial);
+	}
+	else if (Variant == TEXT("charge"))
+	{
+		const FUnitHandle Defenders = SpawnClashUnitExec(World, 0, 12, FVector2D(0.f, 0.f), 180.f);
+		const FUnitHandle Attackers = SpawnClashUnitExec(World, 0, 12, FVector2D(-24.f, 0.f), 0.f);
+		Registry->IssueAttackUnitOrder(Attackers, Defenders);
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SpawnClash OK charge defenders=%u:%u attackers=%u:%u (command Battle.Movement.WalkSpeed 6 to reach the fresh-contact gate)"),
+			Defenders.Index, Defenders.Serial, Attackers.Index, Attackers.Serial);
+	}
+	else
+	{
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SpawnClash FAIL unknown variant %s"), *Variant);
+	}
+}
+
 void CombatSaveProbe(const TArray<FString>& Args, UWorld* World)
 {
 	UUnitRegistrySubsystem* Registry = World ? World->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
@@ -865,3 +952,8 @@ static FAutoConsoleCommandWithWorldAndArgs GBattleCombatSaveProbe(
 	TEXT("Battle.Combat.SaveProbe"),
 	TEXT("Capture -> clear -> restore round-trip at registry level; EXEC_RESULT SaveProbe PASS/FAIL"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BattleExec::CombatSaveProbe));
+
+static FAutoConsoleCommandWithWorldAndArgs GBattleCombatSpawnClash(
+	TEXT("Battle.Combat.SpawnClash"),
+	TEXT("<wall|mob|charge> -- task 8 M3 demo fixture (geometry-only, A10); spawns the clash shape and issues the orders; EXEC_RESULT SpawnClash"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BattleExec::CombatSpawnClash));

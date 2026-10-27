@@ -8,6 +8,7 @@
 #include "Misc/AutomationTest.h"
 
 #include "BattleFuncTestActor.h"
+#include "UnitActor.h"
 #include "BattleTestSettings.h"
 #include "MassBattleModule.h"
 #include "EngineUtils.h"
@@ -152,6 +153,20 @@ namespace
 			}
 			if (!bStarted)
 			{
+				// Scenario isolation: the combat scenarios run alphabetically
+				// BEFORE the S0-tier tests and their actors' EndPlay (roster
+				// entity teardown) fires at end-of-frame -- a same-frame test
+				// transition leaks live entities into the next scenario's
+				// world-state asserts (measured 2026-10-27: S0 counted 62
+				// live). Destroy every leftover unit actor here; their
+				// EndPlay flushes this frame, the test actor begins next.
+				for (AUnitActor* Leftover : TActorRange<AUnitActor>(World))
+				{
+					if (Leftover)
+					{
+						Leftover->Destroy();
+					}
+				}
 				// Deterministic factory registry (reflection lookups proved
 				// unreliable in -game processes -- see FBattleFuncTestRegistry).
 				AFunctionalTest* Found = nullptr;
@@ -255,6 +270,18 @@ namespace
 				else if (AChargeMechanicsTest* Charge = Cast<AChargeMechanicsTest>(TestActor))
 				{
 					Charge->BeginTest();
+				}
+				else if (AS4ShieldWallTest* Wall = Cast<AS4ShieldWallTest>(TestActor))
+				{
+					Wall->BeginTest();
+				}
+				else if (AS5MobTest* Mob = Cast<AS5MobTest>(TestActor))
+				{
+					Mob->BeginTest();
+				}
+				else if (APairLifecycleTest* Life = Cast<APairLifecycleTest>(TestActor))
+				{
+					Life->BeginTest();
 				}
 				// T0.9: apply + assert the test-mode contract at scenario start
 				// (roadmap B.0: assert ACTIVE engine settings, not CVars being
@@ -601,6 +628,57 @@ IMPLEMENT_CUSTOM_COMPLEX_AUTOMATION_TEST(FCombatSmoke, FBattleFuncTestBase,
 
 IMPLEMENT_CUSTOM_COMPLEX_AUTOMATION_TEST(FChargeMechanics, FBattleFuncTestBase,
 	"Battle.Func.ChargeMechanics", (EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter))
+
+IMPLEMENT_CUSTOM_COMPLEX_AUTOMATION_TEST(FS4ShieldWall, FBattleFuncTestBase,
+	"Battle.Func.S4_ShieldWall", (EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter))
+
+void FS4ShieldWall::GetTests(TArray<FString>& OutBeautifiedNames, TArray<FString>& OutTestCommands) const
+{
+	OutBeautifiedNames.Add(TEXT("S4_ShieldWall"));
+	OutTestCommands.Add(TEXT(""));
+}
+
+bool FS4ShieldWall::RunTest(const FString& Parameters)
+{
+	IFunctionalTestingModule::Get().MarkPendingActivation();
+	ADD_LATENT_AUTOMATION_COMMAND(FOpenBattleFuncMap(this));
+	ADD_LATENT_AUTOMATION_COMMAND(FRunBattleFuncTest(this, TEXT("S4_ShieldWall"), TEXT("AS4ShieldWallTest")));
+	return true;
+}
+
+IMPLEMENT_CUSTOM_COMPLEX_AUTOMATION_TEST(FS5Mob, FBattleFuncTestBase,
+	"Battle.Func.S5_Mob", (EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter))
+
+void FS5Mob::GetTests(TArray<FString>& OutBeautifiedNames, TArray<FString>& OutTestCommands) const
+{
+	OutBeautifiedNames.Add(TEXT("S5_Mob"));
+	OutTestCommands.Add(TEXT(""));
+}
+
+bool FS5Mob::RunTest(const FString& Parameters)
+{
+	IFunctionalTestingModule::Get().MarkPendingActivation();
+	ADD_LATENT_AUTOMATION_COMMAND(FOpenBattleFuncMap(this));
+	ADD_LATENT_AUTOMATION_COMMAND(FRunBattleFuncTest(this, TEXT("S5_Mob"), TEXT("AS5MobTest")));
+	return true;
+}
+
+IMPLEMENT_CUSTOM_COMPLEX_AUTOMATION_TEST(FPairLifecycle, FBattleFuncTestBase,
+	"Battle.Func.PairLifecycle", (EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter))
+
+void FPairLifecycle::GetTests(TArray<FString>& OutBeautifiedNames, TArray<FString>& OutTestCommands) const
+{
+	OutBeautifiedNames.Add(TEXT("PairLifecycle"));
+	OutTestCommands.Add(TEXT(""));
+}
+
+bool FPairLifecycle::RunTest(const FString& Parameters)
+{
+	IFunctionalTestingModule::Get().MarkPendingActivation();
+	ADD_LATENT_AUTOMATION_COMMAND(FOpenBattleFuncMap(this));
+	ADD_LATENT_AUTOMATION_COMMAND(FRunBattleFuncTest(this, TEXT("PairLifecycle"), TEXT("APairLifecycleTest")));
+	return true;
+}
 
 void FChargeMechanics::GetTests(TArray<FString>& OutBeautifiedNames, TArray<FString>& OutTestCommands) const
 {

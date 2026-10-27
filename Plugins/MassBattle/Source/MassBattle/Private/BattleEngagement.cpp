@@ -485,6 +485,17 @@ namespace FCombatSolver
 				{
 					continue;
 				}
+				// EC1 (no pairing of non-contacting units): the pair forms at
+				// RING distance only -- the seek radius bounds the search, the
+				// contact ring bounds the pairing. Beyond it the seeker presses
+				// (the waiter path below) and pairs when it arrives.
+				const uint8 ProbeClass = FMath::Min<uint8>(S.ReachClass, 7);
+				const float ProbeRing = Context.DefenderRadiusM + Context.AttackerRadiusM
+					+ Context.ReachByClassM[ProbeClass];
+				if (DistSq > FMath::Square(ProbeRing * 1.25f))
+				{
+					continue;
+				}
 				// Per-defender budget check BEFORE angle picking.
 				const FCombatDefenderView DefenderView{ D.PosM, D.Spacing, D.Unit, D.Entity };
 				const FCombatAttackerView AttackerView{ S.OwnerUnit, S.ReachClass };

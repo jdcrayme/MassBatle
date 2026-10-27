@@ -122,18 +122,45 @@ void UEngagementClustersProcessor::Execute(FMassEntityManager& EntityManager, FM
 
 	// -- Rebuild the records: flag all dead, refresh contacted pairs, prune. --
 	Registry->FlagAllEngagementsDead();
-	// Aggregate attacker direction quadrants per defender (the Mob test, §4.2;
-	// bits: +X=1, -X=2, +Y=4, -Y=8).
+	// Aggregate attacker DIRECTION quadrants per defender (the Mob test,
+	// §4.2) -- in the DEFENDER'S FACING frame, ONE bit per attacker quadrant:
+	// front-right=1, front-left=2, rear-right=4, rear-left=8. A frontal line
+	// occupies the two FRONT quadrants (popcount 2 -> Frontal/Flank); a
+	// surrounding mob spans >= 3 quadrants -> Mob. (Sign-bit ORs gave every
+	// attacker two bits and misread the wall as Mob -- measured 2026-10-27.)
 	TMap<FUnitHandle, uint8> DirectionMask;
 	for (const FIntPoint& Pair : ContactPairs)
 	{
-		const FVector2D Rel = Nodes[Pair.Y].AnchorM - Nodes[Pair.X].AnchorM;
-		const uint8 MaskBits = static_cast<uint8>((Rel.X >= 0.f ? 1 : 2) | (Rel.Y >= 0.f ? 4 : 8));
-		DirectionMask.FindOrAdd(Nodes[Pair.Y].Unit) |= MaskBits;
+		const FVector2D Rel = Nodes[Pair.X].AnchorM - Nodes[Pair.Y].AnchorM; // attacker relative to defender
+		const float Rad = FMath::DegreesToRadians(Nodes[Pair.Y].YawDeg);
+		const FVector2D Forward(FMath::Cos(Rad), FMath::Sin(Rad));
+		const FVector2D Side(-FMath::Sin(Rad), FMath::Cos(Rad));
+		const float Fx = FVector2D::DotProduct(Rel, Forward);
+		const float Sy = FVector2D::DotProduct(Rel, Side);
+		const int32 Quadrant = (Fx < 0.f ? 2 : 0) + (Sy < 0.f ? 1 : 0); // 0=FR 1=FL 2=RR 3=RL
+		DirectionMask.FindOrAdd(Nodes[Pair.Y].Unit) |= static_cast<uint8>(1u << Quadrant);
+	}
+	// Contact without intent revives nothing: a disengaging unit's records
+	// must STAY dead (the assign pass releases its inbound pairs; the 4 Hz
+	// revival would otherwise resurrect them every tick and the disengage
+	// never lands -- measured 2026-10-27). The orders are game-thread reads.
+	TMap<FUnitHandle, bool> UnitWantsCombat;
+	for (const FCombatSolver::FUnitClusterNode& Node : Nodes)
+	{
+		bool bWants = false;
+		if (const FUnitOrder* Order = Registry->FindOrder(Node.Unit))
+		{
+			bWants = Order->Type == FUnitOrder::EType::AttackUnit || Order->Type == FUnitOrder::EType::AttackMove;
+		}
+		UnitWantsCombat.Add(Node.Unit, bWants);
 	}
 	int32 Emitted = 0;
 	for (const FIntPoint& Pair : ContactPairs)
 	{
+		if (!UnitWantsCombat.FindOrAdd(Nodes[Pair.X].Unit) && !UnitWantsCombat.FindOrAdd(Nodes[Pair.Y].Unit))
+		{
+			continue; // neither side is attacking: no engagement records
+		}
 		for (int32 Dir = 0; Dir < 2; ++Dir)
 		{
 			const int32 AttackerIdx = Dir == 0 ? Pair.X : Pair.Y;
@@ -171,6 +198,19 @@ void UEngagementClustersProcessor::Execute(FMassEntityManager& EntityManager, FM
 		Registry->SetEngagedCount(Node.Unit, EngagedCount.FindOrAdd(Node.Unit));
 	}
 
+	static int32 DbgRuns = 0;
+	if (DbgRuns < 3)
+	{
+		++DbgRuns;
+		FString NodeDump;
+		for (const FCombatSolver::FUnitClusterNode& Node : Nodes)
+		{
+			NodeDump += FString::Printf(TEXT("[%u:%u (%.1f,%.1f) w%.1fxh%.1f] "),
+				Node.Unit.Index, Node.Unit.Serial, Node.AnchorM.X, Node.AnchorM.Y, Node.HalfAlongM, Node.HalfAcrossM);
+		}
+		UE_LOG(LogTemp, Display, TEXT("ClusterDbg runs=%d nodes=%d contacts=%d %s"),
+			DbgRuns, Nodes.Num(), ContactPairs.Num(), *NodeDump);
+	}
 	int32 ClusterCount = 0;
 	for (int32 i = 0; i < ClusterIds.Num(); ++i)
 	{

@@ -50,8 +50,10 @@ public:
 	void Rebuild(TArray<FBattleHashEntry>&& Entries);
 
 	/** Circle query in METERS; appends entries whose positions are within
-	 *  Radius of Center. Entry positions ride the rebuild input (centers). */
-	void QueryCircle(const FVector2D& CenterM, float RadiusM, TArray<FBattleHashEntry>& OutEntries) const;
+	 *  Radius of Center, with the parallel positions (the entry struct is
+	 *  packed; consumers read positions here, never via a second lookup). */
+	void QueryCircle(const FVector2D& CenterM, float RadiusM, TArray<FBattleHashEntry>& OutEntries,
+		TArray<FVector2D>* OutPositionsM = nullptr) const;
 
 	/** O(live entries): the handle-sorted entry array (debug/dump consumers). */
 	const TArray<FBattleHashEntry>& GetSortedEntries() const { return SortedEntries; }

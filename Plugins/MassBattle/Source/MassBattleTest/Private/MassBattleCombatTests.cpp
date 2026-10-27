@@ -872,7 +872,10 @@ namespace
 			S.OwnerUnit.Serial = 1;
 			S.IntentTarget.Index = 20;
 			S.IntentTarget.Serial = 1;
-			S.PosM = FVector2D(6.f, static_cast<float>(SIdx % 5) * 1.2f - 2.4f);
+			// AT RING DISTANCE (EC1: pairs form at contact, not at the seek
+			// radius -- the ring gate rejects 4 m standoffs; measured
+			// 2026-10-27 when the gate landed).
+			S.PosM = FVector2D(9.0f, static_cast<float>(SIdx % 5) * 1.2f - 2.4f);
 			S.ReachClass = static_cast<uint8>(EBattleWeaponReach::Normal);
 			S.LaneIndex = static_cast<uint8>(SIdx % 2);
 			S.RecordIndex = 0; // the single shared frontal record
@@ -1054,31 +1057,6 @@ bool FTallyAssign::RunTest(const FString& Parameters)
 // T2.4-T2.8 func gates (tasks 7-8 own the scenario actors; the real tests
 // become the harness's complex-test pattern with latent commands)
 // ---------------------------------------------------------------------------
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FS4ShieldWallSkeleton,
-	"Battle.Func.S4_ShieldWall",
-	(EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter))
-
-bool FS4ShieldWallSkeleton::RunTest(const FString& Parameters)
-{
-	// T2.4 (task 8): formed defender holds budget at FormedSlots while
-	// coverage holds; the melt CURVE shape is asserted as coverage drops.
-	AddError(TEXT("skeleton: S4_ShieldWall scenario lands with task 8"));
-	return false;
-}
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FS5MobSkeleton,
-	"Battle.Func.S5_Mob",
-	(EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter))
-
-bool FS5MobSkeleton::RunTest(const FString& Parameters)
-{
-	// T2.5 (task 8, = M3 geometry-only): 2 knights vs 40 peasants; >= 4
-	// exposed-arc attackers; pulled down in the time band; waiters at the
-	// ring, no carousel.
-	AddError(TEXT("skeleton: S5_Mob scenario lands with task 8"));
-	return false;
-}
 
 // ---------------------------------------------------------------------------
 // T2.9 perf gate placeholder (task 9): the pairing pass budget.
@@ -1326,20 +1304,6 @@ bool FCombat_ClusterRecords::RunTest(const FString& Parameters)
 	}
 
 	return true;
-}
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPairLifecycleSkeleton,
-	"Battle.Func.PairLifecycle",
-	(EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter))
-
-bool FPairLifecycleSkeleton::RunTest(const FString& Parameters)
-{
-	// T2.7 (task 8 full assert): hysteresis breakup; vacated-slot handoff
-	// <= 1 tick; disengage mass release. ERRATA: an over-broad edit during
-	// task 7 removed this skeleton; restored (the pair-rule UNIT coverage
-	// lives in T2.3's FTallyAssign since task 4).
-	AddError(TEXT("skeleton: PairLifecycle scenario lands with task 8"));
-	return false;
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDeterminismTwoRunSkeleton,

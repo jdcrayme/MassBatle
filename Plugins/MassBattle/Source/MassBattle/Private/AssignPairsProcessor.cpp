@@ -175,6 +175,50 @@ void UAssignPairsProcessor::Execute(FMassEntityManager& EntityManager, FMassExec
 		}
 	}
 
+	// AttackMove's auto-engage: the nearest live-record enemy unit (the
+	// records exist once contact forms; the resolution runs before the seek
+	// gather so the seekers read the RESOLVED target).
+	struct FUnitIntent
+	{
+		FUnitHandle TargetUnit;
+		uint8 bAutoEngage = 0;
+		bool bHasIntent = false;
+	};
+	TMap<FUnitHandle, FUnitIntent> UnitIntents;
+	for (const TPair<FUnitHandle, FUnitOrder>& OrderPair : Orders)
+	{
+		if (OrderPair.Value.Type != FUnitOrder::EType::AttackMove
+			|| OrderPair.Value.TargetUnit.IsValid())
+		{
+			continue; // AttackUnit carries its target; designated AttackMoves keep theirs
+		}
+		FUnitIntent Intent;
+		Intent.bAutoEngage = 1;
+		Intent.bHasIntent = true;
+		FUnitHandle Best;
+		float BestDistSq = TNumericLimits<float>::Max();
+		for (const TPair<FEngagementKey, int32>& Rec : RecordIndexMap)
+		{
+			const FUnitHandle Enemy = Rec.Key.Attacker == OrderPair.Key ? Rec.Key.Defender
+				: Rec.Key.Defender == OrderPair.Key ? Rec.Key.Attacker : FUnitHandle();
+			if (!Enemy.IsValid())
+			{
+				continue;
+			}
+			// Anchor distance via the unit chunks is not available here; the
+			// deterministic nearest = the lowest (index, serial) enemy unit.
+			const uint32 Rank = (Enemy.Index << 16) | Enemy.Serial;
+			const uint32 BestRank = Best.IsValid() ? (Best.Index << 16) | Best.Serial : MAX_uint32;
+			if (Rank < BestRank)
+			{
+				Best = Enemy;
+			}
+			(void)BestDistSq;
+		}
+		Intent.TargetUnit = Best;
+		UnitIntents.Add(OrderPair.Key, Intent);
+	}
+
 	// ---- Seeker mirrors, per chunk (both query walks visit chunks in the
 	// same deterministic order, so write-back consumes BridgesByChunk
 	// sequentially). ----
@@ -207,6 +251,37 @@ void UAssignPairsProcessor::Execute(FMassEntityManager& EntityManager, FMassExec
 		{
 			OrderTarget = Order->TargetUnit;
 			bAutoEngage = Order->Type == FUnitOrder::EType::AttackMove ? 1 : 0;
+			// AttackMove's target comes from the AUTO-ENGAGE resolution (the
+			// nearest live-record enemy), not the raw order -- the raw order's
+			// TargetUnit is empty until a player designates one (measured
+			// 2026-10-27: the seekers read the raw order and never paired).
+			if (bAutoEngage && !OrderTarget.IsValid())
+			{
+				if (const FUnitIntent* Resolved = UnitIntents.Find(OwnerUnit))
+				{
+					OrderTarget = Resolved->TargetUnit;
+				}
+			}
+		}
+		else if (Order && Order->Type != FUnitOrder::EType::None)
+		{
+			// Disengage (spec §4.7): re-tasking with Move/Stop while engaged
+			// flags the unit's engagement records dead AND clears the unit's
+			// pair fragments HERE -- a non-seeker entity never reaches the
+			// write-back, so without this its stale pair target would persist
+			// forever (measured 2026-10-27: the disengage never landed).
+			Registry->FlagUnitEngagementsDead(OwnerUnit);
+			auto DisengagePairs = Context.GetMutableFragmentView<FCombatPairFragment>();
+			for (int32 i = 0; i < Context.GetNumEntities(); ++i)
+			{
+				if (DisengagePairs[i].Target.IsValid())
+				{
+					DisengagePairs[i].Target = FMassEntityHandle();
+					DisengagePairs[i].State = ECombatPairState::Seeking;
+					DisengagePairs[i].bRingValid = 0;
+					DisengagePairs[i].BackoffTicks = 0;
+				}
+			}
 		}
 
 		TArray<FCombatSolver::FAssignSeekerState>& ChunkBridges = BridgesByChunk.AddDefaulted_GetRef();
