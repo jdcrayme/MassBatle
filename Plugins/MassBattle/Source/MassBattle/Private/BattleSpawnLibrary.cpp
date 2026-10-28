@@ -369,8 +369,10 @@ FBattleSpawnResult UBattleSpawnLibrary::SpawnUnit(UWorld* World, const FUnitSpaw
 	Registry->SetRoster(Unit, MoveTemp(Entities));
 
 	// Phase 3 (spec ranged-stack §3.2, A8): class-missile rows default the
-	// skirmish toggle on at spawn; the registry owns the toggle state.
-	Registry->SetUnitSkirmishDefault(Unit, Row.bSkirmishDefault);
+	// skirmish toggle on at spawn; the registry owns the toggle state. The
+	// same stamp carries the fraction denominator's ammo half (melee rows
+	// pass AmmoPerMan 0 -> the fraction reads -1 there).
+	Registry->SetUnitRangedSpawnState(Unit, Row.bSkirmishDefault, Row.AmmoPerMan);
 
 	FBattleAttributeSnapshot Snapshot;
 	Snapshot.Morale = Row.MoraleBase;

@@ -7,6 +7,8 @@
 #include "BattleFragments.h"
 #include "BattleCombatFragments.h"
 #include "BattleDeathPath.h"
+#include "BattleRangedFragments.h"
+#include "BattleProjectileSubsystem.h"
 #include "BattleRngRegistry.h"
 #include "BattleCostGridSubsystem.h"
 #include "BattleSave.h"
@@ -993,6 +995,145 @@ void CombatSaveProbe(const TArray<FString>& Args, UWorld* World)
 	}
 }
 
+// ---- Phase 3 task 1 (ranged data spine: spec §4.10 toggle/dump surface) ----
+
+void RangedToggle(const TArray<FString>& Args, UWorld* World)
+{
+	UUnitRegistrySubsystem* Registry = World ? World->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	if (!Registry || Args.Num() < 3)
+	{
+		UE_LOG(LogMassBattle, Display,
+			TEXT("EXEC_RESULT RangedToggle FAIL BadArgs (need: UnitIndex FireAtWill|Skirmish 0|1)"));
+		return;
+	}
+	const FUnitHandle Matched = MatchUnitIndex(Registry, FCString::Atoi(*Args[0]));
+	if (!Matched.IsValid())
+	{
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT RangedToggle FAIL NoSuchUnit Index=%d"),
+			FCString::Atoi(*Args[0]));
+		return;
+	}
+	const FString& Toggle = Args[1];
+	const bool bValue = FCString::Atoi(*Args[2]) != 0;
+	bool bFireAtWill = false;
+	bool bSkirmish = false;
+	bool bOutOfAmmo = false;
+	Registry->GetUnitFireToggles(Matched, bFireAtWill, bSkirmish, bOutOfAmmo);
+	if (Toggle == TEXT("FireAtWill"))
+	{
+		bFireAtWill = bValue;
+	}
+	else if (Toggle == TEXT("Skirmish"))
+	{
+		bSkirmish = bValue;
+	}
+	else
+	{
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT RangedToggle FAIL BadToggle %s (FireAtWill|Skirmish)"), *Toggle);
+		return;
+	}
+	const bool bOk = Registry->SetUnitFireToggles(Matched, bFireAtWill, bSkirmish);
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT RangedToggle %s Unit=%u:%u Toggle=%s Value=%d"),
+		bOk ? TEXT("OK") : TEXT("FAIL"), Matched.Index, Matched.Serial, *Toggle, bValue ? 1 : 0);
+}
+
+void RangedDump(const TArray<FString>& Args, UWorld* World)
+{
+	UUnitRegistrySubsystem* Registry = World ? World->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	UMassEntitySubsystem* EntitySubsystem = World ? World->GetSubsystem<UMassEntitySubsystem>() : nullptr;
+	UBattleProjectileSubsystem* Projectiles = World ? World->GetSubsystem<UBattleProjectileSubsystem>() : nullptr;
+	if (!Registry || !EntitySubsystem)
+	{
+		UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT RangedDump FAIL no world/registry"));
+		return;
+	}
+	FMassEntityManager& EntityManager = EntitySubsystem->GetMutableEntityManager();
+	const FBattleProjectilePool& Pool = Projectiles ? Projectiles->GetPool() : FBattleProjectilePool::EmptyPool();
+
+	// Optional UnitIndex filter; absent dumps every live unit (the
+	// spawn-stamp evidence pass: one archer spawn, one line).
+	TArray<FUnitHandle> Handles = Registry->GetSortedHandles();
+	if (Args.Num() > 0)
+	{
+		const FUnitHandle Matched = MatchUnitIndex(Registry, FCString::Atoi(*Args[0]));
+		if (!Matched.IsValid())
+		{
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT RangedDump FAIL NoSuchUnit Index=%d"),
+				FCString::Atoi(*Args[0]));
+			return;
+		}
+		Handles = { Matched };
+	}
+
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT RangedDump Begin Units=%d PoolLive=%d PoolCapacity=%d"),
+		Handles.Num(), Pool.GetLiveCount(), Pool.GetCapacity());
+	for (const FUnitHandle& Handle : Handles)
+	{
+		bool bFireAtWill = false;
+		bool bSkirmish = false;
+		bool bOutOfAmmo = false;
+		Registry->GetUnitFireToggles(Handle, bFireAtWill, bSkirmish, bOutOfAmmo);
+		const FUnitRuntimeState* State = Registry->FindUnitState(Handle);
+		const float Fraction = Registry->GetUnitAmmoFraction(Handle);
+
+		// Per-entity ammo histogram (ascending ammo x count) -- dead
+		// entities left the roster; unresolvable ones (registry-only
+		// restore) do not contribute and Ranged=0 marks the state.
+		TMap<int32, int32> Histogram;
+		int32 RangedCount = 0;
+		if (const TArray<FMassEntityHandle>* Roster = Registry->FindRoster(Handle))
+		{
+			for (const FMassEntityHandle& Entity : *Roster)
+			{
+				if (const FRangedStateFragment* Ranged =
+					FMassEntityView(EntityManager, Entity).GetFragmentDataPtr<FRangedStateFragment>())
+				{
+					++RangedCount;
+					++Histogram.FindOrAdd(static_cast<int32>(Ranged->AmmoCount));
+				}
+			}
+		}
+		FStringBuilderBase HistBuilder;
+		Histogram.KeySort(TLess<int32>());
+		bool bFirst = true;
+		for (const TPair<int32, int32>& Bucket : Histogram)
+		{
+			if (!bFirst)
+			{
+				HistBuilder.Append(TEXT("|"));
+			}
+			HistBuilder.Appendf(TEXT("%dx%d"), Bucket.Key, Bucket.Value);
+			bFirst = false;
+		}
+		const FString HistStr = bFirst ? FString(TEXT("-")) : HistBuilder.ToString();
+
+		// Pool attribution (spec §4.10): live projectiles this unit owns.
+		int32 PoolOwned = 0;
+		for (int32 Slot = 0; Slot < Pool.GetCapacity(); ++Slot)
+		{
+			if (Pool.IsLive(Slot) && Pool.OwnerUnit[Slot] == Handle)
+			{
+				++PoolOwned;
+			}
+		}
+
+		UE_LOG(LogMassBattle, Display,
+			TEXT("EXEC_RESULT RangedDump Unit=%u:%u Ranged=%d FireAtWill=%d Skirmish=%d OutOfAmmo=%d Fraction=%.3f Roster=%d InitialAmmo=%d InitialRoster=%d AmmoHist=%s PoolOwned=%d"),
+			Handle.Index, Handle.Serial,
+			RangedCount > 0 ? 1 : 0,
+			bFireAtWill ? 1 : 0,
+			bSkirmish ? 1 : 0,
+			bOutOfAmmo ? 1 : 0,
+			Fraction,
+			State ? State->Roster.Num() : -1,
+			State ? State->RangedInitialAmmo : 0,
+			State ? State->InitialRosterSize : 0,
+			*HistStr,
+			PoolOwned);
+	}
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT RangedDump End"));
+}
+
 // ---- Command registration (Task 4 portion) ----
 
 static FAutoConsoleCommandWithWorldAndArgs GBattleDumpRegistry(
@@ -1118,3 +1259,13 @@ static FAutoConsoleCommandWithWorldAndArgs GBattleCombatSpawnClash(
 	TEXT("Battle.Combat.SpawnClash"),
 	TEXT("<wall|mob|charge> -- task 8 M3 demo fixture (geometry-only, A10); spawns the clash shape and issues the orders; EXEC_RESULT SpawnClash"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BattleExec::CombatSpawnClash));
+
+static FAutoConsoleCommandWithWorldAndArgs GBattleRangedToggle(
+	TEXT("Battle.Ranged.Toggle"),
+	TEXT("<UnitIndex> <FireAtWill|Skirmish> <0|1> -- spec ranged-stack 4.10 toggle surface; EXEC_RESULT RangedToggle"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BattleExec::RangedToggle));
+
+static FAutoConsoleCommandWithWorldAndArgs GBattleRangedDump(
+	TEXT("Battle.Ranged.Dump"),
+	TEXT("[UnitIndex] -- toggles, ammo fraction + per-entity histogram, pool attribution; EXEC_RESULT RangedDump lines"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BattleExec::RangedDump));

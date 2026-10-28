@@ -2,6 +2,7 @@
 #include "BattleExternalSubsystemTraits.h"
 #include "BattleFragments.h"
 #include "BattleGarrisonSubsystem.h"
+#include "BattleRangedFragments.h"
 #include "BattleRngRegistry.h"
 #include "BattleSave.h"
 #include "MassBattleModule.h"
@@ -144,6 +145,11 @@ void UUnitRegistrySubsystem::SetRoster(FUnitHandle Handle, TArray<FMassEntityHan
 	if (FUnitRuntimeState* State = Units.Find(Handle))
 	{
 		State->Roster = MoveTemp(Roster);
+		// Phase 3 (spec §3.2): the fraction denominator's roster half stamps
+		// at the one publish (the spawn fixup; restore never routes through
+		// here) -- the live roster shrinks with deaths, the denominator does
+		// not.
+		State->InitialRosterSize = State->Roster.Num();
 	}
 }
 
@@ -195,16 +201,118 @@ void UUnitRegistrySubsystem::UpdateCachedAttributes(FUnitHandle Handle, const FB
 	}
 }
 
-void UUnitRegistrySubsystem::SetUnitSkirmishDefault(FUnitHandle Handle, bool bInSkirmish)
+void UUnitRegistrySubsystem::SetUnitRangedSpawnState(FUnitHandle Handle, bool bInSkirmish, int32 InitialAmmo)
 {
-	// Phase 3 (spec ranged-stack §3.2, A8): spawn-time default only -- the
-	// runtime toggle surface lands with the Phase 3 data-spine task. Called
-	// from UBattleSpawnLibrary::SpawnUnit right after SetRoster.
+	// Phase 3 (spec ranged-stack §3.2, A8): spawn-time stamp -- skirmish
+	// default + the fraction denominator's ammo half. Called from
+	// UBattleSpawnLibrary::SpawnUnit right after SetRoster. Melee rows pass
+	// AmmoPerMan 0 -> the fraction reads -1 (non-ranged).
 	UE_MT_SCOPED_WRITE_ACCESS(AccessDetector);
 	if (FUnitRuntimeState* State = Units.Find(Handle))
 	{
 		State->bSkirmish = bInSkirmish;
+		State->RangedInitialAmmo = FMath::Max(0, InitialAmmo);
 	}
+}
+
+bool UUnitRegistrySubsystem::SetUnitFireToggles(FUnitHandle Handle, bool bFireAtWill, bool bSkirmish)
+{
+	// The A11 rejection pattern (OrderAttackUnit precedent): a bad handle
+	// logs an EXEC_RESULT line and returns false. One write scope for the
+	// validate-and-write half (the M7 TOCTOU lesson).
+	if (!Handle.IsValid())
+	{
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT RangedToggle FAIL BadHandle Handle=%u:%u"),
+			Handle.Index, Handle.Serial);
+		return false;
+	}
+	UE_MT_SCOPED_WRITE_ACCESS(AccessDetector);
+	FUnitRuntimeState* State = Units.Find(Handle);
+	if (!State)
+	{
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT RangedToggle FAIL StaleHandle Handle=%u:%u"),
+			Handle.Index, Handle.Serial);
+		return false;
+	}
+	State->bFireAtWill = bFireAtWill;
+	State->bSkirmish = bSkirmish;
+	return true;
+}
+
+void UUnitRegistrySubsystem::GetUnitFireToggles(FUnitHandle Handle, bool& bOutFireAtWill, bool& bOutSkirmish, bool& bOutOutOfAmmo) const
+{
+	UE_MT_SCOPED_READ_ACCESS(AccessDetector);
+	const FUnitRuntimeState* State = Units.Find(Handle);
+	bOutFireAtWill = State ? State->bFireAtWill : true;
+	bOutSkirmish = State ? State->bSkirmish : false;
+	bOutOutOfAmmo = State ? State->bOutOfAmmo : false;
+}
+
+float UUnitRegistrySubsystem::GetUnitAmmoFraction(FUnitHandle Handle) const
+{
+	// RC5 aggregate: live sum / (RangedInitialAmmo x InitialRosterSize). The
+	// registry is the fraction's authority (arch §10.1, A14); the GAS
+	// AmmoPool attribute mirrors it for UI only (UnitSync, Task 4).
+	UE_MT_SCOPED_READ_ACCESS(AccessDetector);
+	const FUnitRuntimeState* State = Units.Find(Handle);
+	if (!State || State->RangedInitialAmmo <= 0 || State->InitialRosterSize <= 0)
+	{
+		return -1.f;
+	}
+	UMassEntitySubsystem* EntitySubsystem = GetWorld() ? GetWorld()->GetSubsystem<UMassEntitySubsystem>() : nullptr;
+	if (!EntitySubsystem)
+	{
+		return -1.f;
+	}
+	FMassEntityManager& EntityManager = EntitySubsystem->GetMutableEntityManager();
+	int32 AmmoSum = 0;
+	bool bAnyRanged = false;
+	for (const FMassEntityHandle& Entity : State->Roster)
+	{
+		// Dead entities left the roster at HandleUnitDeath; unresolvable
+		// handles (registry-only restored state) yield null fragment data
+		// and simply do not contribute.
+		const FRangedStateFragment* Ranged =
+			FMassEntityView(EntityManager, Entity).GetFragmentDataPtr<FRangedStateFragment>();
+		if (Ranged)
+		{
+			bAnyRanged = true;
+			AmmoSum += Ranged->AmmoCount;
+		}
+	}
+	if (!bAnyRanged)
+	{
+		return -1.f;
+	}
+	return static_cast<float>(AmmoSum) / static_cast<float>(State->RangedInitialAmmo * State->InitialRosterSize);
+}
+
+bool UUnitRegistrySubsystem::FlipUnitOutOfAmmo(FUnitHandle Handle)
+{
+	// A14: flips exactly once at aggregate zero, never un-flips (no resupply
+	// v1). Idempotent afterward: repeat calls report false, not an error.
+	if (!Handle.IsValid())
+	{
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT OutOfAmmo FAIL BadHandle Handle=%u:%u"),
+			Handle.Index, Handle.Serial);
+		return false;
+	}
+	UE_MT_SCOPED_WRITE_ACCESS(AccessDetector);
+	FUnitRuntimeState* State = Units.Find(Handle);
+	if (!State)
+	{
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT OutOfAmmo FAIL StaleHandle Handle=%u:%u"),
+			Handle.Index, Handle.Serial);
+		return false;
+	}
+	if (State->bOutOfAmmo)
+	{
+		return false;
+	}
+	State->bOutOfAmmo = true;
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT OutOfAmmo Unit=%u:%u Roster=%d InitialAmmo=%d"),
+		Handle.Index, Handle.Serial, State->Roster.Num(), State->RangedInitialAmmo);
+	return true;
 }
 
 const FBattleAttributeSnapshot* UUnitRegistrySubsystem::FindCachedAttributes(FUnitHandle Handle) const
@@ -761,7 +869,7 @@ void UUnitRegistrySubsystem::CaptureBattleState(FBattleSaveData& OutData) const
 {
 	UE_MT_SCOPED_READ_ACCESS(AccessDetector);
 	OutData = FBattleSaveData();
-	OutData.SchemaVersion = 1;
+	OutData.SchemaVersion = 2;
 
 	// Units in sorted-handle order (the pass the hash folds).
 	TArray<FUnitHandle> Handles;
@@ -823,6 +931,12 @@ void UUnitRegistrySubsystem::CaptureBattleState(FBattleSaveData& OutData) const
 		Entry.PendingStructureId = Pending.StructureId;
 		Entry.PendingTargetUnitIndex = Pending.TargetUnit.Index;
 		Entry.PendingTargetUnitSerial = Pending.TargetUnit.Serial;
+		// v2 (spec ranged-stack §3.5): toggles + fraction denominators.
+		Entry.bFireAtWill = State->bFireAtWill ? 1 : 0;
+		Entry.bSkirmish = State->bSkirmish ? 1 : 0;
+		Entry.bOutOfAmmo = State->bOutOfAmmo ? 1 : 0;
+		Entry.RangedInitialAmmo = State->RangedInitialAmmo;
+		Entry.InitialRosterSize = State->InitialRosterSize;
 	}
 
 	// Slot bookkeeping the round-trip must reproduce (free-list depth folds
@@ -873,11 +987,14 @@ void UUnitRegistrySubsystem::CaptureBattleState(FBattleSaveData& OutData) const
 
 bool UUnitRegistrySubsystem::RestoreBattleState(const FBattleSaveData& InData)
 {
-	if (InData.SchemaVersion != 1)
+	// v2 (spec ranged-stack §3.5) restores the ranged toggles + denominators;
+	// v1 (legacy) restores to the defaults. Anything else rejects.
+	if (InData.SchemaVersion != 1 && InData.SchemaVersion != 2)
 	{
-		UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT SaveProbe FAIL schema mismatch (have %u, want 1)"), InData.SchemaVersion);
+		UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT SaveProbe FAIL schema mismatch (have %u, want 1 or 2)"), InData.SchemaVersion);
 		return false;
 	}
+	const bool bV2 = InData.SchemaVersion >= 2;
 	UE_MT_SCOPED_WRITE_ACCESS(AccessDetector);
 	Units.Reset();
 	SpecsByIndex.Reset();
@@ -924,6 +1041,14 @@ bool UUnitRegistrySubsystem::RestoreBattleState(const FBattleSaveData& InData)
 		Pending.StructureId = Entry.PendingStructureId;
 		Pending.TargetUnit.Index = Entry.PendingTargetUnitIndex;
 		Pending.TargetUnit.Serial = Entry.PendingTargetUnitSerial;
+		// v2 ranged state (spec ranged-stack §3.5); a v1 payload takes the
+		// defaults (toggles on/off/off, denominators 0 -- no v1 save can
+		// contain a ranged row, the fixture predates stat_sec).
+		State.bFireAtWill = !bV2 || Entry.bFireAtWill != 0;
+		State.bSkirmish = bV2 && Entry.bSkirmish != 0;
+		State.bOutOfAmmo = bV2 && Entry.bOutOfAmmo != 0;
+		State.RangedInitialAmmo = bV2 ? Entry.RangedInitialAmmo : 0;
+		State.InitialRosterSize = bV2 ? Entry.InitialRosterSize : 0;
 
 		FUnitSpawnSpec& Spec = SpecsByIndex.Add(Handle.Index);
 		Spec.EduRowIndex = Entry.EduRowIndex;

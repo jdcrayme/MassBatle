@@ -295,13 +295,35 @@ public:
 	void UpdateCachedAttributes(FUnitHandle Handle, const FBattleAttributeSnapshot& Snapshot);
 	const FBattleAttributeSnapshot* FindCachedAttributes(FUnitHandle Handle) const;
 
-	// -- Phase 3 fire-control toggles (spec ranged-stack §3.2) --
+	// -- Phase 3 fire-control surface (spec ranged-stack §3.2, §4.10; A11) --
 
-	/** Spawn-time skirmish default (A8): class-missile rows call this with
-	 *  true right after registration. The full toggle surface
-	 *  (SetUnitFireToggles) lands with the Phase 3 data-spine task on the UE
-	 *  machine; the spawn default is what the save round-trip captures. */
-	void SetUnitSkirmishDefault(FUnitHandle Handle, bool bInSkirmish);
+	/** Spawn-time ranged stamp (A8): class-missile rows call this with
+	 *  bSkirmish=true right after registration, stamping the skirmish default
+	 *  + the fraction denominator's ammo half (RangedInitialAmmo;
+	 *  InitialRosterSize stamps at SetRoster). Called from
+	 *  UBattleSpawnLibrary::SpawnUnit. */
+	void SetUnitRangedSpawnState(FUnitHandle Handle, bool bInSkirmish, int32 InitialAmmo);
+
+	/** Toggle family (arch §10.4): FireAtWill + Skirmish in one validated
+	 *  write. Rejects bad handles with an EXEC_RESULT line (the A11
+	 *  order-surface pattern) and returns false. */
+	bool SetUnitFireToggles(FUnitHandle Handle, bool bFireAtWill, bool bSkirmish);
+
+	/** Toggle readback (defaults true/false/false on a stale handle). */
+	void GetUnitFireToggles(FUnitHandle Handle, bool& bOutFireAtWill, bool& bOutSkirmish, bool& bOutOutOfAmmo) const;
+
+	/** Live ammo aggregate (RC5): sum of the roster's FRangedStateFragment
+	 *  AmmoCount over (RangedInitialAmmo x InitialRosterSize). -1 for
+	 *  non-ranged (unstamped) or when no roster entity resolves to a ranged
+	 *  fragment (registry-only restored state; entity payloads are T6.3).
+	 *  Game thread: reads fragments through the entity subsystem. */
+	float GetUnitAmmoFraction(FUnitHandle Handle) const;
+
+	/** The once-only out-of-ammo flip (A14): true iff this call flipped it,
+	 *  false when already flipped (never un-flips) or the handle is bad
+	 *  (EXEC_RESULT reject line). The fire pass calls it when its decrement
+	 *  drives the aggregate to zero. */
+	bool FlipUnitOutOfAmmo(FUnitHandle Handle);
 
 	/** Idempotent: marking twice in one frame leaves one dirty entry. */
 	void MarkStatsDirty(FUnitHandle Handle);

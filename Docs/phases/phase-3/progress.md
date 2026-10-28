@@ -69,6 +69,67 @@
   deferred: S4_ShieldWall + S5_Mob"); they fail at base `48f1553` identically, so they
   are NOT kickoff regressions. No other func regressions.
 
+## Task 1 -- data spine on the UE machine (registry + save v2 + live spawn path)
+
+- [task1.1] Registry fire-control surface implemented (spec §3.2/§4.10, A11/A14):
+  `SetUnitRangedSpawnState(Handle, bSkirmish, InitialAmmo)` (replaces the kickoff's
+  `SetUnitSkirmishDefault`; same spawn-library call site, now stamping the fraction
+  denominator's ammo half), `SetUnitFireToggles` + `GetUnitFireToggles` (bad handles
+  reject with EXEC_RESULT lines), `GetUnitAmmoFraction` (live roster
+  `FRangedStateFragment.AmmoCount` sum over `RangedInitialAmmo x InitialRosterSize`,
+  -1 non-ranged/unresolvable), `FlipUnitOutOfAmmo` (once-only, never un-flips, EXEC_RESULT
+  line on the flip). Denominator home: `FUnitRuntimeState.{RangedInitialAmmo,
+  InitialRosterSize}` -- `InitialRosterSize` stamps at `SetRoster` (the one spawn
+  publish; restore routes around it), so deaths shrink the roster, not the denominator.
+- [task1.2] Save v2 (spec §3.5, A9): `FBattleSaveData.SchemaVersion` 1 -> 2;
+  `FUnitSaveEntry` += `bFireAtWill/bSkirmish/bOutOfAmmo/RangedInitialAmmo/InitialRosterSize`;
+  restore accepts 1 (toggles default on/off/off, denominators 0 -- no v1 save can contain
+  a ranged row) and 2; the mismatch error line now reads "want 1 or 2". Entity ammo +
+  pool stay unsaved (T6.3 by design).
+- [task1.3] ExecBridge surface (spec §4.10): `Battle.Ranged.Toggle <UnitIndex>
+  <FireAtWill|Skirmish> <0|1>` (MatchUnitIndex resolution, A11 rejection lines) and
+  `Battle.Ranged.Dump [UnitIndex]` (toggles, live fraction, ascending ammo x count
+  histogram, pool attribution) -- both registered, both exercised from the unit tier.
+- [task1.4] `Battle.Unit.Ranged.RegistrySpine` added (MassBattleCombatTests.cpp, combat
+  helpers): spawn-stamp defaults (archer Skirmish=1 / levy Skirmish=0), fraction 1 ->
+  decrement band -> 0, melee -1, once-only flip + latching, toggle set/cleared with
+  OutOfAmmo surviving, bad-handle rejects, archetype-count stability across identical
+  ranged spawns (two-row world=4, AddInfo).
+- [task1.5] `Battle.Unit.Combat.SaveRoundTrip` extended: non-default toggles + the flip
+  captured (entry-field asserts), restored verbatim (state asserts), legacy v1 downgrade
+  restores defaults (FireAtWill on, Skirmish/OutOfAmmo off, denominators 0); bookkeeping
+  hash independent of toggles (still round-trip equal).
+- [task1.6] HashTerms extension (ammo/reload/shots mutations + pool entry/position/
+  release) verified green on the machine from Task 0 -- unchanged this task; it IS the
+  state-hash mutation-sensitivity evidence. The `Battle.StateHash` two-run-with-volley
+  expansion is the Task 7 DeterminismTwoRun extension (unit-tier compute stability is
+  asserted by HashTerms' recomputes + revert-restores).
+- [task1.7] Build MassBattleEditor Win64 Development -> **Succeeded** (21 actions,
+  166.8 s). Unit tier: **passed=76 failed=0 total=76 completed=True exit=0 ok=True**
+  (`Tools/CI/last_run.json`; was 75 -- +1 = RegistrySpine). Evidence lines (verbatim,
+  from `Tools/CI/last_run/unit.log`):
+  - spawn stamp: `EXEC_RESULT RangedDump Unit=2:1 Ranged=1 FireAtWill=1 Skirmish=1
+    OutOfAmmo=0 Fraction=1.000 Roster=40 InitialAmmo=25 InitialRoster=40 AmmoHist=25x40
+    PoolOwned=0` (levy row: `Ranged=0 ... Skirmish=0 Fraction=-1.000 ... AmmoHist=-`)
+  - out-of-ammo flip: `EXEC_RESULT OutOfAmmo Unit=2:1 Roster=40 InitialAmmo=25`
+  - toggled state: `EXEC_RESULT RangedDump Unit=2:1 Ranged=1 FireAtWill=0 Skirmish=0
+    OutOfAmmo=1 Fraction=0.000 Roster=40 InitialAmmo=25 InitialRoster=40 AmmoHist=0x40
+    PoolOwned=0`
+  - A11 rejects: `EXEC_RESULT RangedToggle FAIL StaleHandle Handle=987:1` /
+    `EXEC_RESULT OutOfAmmo FAIL StaleHandle Handle=987:1` /
+    `EXEC_RESULT RangedToggle FAIL NoSuchUnit Index=999`
+  - archetype probe: `archetypes: two-row world=4` (melee alive/dead + ranged alive/dead;
+    stable across identical re-spawns; the 8-count scenario/soak assertion stays with
+    Tasks 6/7 per Task 0's note).
+- [task1.8] Func tier (`run_tests.bat func`): **passed=19 failed=4 total=23** -- identical
+  to the Task 0 baseline: the two by-design skeletons (`S6_Volley`, `SkirmishBehavior`,
+  Task 6 replaces them) + the two pre-existing phase-2 melts (`S4_ShieldWall`,
+  `S5_Mob`). No new func regressions from the data-spine work.
+- [task1.9] Acceptance check: unit tier green (SaveRoundTrip schema-2 + HashTerms
+  extended); EXEC_RESULT evidence lines for spawn-stamp, toggle reject, out-of-ammo flip
+  (verbatim above); archetype count stable across all spawns at this tier (two-row
+  world=4; Task 0's isolated-world probe unchanged).
+
 ## Open items carried
 
 - S4_ShieldWall / S5_Mob melts: pre-existing, owned by the phase-2 dossier's deferred

@@ -14,6 +14,7 @@
 #include "BattleSpatialHash.h"
 #include "BattleUnitContact.h"
 #include "BattleStateHash.h"
+#include "BattleExecCommands.h"
 #include "BattleFragments.h"
 #include "BattleCombatFragments.h"
 #include "BattleRangedFragments.h"
@@ -307,6 +308,10 @@ bool FCombat_SaveRoundTrip::RunTest(const FString& Parameters)
 	const FBattleSpawnResult UnitB = SpawnRow(World, Rows[1]);
 	TestTrue(TEXT("units spawned"), UnitA.Unit.IsValid() && UnitB.Unit.IsValid());
 	TestTrue(TEXT("attack order"), Registry->IssueAttackUnitOrder(UnitA.Unit, UnitB.Unit));
+	// v2 (spec ranged-stack §3.5): non-default toggles + the once-only
+	// out-of-ammo flip must survive the round trip.
+	TestTrue(TEXT("fire toggles set"), Registry->SetUnitFireToggles(UnitA.Unit, false, true));
+	TestTrue(TEXT("out-of-ammo flip"), Registry->FlipUnitOutOfAmmo(UnitA.Unit));
 	if (FEngagementRecord* Rec = Registry->CreateOrRefreshEngagement(UnitA.Unit, UnitB.Unit))
 	{
 		Rec->Mode = EEngagementMode::Mob;
@@ -318,11 +323,21 @@ bool FCombat_SaveRoundTrip::RunTest(const FString& Parameters)
 	const uint32 HashBefore = Registry->ComputeBookkeepingHash();
 	FBattleSaveData Save;
 	Registry->CaptureBattleState(Save);
-	TestEqual(TEXT("schema version"), Save.SchemaVersion, 1u);
+	TestEqual(TEXT("schema version"), Save.SchemaVersion, 2u);
 	TestEqual(TEXT("units captured"), Save.Units.Num(), 2);
 	TestEqual(TEXT("engagement captured"), Save.Engagements.Num(), 1);
 	TestTrue(TEXT("rng streams captured"), Save.RngStreams.Num() >= 2);
 	TestEqual(TEXT("root seed captured"), Save.RngRootSeed, 424242);
+	{
+		const FUnitSaveEntry* EntryA = Save.Units.FindByPredicate(
+			[&](const FUnitSaveEntry& E) { return E.Index == UnitA.Unit.Index; });
+		if (TestNotNull(TEXT("unit A entry"), EntryA))
+		{
+			TestEqual(TEXT("captured FireAtWill"), EntryA->bFireAtWill, 0);
+			TestEqual(TEXT("captured Skirmish"), EntryA->bSkirmish, 1);
+			TestEqual(TEXT("captured OutOfAmmo"), EntryA->bOutOfAmmo, 1);
+		}
+	}
 
 	// Clear: unregister everything + prune records. The hash must CHANGE
 	// (state actually destroyed, not vacuously restored over itself).
@@ -345,6 +360,10 @@ bool FCombat_SaveRoundTrip::RunTest(const FString& Parameters)
 		TestEqual(TEXT("roster size back"), RestoredA->Roster.Num(), UnitA.NumEntities);
 		TestEqual(TEXT("order type back"), static_cast<int32>(RestoredA->CurrentOrder.Type),
 			static_cast<int32>(FUnitOrder::EType::AttackUnit));
+		// v2: toggles + out-of-ammo survive capture/clear/restore (spec §3.5).
+		TestFalse(TEXT("FireAtWill back"), RestoredA->bFireAtWill);
+		TestTrue(TEXT("Skirmish back"), RestoredA->bSkirmish);
+		TestTrue(TEXT("OutOfAmmo back"), RestoredA->bOutOfAmmo);
 	}
 	const FEngagementRecord* RestoredRec = Registry->FindEngagement(UnitA.Unit, UnitB.Unit);
 	TestNotNull(TEXT("engagement back"), RestoredRec);
@@ -369,6 +388,23 @@ bool FCombat_SaveRoundTrip::RunTest(const FString& Parameters)
 		}
 	}
 	TestEqual(TEXT("every stream restored at its captured position"), Identical, Save.RngStreams.Num());
+
+	// Legacy v1 payload: the toggles are absent -> restore takes the defaults
+	// (FireAtWill on, Skirmish/OutOfAmmo off, denominators 0; spec §3.5).
+	Save.SchemaVersion = 1;
+	TestTrue(TEXT("legacy restore ok"), Registry->RestoreBattleState(Save));
+	{
+		const FUnitRuntimeState* LegacyA = Registry->FindUnitState(UnitA.Unit);
+		if (TestNotNull(TEXT("unit A state back (legacy)"), LegacyA))
+		{
+			TestTrue(TEXT("legacy FireAtWill defaults on"), LegacyA->bFireAtWill);
+			TestFalse(TEXT("legacy Skirmish defaults off"), LegacyA->bSkirmish);
+			TestFalse(TEXT("legacy OutOfAmmo defaults off"), LegacyA->bOutOfAmmo);
+			TestEqual(TEXT("legacy denominators default 0"), LegacyA->RangedInitialAmmo + LegacyA->InitialRosterSize, 0);
+		}
+	}
+	TestEqual(TEXT("bookkeeping hash independent of toggles"),
+		Registry->ComputeBookkeepingHash(), HashBefore);
 
 	World->DestroyWorld(false);
 	return true;
@@ -645,6 +681,128 @@ bool FCombat_HashTerms::RunTest(const FString& Parameters)
 				TestEqual(TEXT("pool release restores hash"), FBattleStateHash::Compute(World), HashR);
 			}
 		}
+	}
+
+	World->DestroyWorld(false);
+	return true;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3 task 1: the registry ranged data spine (spec ranged-stack §3.2,
+// §4.10) -- spawn stamp defaults, the toggle surface + bad-handle rejects,
+// the live ammo fraction, the once-only out-of-ammo flip, and the
+// RangedDump evidence line. Also probes the archetype-count stability
+// across ranged-capable spawns (F6 watch).
+// ---------------------------------------------------------------------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCombat_RangedRegistrySpine,
+	"Battle.Unit.Ranged.RegistrySpine",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FCombat_RangedRegistrySpine::RunTest(const FString& Parameters)
+{
+	UWorld* World = MakeCombatTestWorld();
+	UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>();
+	UMassEntitySubsystem* EntitySubsystem = World->GetSubsystem<UMassEntitySubsystem>();
+	TestNotNull(TEXT("registry"), Registry);
+	if (!Registry || !EntitySubsystem)
+	{
+		World->DestroyWorld(false);
+		return false;
+	}
+
+	TArray<FEduUnit> Rows;
+	if (!LoadCombatFixture(Rows) || Rows.Num() < 4)
+	{
+		AddError(TEXT("EDU fixture unavailable"));
+		World->DestroyWorld(false);
+		return false;
+	}
+
+	// Archetype-count stability (F6 watch): one world per composition mix,
+	// identical mixes yield identical counts; the ranged fragment rides
+	// ranged-capable compositions only. Measured here per tier; the 8-count
+	// alive/dead assertion is the scenario/soak gate (Tasks 6/7).
+	int32 ArchetypesTwoRows = -1;
+	{
+		const FBattleSpawnResult Melee = SpawnRow(World, Rows[0]);
+		const FBattleSpawnResult Archers = SpawnRow(World, Rows[2]);
+		TestTrue(TEXT("rows spawned"), Melee.Unit.IsValid() && Archers.Unit.IsValid());
+		FMassEntityManager& EntityManager = EntitySubsystem->GetMutableEntityManager();
+#if WITH_MASSENTITY_DEBUG
+		ArchetypesTwoRows = EntityManager.DebugGetArchetypesCount();
+#endif
+		AddInfo(FString::Printf(TEXT("archetypes: two-row world=%d"), ArchetypesTwoRows));
+
+		// -- Spawn stamp defaults (A8): missile class -> skirmish ON --
+		bool bFireAtWill = false;
+		bool bSkirmish = false;
+		bool bOutOfAmmo = false;
+		Registry->GetUnitFireToggles(Archers.Unit, bFireAtWill, bSkirmish, bOutOfAmmo);
+		TestTrue(TEXT("archer FireAtWill default on"), bFireAtWill);
+		TestTrue(TEXT("archer Skirmish default on (missile class)"), bSkirmish);
+		TestFalse(TEXT("archer OutOfAmmo default off"), bOutOfAmmo);
+		Registry->GetUnitFireToggles(Melee.Unit, bFireAtWill, bSkirmish, bOutOfAmmo);
+		TestFalse(TEXT("melee Skirmish default off"), bSkirmish);
+
+		// The RangedDump evidence pass (spec 4.10): one line per unit,
+		// Ranged=1 Skirmish=1 on the archer row, Ranged=0 on the levy.
+		BattleExec::RangedDump({}, World);
+
+		// -- Live ammo fraction (RC5) --
+		const TArray<FMassEntityHandle>* RosterA = Registry->FindRoster(Archers.Unit);
+		if (!TestNotNull(TEXT("archer roster"), RosterA) || RosterA->Num() == 0)
+		{
+			World->DestroyWorld(false);
+			return false;
+		}
+		const int32 N = RosterA->Num();
+		const int32 InitialAmmo = 25; // fixture stat_pri ammo for the archer row
+		TestEqual(TEXT("fraction 1 at full quiver"), Registry->GetUnitAmmoFraction(Archers.Unit), 1.0f, 1e-4f);
+		TestEqual(TEXT("melee fraction reads -1"), Registry->GetUnitAmmoFraction(Melee.Unit), -1.f);
+
+		// One decrement moves the fraction by exactly one round.
+		FMassEntityView(EntityManager, (*RosterA)[0]).GetFragmentData<FRangedStateFragment>().AmmoCount--;
+		TestEqual(TEXT("fraction moves by one decrement"), Registry->GetUnitAmmoFraction(Archers.Unit),
+			static_cast<float>(N * InitialAmmo - 1) / static_cast<float>(N * InitialAmmo), 1e-4f);
+
+		// -- The once-only out-of-ammo flip (A14) at aggregate zero --
+		for (const FMassEntityHandle& Entity : *RosterA)
+		{
+			FMassEntityView(EntityManager, Entity).GetFragmentData<FRangedStateFragment>().AmmoCount = 0;
+		}
+		TestEqual(TEXT("fraction 0 at empty aggregate"), Registry->GetUnitAmmoFraction(Archers.Unit), 0.0f, 1e-4f);
+		TestTrue(TEXT("flip at zero returns true"), Registry->FlipUnitOutOfAmmo(Archers.Unit));
+		TestFalse(TEXT("second flip is a no-op"), Registry->FlipUnitOutOfAmmo(Archers.Unit));
+		Registry->GetUnitFireToggles(Archers.Unit, bFireAtWill, bSkirmish, bOutOfAmmo);
+		TestTrue(TEXT("OutOfAmmo latched"), bOutOfAmmo);
+
+		// -- Toggle surface + bad-handle rejects (A11 lines) --
+		TestTrue(TEXT("toggles set"), Registry->SetUnitFireToggles(Archers.Unit, false, false));
+		Registry->GetUnitFireToggles(Archers.Unit, bFireAtWill, bSkirmish, bOutOfAmmo);
+		TestFalse(TEXT("FireAtWill cleared"), bFireAtWill);
+		TestFalse(TEXT("Skirmish cleared"), bSkirmish);
+		TestTrue(TEXT("OutOfAmmo survives toggles"), bOutOfAmmo);
+		BattleExec::RangedDump({ FString::FromInt(Archers.Unit.Index) }, World); // the toggled unit's line: FireAtWill=0
+		FUnitHandle Bad;
+		Bad.Index = 987u;
+		Bad.Serial = 1u;
+		TestFalse(TEXT("toggles reject bad handle"), Registry->SetUnitFireToggles(Bad, true, true));
+		TestFalse(TEXT("flip rejects bad handle"), Registry->FlipUnitOutOfAmmo(Bad));
+		BattleExec::RangedToggle({ TEXT("999"), TEXT("FireAtWill"), TEXT("0") }, World);
+	}
+
+	// Identical re-spawn -> identical archetype count (the SpawnComposition
+	// discipline, now with a ranged row in the mix).
+	{
+		World->DestroyWorld(false);
+		World = MakeCombatTestWorld();
+		SpawnRow(World, Rows[0]);
+		SpawnRow(World, Rows[2]);
+#if WITH_MASSENTITY_DEBUG
+		const int32 ArchetypesAgain = World->GetSubsystem<UMassEntitySubsystem>()->GetMutableEntityManager().DebugGetArchetypesCount();
+		TestEqual(TEXT("archetype count stable across identical ranged spawns"), ArchetypesAgain, ArchetypesTwoRows);
+#endif
 	}
 
 	World->DestroyWorld(false);

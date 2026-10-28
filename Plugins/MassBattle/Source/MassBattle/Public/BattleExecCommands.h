@@ -63,4 +63,8 @@ namespace BattleExec
 
 	// -- Phase 2 task 9 (T2.9 perf stress; B.6 1k-in-contact shape) --
 	MASSBATTLE_API void CombatPerfStress(const TArray<FString>& Args, UWorld* World);
+
+	// -- Phase 3 task 1 (ranged data spine: spec §4.10 toggle/dump surface) --
+	MASSBATTLE_API void RangedToggle(const TArray<FString>& Args, UWorld* World);
+	MASSBATTLE_API void RangedDump(const TArray<FString>& Args, UWorld* World);
 }

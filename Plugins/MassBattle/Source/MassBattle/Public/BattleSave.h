@@ -64,6 +64,17 @@ struct FUnitSaveEntry
 	UPROPERTY() uint32 PendingStructureId = 0;
 	UPROPERTY() uint32 PendingTargetUnitIndex = 0;
 	UPROPERTY() uint32 PendingTargetUnitSerial = 0;
+
+	// Phase 3 (spec ranged-stack §3.5, v2): fire-control toggles + the
+	// ammo-fraction denominator. Entity ammo and pool state stay unsaved
+	// (T6.3 by design): the v2 restore reproduces registry-level ranged
+	// state only. v1 payloads restore these to the defaults (toggles
+	// on/off/off, denominators 0).
+	UPROPERTY() uint8 bFireAtWill = 1;
+	UPROPERTY() uint8 bSkirmish = 0;
+	UPROPERTY() uint8 bOutOfAmmo = 0;
+	UPROPERTY() int32 RangedInitialAmmo = 0;
+	UPROPERTY() int32 InitialRosterSize = 0;
 };
 
 /** One engagement-record snapshot (spec §3.5). AssignedAttackers is excluded:
@@ -96,14 +107,15 @@ struct FRngStreamSaveEntry
 };
 
 /** Schema-versioned save container (v1: registry runtime snapshot + RNG
- *  stream states; shared-fragment payloads join the schema as entities do at
- *  T6.3). Plain data only. */
+ *  stream states; v2 adds the ranged fire-control toggles + fraction
+ *  denominators per spec ranged-stack §3.5; shared-fragment payloads join
+ *  the schema as entities do at T6.3). Plain data only. */
 USTRUCT()
 struct FBattleSaveData
 {
 	GENERATED_BODY()
 
-	UPROPERTY() uint32 SchemaVersion = 1;
+	UPROPERTY() uint32 SchemaVersion = 2;
 
 	UPROPERTY() TArray<FUnitSaveEntry> Units;
 	/** Free-slot reuse state (LIFO order preserved) + per-slot generation

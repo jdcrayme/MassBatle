@@ -141,6 +141,16 @@ struct FUnitRuntimeState
 	bool bFireAtWill = true;
 	bool bSkirmish = false;
 	bool bOutOfAmmo = false;
+
+	// Phase 3 (spec §3.2/§3.5): the ammo-fraction denominator inputs, stamped
+	// once at spawn. RangedInitialAmmo mirrors the row's per-entity
+	// InitialAmmo (the fragment stays the per-entity authority; this is the
+	// unit-aggregate copy save v2 carries so the denominator survives a
+	// registry-only restore). InitialRosterSize stamps at the spawn fixup --
+	// the live roster shrinks with deaths, the denominator must not. 0 on
+	// either side reads as non-ranged (fraction -1).
+	int32 RangedInitialAmmo = 0;
+	int32 InitialRosterSize = 0;
 };
 
 /** Spawn request: one parsed EDU row + roster size. Formation params seed the
