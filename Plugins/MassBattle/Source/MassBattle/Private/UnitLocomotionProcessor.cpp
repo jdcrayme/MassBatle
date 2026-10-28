@@ -954,8 +954,20 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 					}
 					// Contact probe (audit H3 wiring evidence): first 3 ticks per
 					// unit, then every 240th, with the resolved policy and the
-					// post-Min3 limit.
+					// post-Min3 limit. Audit A-2: culled of stale handles on a
+					// cheap cadence -- the map must not accumulate every handle
+					// generation ever seen across a session.
 					static TMap<FUnitHandle, int32> ProbeTicks;
+					if ((ProbeTicks.Num() & 15) == 0) // amortized: 1 in 16 inserts
+					{
+						for (auto It = ProbeTicks.CreateIterator(); It; ++It)
+						{
+							if (!Registry->IsHandleValid(It.Key()))
+							{
+								It.RemoveCurrent();
+							}
+						}
+					}
 					int32& TickCount = ProbeTicks.FindOrAdd(Unit);
 					++TickCount;
 					if (TickCount <= 3 || TickCount % 240 == 0)
@@ -1039,8 +1051,19 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 					GBattleMovementPaceGain.GetValueOnGameThread());
 				CurrentLimit *= PaceFactor;
 			// Phase 2 D2 observability: one line per throttle engagement and
-			// per recovery (event rate, game thread).
+			// per recovery (event rate, game thread). Audit A-2: culled of
+			// stale handles on a cheap cadence (same discipline as ProbeTicks).
 			static TMap<FUnitHandle, bool> PaceThrottled;
+			if ((PaceThrottled.Num() & 15) == 0)
+			{
+				for (auto It = PaceThrottled.CreateIterator(); It; ++It)
+				{
+					if (!Registry->IsHandleValid(It.Key()))
+					{
+						It.RemoveCurrent();
+					}
+				}
+			}
 			const bool bWas = PaceThrottled.FindOrAdd(Unit) == true;
 			if (PaceFactor < 1.f && !bWas)
 			{
