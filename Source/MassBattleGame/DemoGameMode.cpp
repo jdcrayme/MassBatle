@@ -16,6 +16,7 @@
 
 ADemoGameMode::ADemoGameMode()
 {
+	PrimaryActorTick.bCanEverTick = true;
 	DefaultPawnClass = ADemoCameraPawn::StaticClass();
 	PlayerControllerClass = ADemoPlayerController::StaticClass();
 	HUDClass = ADemoHUD::StaticClass();
@@ -51,6 +52,21 @@ void ADemoGameMode::BeginPlay()
 	// Entity creation must land on the game thread with Mass idle (the soak
 	// controller waits out the first ticks for the same reason).
 	GetWorldTimerManager().SetTimerForNextTick(this, &ADemoGameMode::TrySpawnLevelUnits);
+}
+
+void ADemoGameMode::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+	// Phase 2 task 10: adopt registry units the visuals don't know (the M3
+	// sample, console SpawnClash) on a 1 s cadence -- cheap at demo scale.
+	if (UDemoUnitVisualSubsystem* Visuals = GetWorld() ? GetWorld()->GetSubsystem<UDemoUnitVisualSubsystem>() : nullptr)
+	{
+		if (const int32 Adopted = Visuals->AdoptUnknownRegistryUnits(
+			GetWorld()->GetSubsystem<UUnitRegistrySubsystem>()); Adopted > 0)
+		{
+			UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoGameMode adopted %d registry units into the visuals"), Adopted);
+		}
+	}
 }
 
 void ADemoGameMode::RegisterM3Sample()

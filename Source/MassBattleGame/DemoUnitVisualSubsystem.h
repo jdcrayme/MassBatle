@@ -13,6 +13,7 @@
 #include "DemoUnitVisualSubsystem.generated.h"
 
 class UInstancedStaticMeshComponent;
+class UUnitRegistrySubsystem;
 class UMaterialInstanceDynamic;
 class UStaticMesh;
 
@@ -33,6 +34,11 @@ public:
 	/** Called by the game mode after a level-placed unit actor spawns its
 	 *  roster. Creates the unit's ISM lazily on the next tick. */
 	void RegisterUnit(FUnitHandle Handle, EDemoTeam Team);
+
+	/** Phase 2 task 10: adopts registry units the visuals don't know yet
+	 *  (SpawnClash fixtures, the M3 sample) with the team inferred from the
+	 *  EDU row (row 0 = Player faction, row 1+ = Enemy). Returns adopted. */
+	int32 AdoptUnknownRegistryUnits(UUnitRegistrySubsystem* Registry);
 
 	/** Faction split for selection filtering (live handles only). */
 	void GetUnitsOfTeam(EDemoTeam Team, TArray<FUnitHandle>& OutHandles) const;

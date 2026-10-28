@@ -77,6 +77,33 @@ void UDemoUnitVisualSubsystem::GetUnitsOfTeam(EDemoTeam Team, TArray<FUnitHandle
 	}
 }
 
+int32 UDemoUnitVisualSubsystem::AdoptUnknownRegistryUnits(UUnitRegistrySubsystem* Registry)
+{
+	if (!Registry)
+	{
+		return 0;
+	}
+	int32 Adopted = 0;
+	for (const FUnitHandle& Handle : Registry->GetSortedHandles())
+	{
+		if (TeamByUnit.Contains(Handle))
+		{
+			continue;
+		}
+		// Demo team convention: EDU row 0 = the Player faction, row 1+ =
+		// Enemy (the fixture's peasant/sergeant split maps onto it).
+		EDemoTeam Team = EDemoTeam::Enemy;
+		if (const FUnitSpawnSpec* Spec = Registry->FindUnitSpec(Handle);
+			Spec && Spec->EduRowIndex == 0)
+		{
+			Team = EDemoTeam::Player;
+		}
+		RegisterUnit(Handle, Team);
+		++Adopted;
+	}
+	return Adopted;
+}
+
 EDemoTeam UDemoUnitVisualSubsystem::GetTeam(FUnitHandle Handle) const
 {
 	return TeamByUnit.FindRef(Handle);

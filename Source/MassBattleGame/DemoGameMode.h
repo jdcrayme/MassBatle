@@ -22,11 +22,13 @@ public:
 
 	// -- AGameModeBase --
 	virtual void BeginPlay() override;
+	virtual void Tick(float DeltaSeconds) override;
 
 private:
 	/** Deferred spawn pump: retries until the world + Mass are ready. */
 	void TrySpawnLevelUnits();
 	void RegisterM3Sample();
+	void AdoptVisuals();
 
 	/** One-time click-path probe after the level settles: resolves each
 	 *  registered structure's own footprint center through the SAME static

@@ -314,7 +314,17 @@ bool ADemoPlayerController::ScreenToGround(const FVector2D& ScreenPos, FVector2D
 	return false;
 }
 
-bool ADemoPlayerController::PickUnitAtScreen(const FVector2D& ScreenPos, FUnitHandle& OutUnit) const
+EDemoTeam ADemoPlayerController::GetSelectionTeam() const
+{
+	UDemoUnitVisualSubsystem* Visuals = VisualSubsystem();
+	if (Visuals && SelectedUnits.Num() > 0)
+	{
+		return Visuals->GetTeam(SelectedUnits[0]);
+	}
+	return EDemoTeam::Player;
+}
+
+bool ADemoPlayerController::PickUnitAtScreen(const FVector2D& ScreenPos, FUnitHandle& OutUnit, EDemoTeam* TeamFilter) const
 {
 	UDemoUnitVisualSubsystem* Visuals = VisualSubsystem();
 	if (!Visuals)
@@ -325,7 +335,7 @@ bool ADemoPlayerController::PickUnitAtScreen(const FVector2D& ScreenPos, FUnitHa
 	bool bFound = false;
 	for (const FUnitHandle& Handle : Visuals->GetAllUnits())
 	{
-		if (Visuals->GetTeam(Handle) != EDemoTeam::Player)
+		if (TeamFilter && Visuals->GetTeam(Handle) != *TeamFilter)
 		{
 			continue;
 		}
@@ -388,7 +398,8 @@ void ADemoPlayerController::OnLMBReleased()
 	if (bClick)
 	{
 		FUnitHandle Picked;
-		if (PickUnitAtScreen(Current, Picked))
+		EDemoTeam PlayerTeam = EDemoTeam::Player;
+		if (PickUnitAtScreen(Current, Picked, &PlayerTeam))
 		{
 			const int32 Existing = NewSelection.Find(Picked);
 			if (IsInputKeyDown(EKeys::LeftShift))
@@ -524,6 +535,8 @@ void ADemoPlayerController::OnRMBReleased()
 	{
 		return;
 	}
+	float MouseX, MouseY;
+	const bool bHasMouse = GetMousePosition(MouseX, MouseY);
 
 	// Right-click on a garrisonable structure garrisons the selection (ETW
 	// semantics): the structure footprint is stamped impassable, so a move
@@ -546,6 +559,15 @@ void ADemoPlayerController::OnRMBReleased()
 			Issued, SelectedUnits.Num(), StructureId,
 			DragCurrentWorldCm.X * 0.01f, DragCurrentWorldCm.Y * 0.01f);
 		return;
+	}
+
+	// Attack orders (phase 2 task 10, A4 on the demo input): RMB on an ENEMY
+	// unit = AttackUnit for the whole selection; Ctrl+RMB on ground =
+	// AttackMove to the point (march + auto-engage en route). The garrison
+	// intercept above keeps ETW structure semantics.
+	if (bHasMouse)
+	{
+		IssueAttackOrders(FVector2D(MouseX, MouseY), DragCurrentWorldCm);
 	}
 
 	// Movement is bounded by the plugin's flat cost-grid tile (256 m at the
@@ -610,6 +632,67 @@ void ADemoPlayerController::OnRMBReleased()
 		Registry->IssueMoveOrder(H, ClampToGrid(UnitDest), Info.FacingYawDeg);
 	}
 	UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoOrder Move Units=%d"), SelectedUnits.Num());
+}
+
+void ADemoPlayerController::IssueAttackOrders(const FVector2D& ScreenPos, const FVector2D& GroundCm)
+{
+	UDemoUnitVisualSubsystem* Visuals = VisualSubsystem();
+	UUnitRegistrySubsystem* Registry = GetWorld() ? GetWorld()->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	if (!Visuals || !Registry || SelectedUnits.Num() == 0)
+	{
+		return;
+	}
+	const EDemoTeam MyTeam = GetSelectionTeam();
+
+	// RMB on an ENEMY unit: the whole selection AttackUnits it (the sim's
+	// assign pass fans the pairs out at ring distance).
+	FUnitHandle Enemy;
+	EDemoTeam EnemyTeam = EDemoTeam::Enemy;
+	if (PickUnitAtScreen(ScreenPos, Enemy, &EnemyTeam) && EnemyTeam != MyTeam)
+	{
+		int32 Issued = 0;
+		for (const FUnitHandle& H : SelectedUnits)
+		{
+			if (H != Enemy && Registry->IssueAttackUnitOrder(H, Enemy))
+			{
+				++Issued;
+			}
+		}
+		UE_LOG(LogDemoBattle, Display,
+			TEXT("EXEC_RESULT DemoOrder AttackUnit Issued=%d of %d Target=%u:%u"),
+			Issued, SelectedUnits.Num(), Enemy.Index, Enemy.Serial);
+		return;
+	}
+
+	// Ctrl+RMB on ground: AttackMove to the point (march + auto-engage en
+	// route -- the spec's A4 disengage-by-retask semantics included).
+	if (IsInputKeyDown(EKeys::LeftControl) || IsInputKeyDown(EKeys::RightControl))
+	{
+		const FVector2D Dest = ClampToGridHelper(GroundCm);
+		int32 Issued = 0;
+		for (const FUnitHandle& H : SelectedUnits)
+		{
+			FDemoUnitBodyInfo Info;
+			const float Yaw = Visuals->GetUnitBodyInfo(H, Info) ? Info.FacingYawDeg : 0.f;
+			if (Registry->IssueAttackMoveOrder(H, Dest, Yaw))
+			{
+				++Issued;
+			}
+		}
+		UE_LOG(LogDemoBattle, Display,
+			TEXT("EXEC_RESULT DemoOrder AttackMove Issued=%d of %d At=(%.1f,%.1f)m"),
+			Issued, SelectedUnits.Num(), Dest.X * 0.01f, Dest.Y * 0.01f);
+		return;
+	}
+
+	// Plain RMB (no enemy, no Ctrl): fall through to the move/formation
+	// handling in OnRMBReleased.
+}
+
+FVector2D ADemoPlayerController::ClampToGridHelper(const FVector2D& P) const
+{
+	const float Limit = 12500.f; // cm (125 m of the 128 m half-tile)
+	return FVector2D(FMath::Clamp(P.X, -Limit, Limit), FMath::Clamp(P.Y, -Limit, Limit));
 }
 
 bool ADemoPlayerController::ComputeDragLayout(TArray<FDemoDragSegment>& OutSegments) const

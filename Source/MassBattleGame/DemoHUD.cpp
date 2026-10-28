@@ -2,6 +2,8 @@
 #include "DemoHUD.h"
 #include "DemoPlayerController.h"
 #include "DemoUnitVisualSubsystem.h"
+#include "BattleRegistry.h"
+#include "DemoUnitVisualSubsystem.h"
 
 #include "Engine/Canvas.h"
 #include "Engine/Engine.h"
@@ -37,6 +39,68 @@ void ADemoHUD::DrawHUD()
 	DrawSelectionCircles();
 	DrawMarquee();
 	DrawOrderDragPreview();
+	DrawUnitCards();
+}
+
+void ADemoHUD::DrawUnitCards()
+{
+	ADemoPlayerController* PC = Cast<ADemoPlayerController>(PlayerOwner);
+	UUnitRegistrySubsystem* Registry = GetWorld() ? GetWorld()->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	UDemoUnitVisualSubsystem* Visuals = GetWorld() ? GetWorld()->GetSubsystem<UDemoUnitVisualSubsystem>() : nullptr;
+	if (!PC || !Registry || !Visuals || !Canvas || !GEngine || !GEngine->GetMediumFont())
+	{
+		return;
+	}
+	const TArray<FUnitHandle>& Selected = PC->GetSelectedUnits();
+	if (Selected.Num() == 0)
+	{
+		return;
+	}
+
+	// Card geometry: bottom-left row, 130x58 px, 6 px gap; at most 10 cards
+	// drawn (the tail is a "+N" card). The selection IS the card set.
+	constexpr float CardW = 130.f;
+	constexpr float CardH = 58.f;
+	constexpr float Gap = 6.f;
+	constexpr int32 MaxCards = 10;
+	const float RowY = static_cast<float>(Canvas->SizeY) - CardH - 14.f;
+
+	const int32 Cards = FMath::Min(Selected.Num(), MaxCards);
+	for (int32 i = 0; i < Cards; ++i)
+	{
+		const FUnitHandle& H = Selected[i];
+		const float X = 14.f + i * (CardW + Gap);
+		const FLinearColor TeamColor = Visuals->GetTeam(H) == EDemoTeam::Enemy
+			? FLinearColor(0.9f, 0.25f, 0.2f)
+			: FLinearColor(0.2f, 0.55f, 0.95f);
+
+		// Card body + team bar.
+		DrawRect(FLinearColor(0.06f, 0.06f, 0.08f, 0.82f), X, RowY, CardW, CardH);
+		DrawRect(TeamColor, X, RowY, 4.f, CardH);
+		DrawRect(FLinearColor(1.f, 1.f, 1.f, 0.25f), X, RowY, CardW, 1.f);
+
+		// Spec name (the EDU type) + alive roster.
+		FString Name = TEXT("unit");
+		int32 Alive = 0;
+		if (const FUnitSpawnSpec* Spec = Registry->FindUnitSpec(H))
+		{
+			Name = Spec->UnitName;
+		}
+		Alive = Registry->GetRosterSize(H);
+		Canvas->SetDrawColor(235, 235, 235, 242);
+		Canvas->DrawText(GEngine->GetMediumFont(), Name, X + 10.f, RowY + 8.f, 0.62f, 0.62f);
+		Canvas->SetDrawColor(165, 215, 165, 230);
+		Canvas->DrawText(GEngine->GetMediumFont(),
+			FString::Printf(TEXT("alive %d"), Alive), X + 10.f, RowY + 30.f, 0.62f, 0.62f);
+	}
+	if (Selected.Num() > MaxCards)
+	{
+		const float X = 14.f + MaxCards * (CardW + Gap);
+		DrawRect(FLinearColor(0.06f, 0.06f, 0.08f, 0.82f), X, RowY, 44.f, CardH);
+		Canvas->SetDrawColor(230, 230, 230, 230);
+		Canvas->DrawText(GEngine->GetMediumFont(),
+			FString::Printf(TEXT("+%d"), Selected.Num() - MaxCards), X + 10.f, RowY + 20.f, 0.7f, 0.7f);
+	}
 }
 
 void ADemoHUD::DrawControlsHint()
@@ -50,6 +114,8 @@ void ADemoHUD::DrawControlsHint()
 		TEXT("LMB click / shift+click  - select / toggle unit"),
 		TEXT("LMB drag                 - marquee select"),
 		TEXT("RMB click                - move (keeps formation)"),
+		TEXT("RMB on ENEMY unit        - ATTACK (selection attacks the target)"),
+		TEXT("Ctrl+RMB on ground       - attack-move (march, engage en route)"),
 		TEXT("RMB on structure         - garrison (units file in)"),
 		TEXT("RMB drag                 - formation: width + facing (drag line = front)"),
 		TEXT("H                        - halt        WASD/arrows - pan"),

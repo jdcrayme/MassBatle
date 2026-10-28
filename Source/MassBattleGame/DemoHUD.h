@@ -19,6 +19,11 @@ public:
 
 	virtual void DrawHUD() override;
 
+protected:
+	/** Phase 2 task 10: one card per selected unit (team color, spec name,
+	 *  alive roster) -- the MassRTS selection-summary UX, geometry-only. */
+	void DrawUnitCards();
+
 private:
 	void DrawControlsHint();
 	void DrawUnitLabels();

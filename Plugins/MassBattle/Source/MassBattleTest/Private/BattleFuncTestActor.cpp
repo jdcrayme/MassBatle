@@ -5044,25 +5044,34 @@ void AS4ShieldWallTest::Tick(float DeltaSeconds)
 	{
 		const int32 Alive = Registry->GetRosterSize(Defenders->GetUnitHandle());
 		const FEngagementRecord* Rec = Registry->FindEngagement(Attackers->GetUnitHandle(), Defenders->GetUnitHandle());
-		// Average coverage over the defender's stamped entities.
+		// The melt signal = the EFFECTIVE assigned attackers per defender
+		// (the tally scratch -- fresh from this frame's assign pass), plus the
+		// coverage for the curve annotation. The record's DesiredPressure is
+		// the wrong signal (frontal = alive x FormedSlots: per-alive constant
+		// forever); SlotBudget is the per-defender CEILING, not what got
+		// assigned. EC2's "budget stays at FormedSlots" is the TALLY.
+		const FCombatTallyTable& Tally = Registry->GetTallyScratch();
 		const FCombatCoverageTable& Coverage = Registry->GetCoverageScratch();
+		float TallySum = 0.f;
 		float CoverageSum = 0.f;
 		int32 Stamped = 0;
 		if (const TArray<FMassEntityHandle>* Roster = Registry->FindRoster(Defenders->GetUnitHandle()))
 		{
 			for (const FMassEntityHandle& E : *Roster)
 			{
-				if (const int32 Slot = Coverage.Find(E, static_cast<uint32>(GFrameCounter)); Slot != INDEX_NONE)
+				if (const int32 TallyCount = Tally.GetCount(E); TallyCount > 0)
 				{
-					CoverageSum += Coverage.Values[Slot];
+					TallySum += static_cast<float>(TallyCount);
 					++Stamped;
+					if (const int32 Slot = Coverage.Find(E, static_cast<uint32>(GFrameCounter)); Slot != INDEX_NONE)
+					{
+						CoverageSum += Coverage.Values[Slot];
+					}
 				}
 			}
 		}
 		const float AvgCoverage = Stamped > 0 ? CoverageSum / Stamped : 0.f;
-		const float PressurePerAlive = Rec && Alive > 0
-			? static_cast<float>(Rec->DesiredPressure) / static_cast<float>(Alive)
-			: 0.f;
+		const float PressurePerAlive = Stamped > 0 ? TallySum / Stamped : 0.f;
 
 		if (TicksInPhase % 15 == 0) // 0.25 s: the wall phase spans only a few
 			// seconds (the sergeant attacker kills ~1/s) -- a 0.5 s cadence
@@ -5076,13 +5085,14 @@ void AS4ShieldWallTest::Tick(float DeltaSeconds)
 			UE_LOG(LogMassBattle, Display,
 				TEXT("EXEC_RESULT S4 sample alive=%d coverage=%.2f pressurePerAlive=%.1f"),
 				Alive, AvgCoverage, PressurePerAlive);
-			// The wall: formation INTACT (>= 60% alive, the intact wall's
-			// coverage band) and the budget at the FormedSlots floor. The melt:
-			// the formation thinned (<= 30% alive) and the budget ROSE (the
-			// coverage-driven lerp toward MaxMobSlots, EC2). (The intact wall's
-			// coverage caps near 0.6 with a 20-file x 2-rank layout -- the
-			// 0.75 gate was unreachable; measured 2026-10-27.)
-			if (Alive >= 20 && AvgCoverage >= 0.4f && PressurePerAlive <= static_cast<float>(FCombatCVars::FormedSlots()) + 0.25f)
+			// The wall: formation INTACT (>= 50% alive) and the effective
+			// attackers per defender BOUNDED well below MaxMobSlots. The melt:
+			// the formation thinned (<= 20% alive) and the tally CONVERGES on
+			// MaxMobSlots (the coverage-driven budget rise, EC2). Calibration
+			// from the measured curve (2026-10-27): the wall's front rank
+			// carries 2.4-3.8 (the ceiling lerp(7,2,~0.5) ~= 4.5 bounds it);
+			// the tail converges on 6.0.
+			if (Alive >= 20 && PressurePerAlive <= 4.0f)
 			{
 				++WallHeldSamples;
 				if (WallBudgetAtHighCoverage == 0.f)
@@ -5100,7 +5110,10 @@ void AS4ShieldWallTest::Tick(float DeltaSeconds)
 		{
 			// The melt ran its course: assert the curve shape.
 			const bool bWallHeld = WallHeldSamples >= 3;
-			const bool bMelted = MeltSamples >= 2 && MeltBudgetAtLowCoverage > WallBudgetAtHighCoverage + 0.3f;
+			// The melt = a SIGNIFICANT rise over the wall bound (+1.5
+			// attackers/defender); the absolute tail varies (4.5-6.0) with the
+			// survivors' regrouping -- emergent variance, not a defect.
+			const bool bMelted = MeltSamples >= 2 && MeltBudgetAtLowCoverage >= WallBudgetAtHighCoverage + 1.5f;
 			UE_LOG(LogMassBattle, Display,
 				TEXT("EXEC_RESULT S4 curve wallHeld=%d (budget %.1f over %d samples) melted=%d (budget %.1f over %d samples)"),
 				bWallHeld ? 1 : 0, WallBudgetAtHighCoverage, WallHeldSamples,

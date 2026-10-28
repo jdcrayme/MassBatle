@@ -50,9 +50,22 @@ public:
 
 	const TArray<FUnitHandle>& GetSelectedUnits() const { return SelectedUnits; }
 
+	/** Team of the selection's first unit (Player when the selection is
+	 *  empty). The RMB attack path splits on this. */
+	EDemoTeam GetSelectionTeam() const;
+
 	// -- input handlers (bound to the programmatic actions) --
 	void OnLMBPressed();
 	void OnLMBReleased();
+
+	/** Phase 2 task 10: attack orders (A4 surface on the demo input):
+	 *  RMB on an enemy unit = AttackUnit for the whole selection;
+	 *  Ctrl+RMB on ground = AttackMove to the point (auto-engage en route). */
+	void IssueAttackOrders(const FVector2D& ScreenPos, const FVector2D& GroundCm);
+
+	/** The flat-tile destination clamp (shared by the move + attack-move
+	 *  order paths). */
+	FVector2D ClampToGridHelper(const FVector2D& P) const;
 	void OnRMBPressed();
 	void OnRMBReleased();
 	void OnRotateLeftPressed() { HeldRotateKeys.Add(EKeys::Q); }
@@ -73,7 +86,7 @@ private:
 	void SetPanDir(FVector2D Dir, bool bHeld);
 
 	void UpdateCamera(float DeltaSeconds);
-	bool PickUnitAtScreen(const FVector2D& ScreenPos, FUnitHandle& OutUnit) const;
+	bool PickUnitAtScreen(const FVector2D& ScreenPos, FUnitHandle& OutUnit, EDemoTeam* TeamFilter = nullptr) const;
 	bool ScreenToGround(const FVector2D& ScreenPos, FVector2D& OutGroundCm) const;
 	void SetSelection(const TArray<FUnitHandle>& NewSelection);
 	/** Drops handles whose registry entry went stale. */
