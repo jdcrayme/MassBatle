@@ -41,10 +41,8 @@ namespace FMeleeMathConstants
         // Charge: minimum accumulated run-up (m) before a fast contact counts
         // as a charge impact (a standing nudge at speed is not a charge, EC7).
         constexpr float MinChargeRunUpM = 1.f;
-        // Composite HP: landed hits drain the mount pool first, then the rider
-        // (documented simplification: the ORDER does not affect the total; no
-        // riderless mounts v1, spec §10).
 }
+
 
 /** Defense arc bands (EC6). Input: the defender-relative attack sector index
  *  (0 = dead ahead, from the quantized ContactAngle via
@@ -92,10 +90,6 @@ namespace FMeleeMath
          *  above the fresh-contact threshold, bounded by KnockbackMaxMps. The
          *  DIRECTION is the charge heading (processor-owned). */
         MASSBATTLE_API float KnockbackImpulse(float ImpactSpeedMps, float SpeedThresholdMps);
-
-        /** Composite HP drain (spec §4.8): one landed hit's damage drains the
-         *  mount pool first, then the rider; entity dies when the total is 0. */
-        MASSBATTLE_API void DrainCompositePool(float& RiderHP, int16& MountHP, float Damage);
 
         /** Base charge bonus at impact (placeholder constant, golden-locked). */
         MASSBATTLE_API float BaseChargeBonus();

@@ -657,23 +657,13 @@ bool FHitChanceGolden::RunTest(const FString& Parameters)
 	TestEqual(TEXT("golden knockback at 6 m/s"), FMeleeMath::KnockbackImpulse(6.f, 4.f), 1.2f);
 	TestEqual(TEXT("knockback clamped"), FMeleeMath::KnockbackImpulse(10.f, 4.f), 2.5f);
 
-	// -- Composite HP: mount drains first, then the rider.
-	{
-		float Rider = 1.f;
-		int16 Mount = 0;
-		FMeleeMath::DrainCompositePool(Rider, Mount, 1.f);
-		TestEqual(TEXT("foot: hit kills"), Rider, 0.f);
-		Rider = 1.f; Mount = 1;
-		FMeleeMath::DrainCompositePool(Rider, Mount, 1.f);
-		TestEqual(TEXT("cavalry: first hit takes the mount"), Mount, static_cast<int16>(0));
-		TestEqual(TEXT("cavalry: rider survives first hit"), Rider, 1.f);
-		FMeleeMath::DrainCompositePool(Rider, Mount, 1.f);
-		TestEqual(TEXT("cavalry: second hit kills"), Rider, 0.f);
-		Rider = 1.f; Mount = 2;
-		FMeleeMath::DrainCompositePool(Rider, Mount, 2.f);
-		TestEqual(TEXT("cavalry: 2-damage hit drains both pools"), Rider, 1.f);
-	}
-
+	// Composite HP note (2026-10-28 audit): the float-damage seam
+	// DrainCompositePool was dead code -- the resolution processor drains the
+	// mount mirror inline (integer hits, DefenderMountRemaining-- then the
+	// existing death tag path) and no runtime path ever called it. The seam
+	// function, its golden block here, and the T2.6 charge/kill func tests
+	// (which exercise the REAL inline path end-to-end) agree on the same
+	// mount-first order.
 	return true;
 }
 

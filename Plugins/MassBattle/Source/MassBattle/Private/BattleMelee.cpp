@@ -102,14 +102,6 @@ namespace FMeleeMath
 		return FMath::Min(Above * FMeleeMathConstants::KnockbackPerSpeed, FMeleeMathConstants::KnockbackMaxMps);
 	}
 
-	void DrainCompositePool(float& RiderHP, int16& MountHP, float Damage)
-	{
-		const float In = FMath::Max(0.f, Damage);
-		const float MountDamage = FMath::Min(static_cast<float>(MountHP), In);
-		MountHP = static_cast<int16>(static_cast<float>(MountHP) - MountDamage);
-		RiderHP = FMath::Max(0.f, RiderHP - (In - MountDamage));
-	}
-
 	float BaseChargeBonus()
 	{
 		return FMeleeMathConstants::BaseChargeBonus;
