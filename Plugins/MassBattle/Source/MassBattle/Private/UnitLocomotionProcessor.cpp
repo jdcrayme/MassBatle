@@ -1045,8 +1045,14 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 			}
 			if (AlphaNow <= KINDA_SMALL_NUMBER)
 			{
+				// Mean, not max (2026-10-28): the max let a COMMANDED re-front
+				// (S4_WidthOverride / S5_MarchRefront: edge files walk 12-18 m to
+				// their new files) floor the anchor at 0.25x for the whole re-
+				// dress and burn the march budgets in stop-wait-crawl cycles.
+				// A drag or choke queue moves the BLOCK -- the mean crosses
+				// DressBreak only then; edge-file re-front walks do not.
 				const float PaceFactor = FUnitLocomotion::StragglerPaceFactor(
-					Formation.MaxSlotErrorM,
+					Formation.MeanSlotErrorM,
 					GBattleMovementDressBreak.GetValueOnGameThread(),
 					GBattleMovementPaceGain.GetValueOnGameThread());
 				CurrentLimit *= PaceFactor;
@@ -1069,14 +1075,14 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 			{
 				PaceThrottled[Unit] = true;
 				UE_LOG(LogMassBattle, Display,
-					TEXT("EXEC_RESULT StragglerThrottle Unit=%u:%u ON err=%.2fm factor=%.2f"),
+					TEXT("EXEC_RESULT StragglerThrottle Unit=%u:%u ON meanErr=%.2fm factor=%.2f"),
 					Unit.Index, Unit.Serial, Formation.MaxSlotErrorM, PaceFactor);
 			}
 			else if (PaceFactor >= 1.f && bWas)
 			{
 				PaceThrottled[Unit] = false;
 				UE_LOG(LogMassBattle, Display,
-					TEXT("EXEC_RESULT StragglerThrottle Unit=%u:%u OFF err=%.2fm"),
+					TEXT("EXEC_RESULT StragglerThrottle Unit=%u:%u OFF meanErr=%.2fm"),
 					Unit.Index, Unit.Serial, Formation.MaxSlotErrorM);
 			}
 			}

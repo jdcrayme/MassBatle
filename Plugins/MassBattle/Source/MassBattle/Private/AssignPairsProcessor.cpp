@@ -507,21 +507,37 @@ void UAssignPairsProcessor::Execute(FMassEntityManager& EntityManager, FMassExec
 					RingAngleDeg = static_cast<float>(S.ContactAngle) * (360.f / 255.f);
 					bRing = RingDef != nullptr;
 				}
-				else if (S.RecordIndex != INDEX_NONE)
+				else
 				{
-					// demo-fix3 (owner report 2026-10-28): waiters press the ring
-					// ONLY while their unit's engagement record is live. Records
-					// form when the unit bodies touch (dilated-OBB contact, 4 Hz);
-					// before that the entities must march WITH their slots.
-					// Ungated, the whole unit sprinted the field to the enemy line
-					// the instant the order was issued, pressed against the wall,
-					// and then WAITED for the anchor's contact to unlock pairing
-					// -- the owner's reported delay (the straggler throttle
-					// slowed the anchor further the wider the entities ran).
-					// Gated, the press is the short final rush from the march
-					// formation, and the pairs -- which need the same record --
-					// form in the same pass, so attacking starts at contact,
-					// not at anchor arrival.
+					// Waiters press toward the nearest intent defender's ring,
+					// REGARDLESS of record state (pre-demo-fix3 flow; the
+					// record-gated variant shipped 2026-10-28 and was reverted
+					// same day -- func-tier evidence below).
+					//
+					// The gate (press ONLY while the unit's engagement record is
+					// live, to stop pre-contact sprinting) deadlocks pairing:
+					// records form at anchor-OBB contact, but the approach closes
+					// at ~6 m/s against a 4 Hz cluster pass, so by the FIRST
+					// record the formations have already interpenetrated. Waiter
+					// ring targets derive from the CURRENT nearest defender each
+					// tick -- past overlap the nearest defender can lie BEHIND an
+					// entity, its ring point flips to the far side, and the press
+					// walks entities away from / along the fight instead of into
+					// it. Measured (CombatSmoke, gated): paired=0 for the full
+					// 2400-tick budget with a live record, valid intents, and
+					// pressure 24/24; one pair lands only on lucky geometry.
+					// Bisection: the gate alone reproduces the stall (engaged-
+					// march halt off); ungating alone restores pairing (halt on).
+					//
+					// The demo complaint that motivated the gate (sprint-ahead
+					// then waiting on the anchor's contact while the straggler
+					// throttle crawled) is addressed separately by
+					// Battle.Movement.MemberClamp (formation-flow v2): the entity
+					// servo ceiling no longer rides the throttled anchor pace,
+					// which was the delay's feedback loop. A record-gated press
+					// that ALSO converges needs non-overlapping contact (a
+					// close-to-contact march deceleration zone) -- owner design
+					// space, not a press-side patch.
 					float BestDistSq = TNumericLimits<float>::Max();
 					for (const FCombatSolver::FAssignDefenderState& Def : Defenders)
 					{

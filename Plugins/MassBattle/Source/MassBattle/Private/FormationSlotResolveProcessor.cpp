@@ -306,6 +306,8 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 			UBattleDebugSubsystem* DebugHold = bOverlay && Context.GetWorld() ? Context.GetWorld()->GetSubsystem<UBattleDebugSubsystem>() : nullptr;
 			TArrayView<FSlotTargetFragment> HoldTargets = Context.GetMutableFragmentView<FSlotTargetFragment>();
 			float HoldMaxSlotErrorM = 0.f;
+			float HoldSlotErrorSum = 0.f;
+			int32 HoldSlotErrorCount = 0;
 			for (int32 i = 0; i < NumEntities; ++i)
 			{
 				const int32 Slot = Assignment[i];
@@ -324,7 +326,12 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 				HoldTargets[i].TargetZ = PostZCm[Slot];
 
 				// Phase 2 B1: the same reduction rides the garrison branch.
-				HoldMaxSlotErrorM = FMath::Max(HoldMaxSlotErrorM, FVector2D::Distance(EntityPosM[i], PostPosM[Slot]));
+				{
+					const float ErrorM = FVector2D::Distance(EntityPosM[i], PostPosM[Slot]);
+					HoldMaxSlotErrorM = FMath::Max(HoldMaxSlotErrorM, ErrorM);
+					HoldSlotErrorSum += ErrorM;
+					++HoldSlotErrorCount;
+				}
 
 				if (DebugHold)
 				{
@@ -338,6 +345,7 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 				}
 			}
 			Formation.MaxSlotErrorM = HoldMaxSlotErrorM;
+			Formation.MeanSlotErrorM = HoldSlotErrorCount > 0 ? HoldSlotErrorSum / HoldSlotErrorCount : 0.f;
 			return; // booked-range source replaces the field layout entirely
 		}
 
@@ -673,6 +681,8 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 		// this is the number the straggler pace term, march stickiness, the
 		// debug HUD and the soak assert all consume.
 		float MaxSlotError = 0.f;
+		float SlotErrorSum = 0.f;
+		int32 SlotErrorCount = 0;
 		for (int32 i = 0; i < NumEntities; ++i)
 		{
 			const int32 Slot = Assignment[i];
@@ -724,7 +734,12 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 			Targets[i].TargetPos = NewTargetPos;
 			Targets[i].TargetYaw = TargetYawDeg;
 			// Phase 2 B1: fold this entity's error into the unit metric.
-			MaxSlotError = FMath::Max(MaxSlotError, FVector2D::Distance(EntityPosM[i], TargetPosM));
+			{
+				const float ErrorM = FVector2D::Distance(EntityPosM[i], TargetPosM);
+				MaxSlotError = FMath::Max(MaxSlotError, ErrorM);
+				SlotErrorSum += ErrorM;
+				++SlotErrorCount;
+			}
 			// Garrison filing (spec §6): TargetZ interpolates along the path
 			// at the entity's rank arc; field movement stays at ground Z.
 			Targets[i].TargetZ = bFiling && Formation.Path.IsValid()
@@ -808,5 +823,6 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 		// next frame for the straggler pace term; one frame of latency, same
 		// channel contract as ReflowCooldown).
 		Formation.MaxSlotErrorM = MaxSlotError;
+		Formation.MeanSlotErrorM = SlotErrorCount > 0 ? SlotErrorSum / SlotErrorCount : 0.f;
 	});
 }

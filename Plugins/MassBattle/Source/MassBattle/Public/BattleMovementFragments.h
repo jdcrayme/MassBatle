@@ -137,6 +137,18 @@ struct FUnitFormationSharedFragment : public FMassSharedFragment
 	 *  hashed. */
 	UPROPERTY() float MaxSlotErrorM = 0.f;
 
+	/** Straggler-pace term (2026-10-28): MEAN over live entities of
+	 *  dist(pos, written move target), same reduction sites as MaxSlotErrorM.
+	 *  The pace throttle reads THIS, not the max: a commanded re-front
+	 *  (S4_WidthOverride / S5_MarchRefront) sends edge files on 12-18 m
+	 *  lateral walks while the block's center re-dresses in place -- max
+	 *  error floored the anchor at 0.25x for the whole walk and burned the
+	 *  march budgets in stop-wait-crawl cycles (the owner's own errata note
+	 *  in StragglerPaceFactor documents the stop-wait-crawl family). A real
+	 *  drag or choke queue moves the BLOCK -- the mean crosses DressBreak
+	 *  only then. Same cross-thread pattern; never hashed. */
+	UPROPERTY() float MeanSlotErrorM = 0.f;
+
 	/** Phase 2 C: one-shot gate for the SCHEDULED final assignment (Pottinger
 	 *  scheduled slot positioning). 0 = the march assignment (greedy,
 	 *  march-coherent) owns the unit; the first resolve tick where the blend

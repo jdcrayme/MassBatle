@@ -109,34 +109,39 @@ namespace
 
 namespace FCombatCVars
 {
-	// Worker-read contract (measured 2026-10-28): these accessors are read
-	// from BOTH game-thread processors (clusters/tally/assign) AND worker
-	// processors (ChargeProcessor, CombatResolutionProcessor -- and
-	// FMeleeMath::HitChance through HitChanceFloor/Cap). A worker-side
-	// GetValueOnGameThread() fires the engine's shadow-state ensure
-	// (GetShadowIndex() == 0, IConsoleManager.h) and reads the CALLING
-	// THREAD's shadow instead of the game-thread value -- a latent stale
-	// gate hazard, not just noise. GetValueOnAnyThread() is the documented
-	// cross-thread read (the BattleGarrison seam's worker-called accessors
-	// already use it); these CVars are only ever written game-thread
-	// (defaults or console), so the read is exact in practice and at worst
-	// one set behind a concurrent console toggle.
-	int32 Enable() { return GCCombatEnable.GetValueOnAnyThread(); }
-	float ClusterPeriod() { return GCCombatClusterPeriod.GetValueOnAnyThread(); }
-	int32 MaxMobSlots() { return GCCombatMaxMobSlots.GetValueOnAnyThread(); }
-	int32 FormedSlots() { return GCCombatFormedSlots.GetValueOnAnyThread(); }
-	int32 SecondRankBonus() { return GCCombatSecondRankBonus.GetValueOnAnyThread(); }
-	int32 NeighborsForFullCoverage() { return GCCombatNeighborsForFullCoverage.GetValueOnAnyThread(); }
-	int32 SectorCount() { return GCCombatSectorCount.GetValueOnAnyThread(); }
-	int32 MobPressureFactor() { return GCCombatMobPressureFactor.GetValueOnAnyThread(); }
-	float PairHysteresis() { return GCCombatPairHysteresis.GetValueOnAnyThread(); }
-	float AttackInterval() { return GCCombatAttackInterval.GetValueOnAnyThread(); }
-	float HitChanceFloor() { return GCCombatHitChanceFloor.GetValueOnAnyThread(); }
-	float HitChanceCap() { return GCCombatHitChanceCap.GetValueOnAnyThread(); }
-	float ChargeSpeedThreshold() { return GCCombatChargeSpeedThreshold.GetValueOnAnyThread(); }
-	float ChargeDecayWindow() { return GCCombatChargeDecayWindow.GetValueOnAnyThread(); }
-	int32 SoakClash() { return GCCombatSoakClash.GetValueOnAnyThread(); }
-	int32 StateTree() { return GCCombatStateTree.GetValueOnAnyThread(); }
+	// Worker-read contract (corrected 2026-10-28, engine-source verified):
+	// these accessors are read from BOTH game-thread processors
+	// (clusters/tally/assign) AND worker processors (ChargeProcessor,
+	// CombatResolutionProcessor -- and FMeleeMath::HitChance through
+	// HitChanceFloor/Cap). The engine's cvar shadow has TWO slots
+	// (IConsoleManager.h ShadowedValue[2]): [0] game thread, [1] render
+	// thread -- and GetShadowIndex() maps EVERY other thread to 1.
+	// FConsoleVariable::SetInternal writes SLOT 0 ONLY; slot 1 refreshes
+	// only through the render-thread propagation in OnChanged. So plain
+	// GetValueOnAnyThread() from a worker returns the value as of
+	// REGISTRATION: any runtime flip (BattleExec::EnableDemoCombatPipeline,
+	// the func fixtures' SetByCode setup) is INVISIBLE to the worker gates.
+	// The plain GetValueOnGameThread() these replaced read slot 0 correctly
+	// from workers but fire its ensure every call. GetValueOnAnyThread(true)
+	// (bForceGameThread) is the engine-blessed read of slot 0 from any
+	// thread: authoritative value, no ensure (its ensure only guards the
+	// actual rendering thread, which never calls these).
+	int32 Enable() { return GCCombatEnable.GetValueOnAnyThread(/*bForceGameThread*/ true); }
+	float ClusterPeriod() { return GCCombatClusterPeriod.GetValueOnAnyThread(/*bForceGameThread*/ true); }
+	int32 MaxMobSlots() { return GCCombatMaxMobSlots.GetValueOnAnyThread(/*bForceGameThread*/ true); }
+	int32 FormedSlots() { return GCCombatFormedSlots.GetValueOnAnyThread(/*bForceGameThread*/ true); }
+	int32 SecondRankBonus() { return GCCombatSecondRankBonus.GetValueOnAnyThread(/*bForceGameThread*/ true); }
+	int32 NeighborsForFullCoverage() { return GCCombatNeighborsForFullCoverage.GetValueOnAnyThread(/*bForceGameThread*/ true); }
+	int32 SectorCount() { return GCCombatSectorCount.GetValueOnAnyThread(/*bForceGameThread*/ true); }
+	int32 MobPressureFactor() { return GCCombatMobPressureFactor.GetValueOnAnyThread(/*bForceGameThread*/ true); }
+	float PairHysteresis() { return GCCombatPairHysteresis.GetValueOnAnyThread(/*bForceGameThread*/ true); }
+	float AttackInterval() { return GCCombatAttackInterval.GetValueOnAnyThread(/*bForceGameThread*/ true); }
+	float HitChanceFloor() { return GCCombatHitChanceFloor.GetValueOnAnyThread(/*bForceGameThread*/ true); }
+	float HitChanceCap() { return GCCombatHitChanceCap.GetValueOnAnyThread(/*bForceGameThread*/ true); }
+	float ChargeSpeedThreshold() { return GCCombatChargeSpeedThreshold.GetValueOnAnyThread(/*bForceGameThread*/ true); }
+	float ChargeDecayWindow() { return GCCombatChargeDecayWindow.GetValueOnAnyThread(/*bForceGameThread*/ true); }
+	int32 SoakClash() { return GCCombatSoakClash.GetValueOnAnyThread(/*bForceGameThread*/ true); }
+	int32 StateTree() { return GCCombatStateTree.GetValueOnAnyThread(/*bForceGameThread*/ true); }
 }
 
 namespace FCombatSolver
