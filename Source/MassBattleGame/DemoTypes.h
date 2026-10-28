@@ -35,6 +35,15 @@ struct FDemoUnitBodyInfo
 	FString UnitName;
 };
 
+namespace DemoUi
+{
+	/** Z height (cm) used when projecting a unit's planar BodyCenterCm to
+	 *  screen for picking/marquee/labels. The bodies are flat; this is the
+	 *  camera-facing elevation the demo art assumes (1 m). ONE home (B-8) --
+	 *  every projection call site reads it. */
+	constexpr float BodyLabelZCm = 100.f;
+}
+
 /** One selected unit's piece of a formation-drag preview/commit: the drag line
  *  divided across units (Total War frontage semantics). */
 struct FDemoDragSegment

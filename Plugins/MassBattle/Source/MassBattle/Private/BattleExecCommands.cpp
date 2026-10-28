@@ -42,6 +42,20 @@ namespace
 
 namespace BattleExec
 {
+	void EnableDemoCombatPipeline()
+	{
+		// The session-on gate list (D-3): SpatialHash, Clusters, Tally, Assign.
+		// Plugin defaults stay 0 (flags-off identity); the demo session turns
+		// the pipeline on WITHOUT touching defaults (ECVF_SetByCode).
+		for (const TCHAR* Name : { TEXT("Battle.Combat.SpatialHash"), TEXT("Battle.Combat.Clusters"),
+			TEXT("Battle.Combat.Tally"), TEXT("Battle.Combat.Assign") })
+		{
+			if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(Name))
+			{
+				C->Set(1, ECVF_SetByCode);
+			}
+		}
+	}
 	void DumpRegistry(const TArray<FString>& Args, UWorld* World)
 	{
 		UUnitRegistrySubsystem* Registry = GetRegistry(World);
@@ -716,16 +730,37 @@ void CombatDumpPairs(const TArray<FString>& Args, UWorld* World)
 // the mob sample when nothing is level-placed.
 namespace
 {
-	FUnitHandle SpawnClashUnitExec(UWorld* World, int32 EduRow, int32 Count, const FVector2D& PosM, float YawDeg)
+	// One spawn request in a SpawnClash fixture: the EDU row is identified by
+	// its DICTIONARY name (B-3), never by index -- re-ordering the golden EDU
+	// must not silently swap knight for peasant in a scenario.
+	struct FClashUnitSpec
 	{
-		const FString FixturePath = FPaths::ProjectContentDir() / TEXT("Data/EDU/golden_edu_v1.txt");
-		FString EduText;
-		TArray<FEduUnit> Rows;
-		FEduParseError Err;
-		if (!FFileHelper::LoadFileToString(EduText, *FixturePath)
-			|| !FBattleEduParser::Parse(EduText, Rows, Err)
-			|| !Rows.IsValidIndex(EduRow))
+		const TCHAR* Dictionary; // EDU 'dictionary' value (unique per row)
+		int32 Count;
+		FVector2D PosM = FVector2D::ZeroVector;
+		float YawDeg = 0.f;
+	};
+
+	int32 FindEduRowIndexByDictionary(const TArray<FEduUnit>& Rows, const FString& Dictionary)
+	{
+		for (int32 i = 0; i < Rows.Num(); ++i)
 		{
+			const FEduField* Dict = Rows[i].FindField(TEXT("dictionary"));
+			if (Dict && Dict->GetValue().Equals(Dictionary, ESearchCase::IgnoreCase))
+			{
+				return i;
+			}
+		}
+		return INDEX_NONE;
+	}
+
+	FUnitHandle SpawnClashUnitExec(UWorld* World, const TArray<FEduUnit>& Rows, const FClashUnitSpec& Unit)
+	{
+		const int32 EduRow = FindEduRowIndexByDictionary(Rows, Unit.Dictionary);
+		if (EduRow == INDEX_NONE)
+		{
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT SpawnClash FAIL unknown EDU dictionary '%s'"), Unit.Dictionary);
 			return FUnitHandle();
 		}
 		FBattleRowStats Stats;
@@ -736,10 +771,10 @@ namespace
 		}
 		FUnitSpawnSpec Spec;
 		Spec.EduRowIndex = EduRow;
-		Spec.SoldierCount = Count;
+		Spec.SoldierCount = Unit.Count;
 		Spec.UnitName = Stats.TypeName;
-		Spec.SpawnPos = PosM * 100.f;
-		Spec.SpawnYaw = YawDeg;
+		Spec.SpawnPos = Unit.PosM * 100.f;
+		Spec.SpawnYaw = Unit.YawDeg;
 		Spec.NumRanks = 3;
 		const FBattleSpawnResult Result = UBattleSpawnLibrary::SpawnUnit(World, Spec, Stats);
 		return Result.Unit;
@@ -757,45 +792,95 @@ void CombatSpawnClash(const TArray<FString>& Args, UWorld* World)
 	}
 	CostGrid->ResetToFlat();
 	// The demo fixture rides the combat machinery persistently (visual demo).
-	for (const TCHAR* Name : { TEXT("Battle.Combat.SpatialHash"), TEXT("Battle.Combat.Clusters"),
-		TEXT("Battle.Combat.Tally"), TEXT("Battle.Combat.Assign") })
-	{
-		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(Name))
-		{
-			C->Set(1, ECVF_SetByCode);
-		}
-	}
+	EnableDemoCombatPipeline();
 
+	// Fixture compositions (B-3): scenario DATA lives here as a table --
+	// unit type by EDU dictionary name, count, spawn transform -- not as
+	// scattered typed literals in call arguments. Adding a variant or
+	// retuning a clash shape means editing THIS table only.
 	const FString Variant = Args[0];
+	TArray<FClashUnitSpec> WallUnits = {
+		{TEXT("Peasant_Levy"), 40, FVector2D(0.f, 0.f), 180.f},
+		{TEXT("Sergeant_Spearmen"), 40, FVector2D(-24.f, 0.f), 0.f},
+	};
+	TArray<FClashUnitSpec> MobUnits = {
+		{TEXT("Sergeant_Spearmen"), 8, FVector2D(0.f, -3.f), 180.f},
+		{TEXT("Sergeant_Spearmen"), 8, FVector2D(0.f, 3.f), 180.f},
+		{TEXT("Peasant_Levy"), 40, FVector2D(-20.f, 0.f), 0.f},
+	};
+	TArray<FClashUnitSpec> ChargeUnits = {
+		{TEXT("Peasant_Levy"), 12, FVector2D(0.f, 0.f), 180.f},
+		{TEXT("Peasant_Levy"), 12, FVector2D(-24.f, 0.f), 0.f},
+	};
+	const TCHAR* VariantName = nullptr;
+	TArray<FClashUnitSpec>* Units = nullptr;
 	if (Variant == TEXT("wall"))
 	{
-		const FUnitHandle Defenders = SpawnClashUnitExec(World, 0, 40, FVector2D(0.f, 0.f), 180.f);
-		const FUnitHandle Attackers = SpawnClashUnitExec(World, 1, 40, FVector2D(-24.f, 0.f), 0.f);
-		Registry->IssueAttackUnitOrder(Attackers, Defenders);
-		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SpawnClash OK wall defenders=%u:%u attackers=%u:%u"),
-			Defenders.Index, Defenders.Serial, Attackers.Index, Attackers.Serial);
+		VariantName = TEXT("wall");
+		Units = &WallUnits;
 	}
 	else if (Variant == TEXT("mob"))
 	{
-		const FUnitHandle KnightA = SpawnClashUnitExec(World, 1, 8, FVector2D(0.f, -3.f), 180.f);
-		const FUnitHandle KnightB = SpawnClashUnitExec(World, 1, 8, FVector2D(0.f, 3.f), 180.f);
-		const FUnitHandle Peasants = SpawnClashUnitExec(World, 0, 40, FVector2D(-20.f, 0.f), 0.f);
-		Registry->IssueAttackMoveOrder(Peasants, FVector2D(0.f, 0.f), 0.f);
-		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SpawnClash OK mob knights=%u:%u+%u:%u peasants=%u:%u"),
-			KnightA.Index, KnightA.Serial, KnightB.Index, KnightB.Serial, Peasants.Index, Peasants.Serial);
+		VariantName = TEXT("mob");
+		Units = &MobUnits;
 	}
 	else if (Variant == TEXT("charge"))
 	{
-		const FUnitHandle Defenders = SpawnClashUnitExec(World, 0, 12, FVector2D(0.f, 0.f), 180.f);
-		const FUnitHandle Attackers = SpawnClashUnitExec(World, 0, 12, FVector2D(-24.f, 0.f), 0.f);
-		Registry->IssueAttackUnitOrder(Attackers, Defenders);
-		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SpawnClash OK charge defenders=%u:%u attackers=%u:%u (command Battle.Movement.WalkSpeed 6 to reach the fresh-contact gate)"),
-			Defenders.Index, Defenders.Serial, Attackers.Index, Attackers.Serial);
+		VariantName = TEXT("charge");
+		Units = &ChargeUnits;
 	}
 	else
 	{
 		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SpawnClash FAIL unknown variant %s"), *Variant);
+		return;
 	}
+
+	// Load the EDU once per command; rows are matched by dictionary name.
+	const FString FixturePath = FPaths::ProjectContentDir() / TEXT("Data/EDU/golden_edu_v1.txt");
+	FString EduText;
+	TArray<FEduUnit> Rows;
+	FEduParseError Err;
+	if (!FFileHelper::LoadFileToString(EduText, *FixturePath)
+		|| !FBattleEduParser::Parse(EduText, Rows, Err))
+	{
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SpawnClash FAIL EDU fixture (%s)"),
+			Err.bFailed ? *Err.Message : TEXT("unreadable"));
+		return;
+	}
+
+	TArray<FUnitHandle> Spawned;
+	Spawned.Reserve(Units->Num());
+	for (const FClashUnitSpec& Unit : *Units)
+	{
+		const FUnitHandle Handle = SpawnClashUnitExec(World, Rows, Unit);
+		if (!Handle.IsValid())
+		{
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SpawnClash FAIL %s spawn"), VariantName);
+			return;
+		}
+		Spawned.Add(Handle);
+	}
+	// Orders by convention: wall/charge = last unit attacks the first; mob =
+	// the peasants (spawn order: knights first, peasants last) attack-move to
+	// the origin.
+	if (Variant == TEXT("mob"))
+	{
+		Registry->IssueAttackMoveOrder(Spawned.Last(), FVector2D(0.f, 0.f), 0.f);
+	}
+	else
+	{
+		Registry->IssueAttackUnitOrder(Spawned.Last(), Spawned[0]);
+	}
+	FString Ids;
+	for (const FUnitHandle& H : Spawned)
+	{
+		Ids += FString::Printf(TEXT(" %u:%u"), H.Index, H.Serial);
+	}
+	const FString ChargeHint = Variant == TEXT("charge")
+		? TEXT(" (command Battle.Movement.WalkSpeed 6 to reach the fresh-contact gate)")
+		: TEXT("");
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SpawnClash OK %s%s units:%s"),
+		VariantName, *ChargeHint, *Ids);
 }
 
 void CombatPerfStress(const TArray<FString>& Args, UWorld* World)
@@ -808,14 +893,7 @@ void CombatPerfStress(const TArray<FString>& Args, UWorld* World)
 		return;
 	}
 	CostGrid->ResetToFlat();
-	for (const TCHAR* Name : { TEXT("Battle.Combat.SpatialHash"), TEXT("Battle.Combat.Clusters"),
-		TEXT("Battle.Combat.Tally"), TEXT("Battle.Combat.Assign") })
-	{
-		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(Name))
-		{
-			C->Set(1, ECVF_SetByCode);
-		}
-	}
+	EnableDemoCombatPipeline();
 	// Two 500-man lines in contact (the B.6 1k stress shape): 25 files x 20
 	// ranks at 1.2 m -- the tile holds it; the front ranks interpenetrate the
 	// dilation and the cluster pass emits the engagement.

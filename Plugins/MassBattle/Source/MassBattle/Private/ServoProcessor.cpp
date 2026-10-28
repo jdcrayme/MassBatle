@@ -187,6 +187,10 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 	{
 		WalkSpeedCvar = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Movement.WalkSpeed"));
 	}
+	if (!FallInCvar)
+	{
+		FallInCvar = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Movement.ProgressiveFallIn"));
+	}
 
 	// ---- Frame snapshot (all battle entities) ----
 	struct FSnapshotEntry
@@ -233,9 +237,7 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 	const float MaxAccel = GBattleMovementMaxAccel.GetValueOnAnyThread();
 	const bool bFeedForward = GBattleMovementFeedForward.GetValueOnAnyThread() != 0;
 	const bool bMemberClamp = GBattleMovementMemberClamp.GetValueOnAnyThread() != 0;
-	const bool bFallInServo = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Movement.ProgressiveFallIn"))
-		? IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Movement.ProgressiveFallIn"))->GetInt() != 0
-		: false;
+	const bool bFallInServo = FallInCvar && FallInCvar->GetInt() != 0;
 	// Formation-flow rule 2 feed: the ladder threshold that marks a slot as
 	// physically unreachable for the next slot reflow (read once per Execute,
 	// captured by value like the flags above).

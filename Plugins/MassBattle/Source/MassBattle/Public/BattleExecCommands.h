@@ -11,6 +11,12 @@ class UWorld;
 
 namespace BattleExec
 {
+	// -- Session-on combat pipeline (D-3 dedup) --
+	// The four per-pass gates default OFF in the plugin (the T1.8 identity
+	// argument needs them out of the CI baseline); the demo game mode and the
+	// SpawnClash/PerfStress fixtures flip them on for their session. ONE home
+	// for the list + the flips -- call sites must not re-type the cvar names.
+	MASSBATTLE_API void EnableDemoCombatPipeline();
 	// -- Task 4 (registry probes) --
 	MASSBATTLE_API void DumpRegistry(const TArray<FString>& Args, UWorld* World);
 	MASSBATTLE_API void StateHash(const TArray<FString>& Args, UWorld* World);

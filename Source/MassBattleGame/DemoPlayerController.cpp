@@ -76,6 +76,9 @@ void ADemoPlayerController::SetupEnhancedInput()
 	UInputAction* IA_RotLeft = Bool(TEXT("IA_DemoRotLeft"), TEXT("Rotate left"));
 	UInputAction* IA_RotRight = Bool(TEXT("IA_DemoRotRight"), TEXT("Rotate right"));
 
+	// B-4 note: the binding table below is code pending PR-2 (an
+	// editor-authored UInputMappingContext asset the owner can retune without
+	// a recompile). It lives in ONE function until then.
 	DemoIMC = NewObject<UInputMappingContext>(this, TEXT("IMC_Demo"));
 	AddMapping(DemoIMC, IA_Select, EKeys::LeftMouseButton);
 	AddMapping(DemoIMC, IA_Order, EKeys::RightMouseButton);
@@ -360,7 +363,7 @@ bool ADemoPlayerController::PickUnitAtScreen(const FVector2D& ScreenPos, FUnitHa
 			continue;
 		}
 		FVector2D Proj;
-		if (!ProjectWorldLocationToScreen(FVector(Info.BodyCenterCm.X, Info.BodyCenterCm.Y, 100.f), Proj))
+		if (!ProjectWorldLocationToScreen(FVector(Info.BodyCenterCm.X, Info.BodyCenterCm.Y, BodyLabelZCm), Proj))
 		{
 			continue;
 		}
@@ -454,7 +457,7 @@ void ADemoPlayerController::OnLMBReleased()
 				continue;
 			}
 			FVector2D Proj;
-			if (ProjectWorldLocationToScreen(FVector(Info.BodyCenterCm.X, Info.BodyCenterCm.Y, 100.f), Proj)
+			if (ProjectWorldLocationToScreen(FVector(Info.BodyCenterCm.X, Info.BodyCenterCm.Y, BodyLabelZCm), Proj)
 				&& Box.IsInside(Proj))
 			{
 				Marquee.Add(Handle);
@@ -593,14 +596,6 @@ void ADemoPlayerController::OnRMBReleased()
 		return;
 	}
 
-	// Movement is bounded by the plugin's flat cost-grid tile (256 m at the
-	// origin); clamp destinations into it with a small margin.
-	auto ClampToGrid = [](const FVector2D& P) -> FVector2D
-	{
-		const float Limit = 12500.f; // cm (125 m of the 128 m half-tile)
-		return FVector2D(FMath::Clamp(P.X, -Limit, Limit), FMath::Clamp(P.Y, -Limit, Limit));
-	};
-
 	if (bDragIsFormation)
 	{
 		// Formation gesture: divide the drag line across selected units; each
@@ -612,7 +607,7 @@ void ADemoPlayerController::OnRMBReleased()
 		{
 			for (const FDemoDragSegment& Seg : Segments)
 			{
-				Registry->IssueMoveOrder(Seg.Handle, ClampToGrid(Seg.AnchorCm), Seg.FacingYawDeg,
+				Registry->IssueMoveOrder(Seg.Handle, ClampToGridHelper(Seg.AnchorCm), Seg.FacingYawDeg,
 					/*speed m/s*/ 0.f, FMath::Max(0, Seg.Files));
 			}
 			UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoOrder FormationDrag Units=%d"), Segments.Num());
@@ -640,7 +635,7 @@ void ADemoPlayerController::OnRMBReleased()
 		return;
 	}
 	Centroid /= static_cast<float>(Counted);
-	const FVector2D Dest = ClampToGrid(DragCurrentWorldCm);
+	const FVector2D Dest = ClampToGridHelper(DragCurrentWorldCm);
 
 	for (const FUnitHandle& H : SelectedUnits)
 	{
@@ -652,7 +647,7 @@ void ADemoPlayerController::OnRMBReleased()
 		const FVector2D UnitDest = Dest + (Info.BodyCenterCm - Centroid);
 		// TW click-move semantics: a plain click moves without re-facing -- the
 		// unit keeps its current front (only an explicit drag commands a facing).
-		Registry->IssueMoveOrder(H, ClampToGrid(UnitDest), Info.FacingYawDeg);
+		Registry->IssueMoveOrder(H, ClampToGridHelper(UnitDest), Info.FacingYawDeg);
 	}
 	UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoOrder Move Units=%d"), SelectedUnits.Num());
 }
@@ -715,7 +710,13 @@ bool ADemoPlayerController::IssueAttackOrders(const FVector2D& ScreenPos, const 
 
 FVector2D ADemoPlayerController::ClampToGridHelper(const FVector2D& P) const
 {
-	const float Limit = 12500.f; // cm (125 m of the 128 m half-tile)
+	// The movement cost grid is a 256 m tile centered at the origin; orders
+	// clamp into it with a 3 m margin off the half-tile (128 m - 3 m). The
+	// tile extent belongs to the plugin's grid (BattleCostGrid) -- exposing
+	// it is PR-3; until then this is the demo's single named copy.
+	constexpr float TileHalfExtentCm = 12800.f;
+	constexpr float EdgeMarginCm = 300.f;
+	constexpr float Limit = TileHalfExtentCm - EdgeMarginCm;
 	return FVector2D(FMath::Clamp(P.X, -Limit, Limit), FMath::Clamp(P.Y, -Limit, Limit));
 }
 

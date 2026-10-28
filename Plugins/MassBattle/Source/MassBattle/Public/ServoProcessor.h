@@ -38,4 +38,7 @@ private:
 	FMassEntityQuery ZeroVelocityQuery;
 	/** Cached CVAR pointer (audit H4): stable for the process. */
 	const IConsoleVariable* WalkSpeedCvar = nullptr;
+	/** Cached pointer (B-6, audit M9 pattern): the servo is worker-run; a
+	 *  per-Execute FindConsoleVariable (twice) is pure lookup waste. */
+	const IConsoleVariable* FallInCvar = nullptr;
 };

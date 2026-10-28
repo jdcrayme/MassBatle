@@ -32,14 +32,7 @@ void ADemoGameMode::BeginPlay()
 	// setup (the M3 auto-sample only covers the empty-map case). The PLUGIN
 	// defaults stay 0: the T1.8 movement-soak identity argument needs the
 	// pipeline out of the CI baseline until the fold-in nightly.
-	for (const TCHAR* Name : { TEXT("Battle.Combat.SpatialHash"), TEXT("Battle.Combat.Clusters"),
-		TEXT("Battle.Combat.Tally"), TEXT("Battle.Combat.Assign") })
-	{
-		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(Name))
-		{
-			C->Set(1, ECVF_SetByCode);
-		}
-	}
+	BattleExec::EnableDemoCombatPipeline();
 	UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoCombat pipeline on (hash/clusters/tally/assign session-on)"));
 
 	// Scenario authoring is level-driven: every ADemoUnitActor placed in the
