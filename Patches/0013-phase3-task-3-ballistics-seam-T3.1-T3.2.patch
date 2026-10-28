@@ -1,0 +1,611 @@
+From 5238bd24fb051753c0573feac4c645d5b261b624 Mon Sep 17 00:00:00 2001
+From: Z User <z@container>
+Date: Wed, 28 Oct 2026 19:06:37 +0000
+Subject: [PATCH 13/16] phase3: task 3 ballistics seam + T3.1/T3.2
+
+- BattleBallistics.h/.cpp (new, spec ranged-stack sections 4.1-4.3): the ONE
+  low-arc launch solver (discriminant-root selection; out-of-envelope holds
+  fire, RC2), PerturbDirection (deterministic cone-disc dispersion,
+  rejection-free; bounded by construction), ShotSeed (the A13 run-invariant
+  seed -- same Knuth family as FMeleeMath, cross-referenced per the B-2
+  one-home posture), StepProjectile (semi-implicit Euler, the
+  IntegrateProcessor family), MarchClear (sub-cell deduped DDA over the
+  heightfield; strictly-greater occlusion so equal heights never block, RC3).
+- FBattleCostGrid::SampleHeight (the ONLY grid change, disclosed in the spec
+  touch-point table): bilinear world-space height; flat grids read exactly 0
+  (flags-off baseline untouched).
+- MassBattleRangedTests.cpp (new): T3.1 Battle.Unit.Ranged.Ballistics (45deg
+  hand golden; stepped-landing property at both profile speeds with the
+  discretization band documented; out-of-envelope; flatness monotonicity RC2;
+  bit determinism; dispersion cone bound + per-seed determinism) + T3.2
+  Battle.Unit.Ranged.LOS (flat never false-occludes; hill blocks; bump
+  clears; equal-height epsilon rule; rising-lane over/under a mid-hill;
+  bilinear SampleHeight goldens; march determinism).
+
+MUST re-run on the UE machine: unit tier (the two new tests green; FMA
+contraction on the same machine is the known watch item -- tolerances are
+1e-3 analytic / 0.35 m stepped). Static patch: brace-balanced,
+include-complete; no engine build was available at author time.
+---
+ .../MassBattle/Private/BattleBallistics.cpp   | 185 ++++++++++++++
+ .../MassBattle/Private/BattleCostGrid.cpp     |  21 ++
+ .../MassBattle/Public/BattleBallistics.h      |  81 ++++++
+ .../Source/MassBattle/Public/BattleCostGrid.h |   8 +
+ .../Private/MassBattleRangedTests.cpp         | 234 ++++++++++++++++++
+ 5 files changed, 529 insertions(+)
+ create mode 100644 Plugins/MassBattle/Source/MassBattle/Private/BattleBallistics.cpp
+ create mode 100644 Plugins/MassBattle/Source/MassBattle/Public/BattleBallistics.h
+ create mode 100644 Plugins/MassBattle/Source/MassBattleTest/Private/MassBattleRangedTests.cpp
+
+diff --git a/Plugins/MassBattle/Source/MassBattle/Private/BattleBallistics.cpp b/Plugins/MassBattle/Source/MassBattle/Private/BattleBallistics.cpp
+new file mode 100644
+index 0000000..a70f7e8
+--- /dev/null
++++ b/Plugins/MassBattle/Source/MassBattle/Private/BattleBallistics.cpp
+@@ -0,0 +1,185 @@
++// BattleBallistics.cpp -- the ballistic seam bodies (spec ranged-stack
++// §4.1-§4.3). All math closed-form or fixed-step; deterministic by
++// construction (no streams, no wall-clock).
++#include "BattleBallistics.h"
++#include "Math/UnrealMathUtility.h"
++
++namespace
++{
++	// Knuth multiplicative hash constants -- the SAME family as
++	// FMeleeMath::StaggeredPhaseOffset / CombatRoll01 (BattleMelee.cpp; the
++	// B-2 one-home posture). Duplicated here with the cross-reference so the
++	// seam stays free of BattleMelee includes; a future audit may unify the
++	// constant's home in one header both seams include.
++	constexpr uint32 KnuthGold = 2654435761u;
++	constexpr uint32 KnuthMix = 40503u;
++
++	uint32 HashMix32(uint32 V)
++	{
++		V ^= V >> 16;
++		V *= KnuthMix;
++		V ^= V >> 13;
++		return V;
++	}
++
++	uint32 Hash01ToUint(uint32 A, uint32 B, uint32 C)
++	{
++		uint32 H = KnuthGold;
++		H = HashMix32(H ^ A);
++		H = HashMix32(H ^ B);
++		H = HashMix32(H ^ C);
++		return H;
++	}
++
++	/** Deterministic [0, 1) from a mixed hash. */
++	float Hash01(uint32 H)
++	{
++		return static_cast<float>(H & 0x00FFFFFFu) / static_cast<float>(0x01000000u);
++	}
++}
++
++namespace FBallisticsMath
++{
++
++FBallisticSolution SolveLaunch(
++	const FVector2D& FromM, float FromZM, const FVector2D& ToM, float ToZM,
++	float SpeedMps, float GravityMps2)
++{
++	FBallisticSolution Out;
++
++	const FVector2D Delta = ToM - FromM;
++	const float d = Delta.Size();
++	const float dh = ToZM - FromZM;
++
++	if (d <= FBallisticsConstants::DistanceEpsilonM)
++	{
++		// Degenerate: straight up/down. A vertical launch can only reach a
++		// target at or above the launch height; the caller never sets this up
++		// (volleys have horizontal extent), but the seam stays total.
++		if (dh > 0.f && SpeedMps > 0.f)
++		{
++			Out.LaunchDir = FVector(0.f, 0.f, 1.f);
++			Out.FlightTimeS = dh / SpeedMps;
++			Out.bValid = true;
++		}
++		return Out;
++	}
++
++	if (SpeedMps <= 0.f || GravityMps2 <= 0.f)
++	{
++		return Out; // invalid: no speed or no gravity is not a ballistic shot
++	}
++
++	const float v2 = SpeedMps * SpeedMps;
++	const float Disc = v2 * v2 - GravityMps2 * (GravityMps2 * d * d + 2.f * dh * v2);
++	if (Disc < 0.f)
++	{
++		return Out; // out of envelope (RC2: the volley pass holds fire)
++	}
++
++	const float TanTheta = (v2 - FMath::Sqrt(Disc)) / (GravityMps2 * d); // low arc
++	const float Theta = FMath::Atan(TanTheta);
++	const float CosTheta = FMath::Cos(Theta);
++	const float SinTheta = FMath::Sin(Theta);
++
++	const FVector2D Dir2D = Delta / d;
++	Out.LaunchDir = FVector(Dir2D.X * CosTheta, Dir2D.Y * CosTheta, SinTheta);
++	Out.FlightTimeS = d / (SpeedMps * CosTheta);
++	Out.bValid = true;
++	return Out;
++}
++
++FVector PerturbDirection(const FVector& Dir, float ConeHalfDeg, uint32 Seed)
++{
++	if (ConeHalfDeg <= FBallisticsConstants::ConeEpsilonDeg || !Dir.IsNormalized())
++	{
++		return Dir;
++	}
++
++	// Two independent deterministic draws -> a point in the cone's DISC
++	// (radial sqrt + full angle): every result stays inside the cone by
++	// construction (rejection-free, RC1's dispersion bound).
++	const uint32 H1 = Hash01ToUint(Seed, 0x9E3779B9u, 0x85EBCA6Bu);
++	const uint32 H2 = Hash01ToUint(Seed, 0xC2B2AE35u, 0x27D4EB2Fu);
++	const float u1 = Hash01(H1);
++	const float u2 = Hash01(H2);
++	const float RadiusDeg = FMath::Sqrt(u1) * ConeHalfDeg;
++	const float AzimuthRad = u2 * 2.f * PI;
++
++	// Orthonormal basis around Dir (stable for any input direction).
++	const FVector W = Dir;
++	const FVector Reference = (FMath::Abs(W.Z) < 0.9f) ? FVector::UpVector : FVector::ForwardVector;
++	const FVector U = FVector::CrossProduct(Reference, W).GetSafeNormal();
++	const FVector V = FVector::CrossProduct(W, U);
++
++	const float RadiusRad = FMath::DegreesToRadians(RadiusDeg);
++	const float OffU = FMath::Cos(AzimuthRad) * RadiusRad;
++	const float OffV = FMath::Sin(AzimuthRad) * RadiusRad;
++
++	// Small-angle rotation of W toward (U*OffU + V*OffV), then renormalize:
++	// exact at the axis, bounded within the cone for small angles.
++	FVector Out = W + U * FMath::Tan(OffU) + V * FMath::Tan(OffV);
++	return Out.GetSafeNormal();
++}
++
++uint32 ShotSeed(uint32 EntityIndex, uint32 EntitySerial, uint16 ShotsFired)
++{
++	return Hash01ToUint(EntityIndex, EntitySerial, static_cast<uint32>(ShotsFired));
++}
++
++void StepProjectile(FVector& InOutPosM, FVector& InOutVelMps, float GravityMps2, float DT)
++{
++	// Semi-implicit Euler: velocity first, position on the updated velocity
++	// (the IntegrateProcessor family -- stable parabola at fixed DT).
++	InOutVelMps.Z -= GravityMps2 * DT;
++	InOutPosM += InOutVelMps * DT;
++}
++
++bool MarchClear(
++	const FBattleCostGrid& Grid, const FVector2D& FromM, float FromEyeZM,
++	const FVector2D& ToM, float ToZM, float ClearanceM)
++{
++	const FVector2D Delta = ToM - FromM;
++	const float Dist = Delta.Size();
++	if (Dist <= FBallisticsConstants::DistanceEpsilonM)
++	{
++		return true; // zero-length segment: nothing to occlude
++	}
++
++	// Sub-cell march (CellSize/2), deduped per crossed cell -- a DDA variant:
++	// deterministic, visits every cell the segment passes through, and reads
++	// the heightfield at most once per cell.
++	const float StepM = FMath::Max(Grid.CellSize * 0.5f, 0.25f);
++	const int32 NumSteps = FMath::CeilToInt(Dist / StepM);
++	int32 LastX = INT32_MIN;
++	int32 LastY = INT32_MIN;
++	for (int32 i = 1; i <= NumSteps; ++i)
++	{
++		const float T = static_cast<float>(i) / static_cast<float>(NumSteps);
++		const FVector2D Pos = FromM + Delta * T;
++		int32 CellX = 0;
++		int32 CellY = 0;
++		Grid.WorldToCell(Pos, CellX, CellY);
++		if (CellX == LastX && CellY == LastY)
++		{
++			continue; // same cell as the last sample
++		}
++		LastX = CellX;
++		LastY = CellY;
++
++		// Ray height at this station (linear interpolation eye -> target).
++		const float RayZ = FromEyeZM + (ToZM - FromEyeZM) * T;
++		const float TerrainZ = Grid.SampleHeight(Pos);
++
++		// RC3's equal-height rule: occlusion requires terrain STRICTLY above
++		// the ray plus clearance -- equal heights never block (flat ground is
++		// always clear).
++		if (TerrainZ > RayZ + ClearanceM)
++		{
++			return false;
++		}
++	}
++	return true;
++}
++
++} // namespace FBallisticsMath
+diff --git a/Plugins/MassBattle/Source/MassBattle/Private/BattleCostGrid.cpp b/Plugins/MassBattle/Source/MassBattle/Private/BattleCostGrid.cpp
+index add8ce8..d1becce 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Private/BattleCostGrid.cpp
++++ b/Plugins/MassBattle/Source/MassBattle/Private/BattleCostGrid.cpp
+@@ -22,6 +22,27 @@ void FBattleCostGrid::WorldToCell(const FVector2D& WorldPos, int32& OutX, int32&
+ 	OutY = FMath::FloorToInt32(Rel.Y);
+ }
+ 
++float FBattleCostGrid::SampleHeight(const FVector2D& WorldPosM) const
++{
++	// Phase 3 (spec ranged-stack §4.3): bilinear blend of the four surrounding
++	// cell heights. Continuous coordinate in CELL space, cell centers at
++	// integer+0.5 (CellCenter's convention): fx = 2.5 means halfway between
++	// the centers of cells 2 and 3.
++	const float fx = (WorldPosM.X - Origin.X) / CellSize - 0.5f;
++	const float fy = (WorldPosM.Y - Origin.Y) / CellSize - 0.5f;
++	const int32 X0 = FMath::FloorToInt32(fx);
++	const int32 Y0 = FMath::FloorToInt32(fy);
++	const float tx = fx - static_cast<float>(X0);
++	const float ty = fy - static_cast<float>(Y0);
++	const float H00 = GetHeight(X0, Y0);
++	const float H10 = GetHeight(X0 + 1, Y0);
++	const float H01 = GetHeight(X0, Y0 + 1);
++	const float H11 = GetHeight(X0 + 1, Y0 + 1);
++	const float Top = H00 * (1.f - tx) + H10 * tx;
++	const float Bottom = H01 * (1.f - tx) + H11 * tx;
++	return Top * (1.f - ty) + Bottom * ty;
++}
++
+ int32 FBattleCostGrid::StampImpassable(const FVector2D& BoxMin, const FVector2D& BoxMax)
+ {
+ 	return StampCost(BoxMin, BoxMax, Impassable);
+diff --git a/Plugins/MassBattle/Source/MassBattle/Public/BattleBallistics.h b/Plugins/MassBattle/Source/MassBattle/Public/BattleBallistics.h
+new file mode 100644
+index 0000000..2e37238
+--- /dev/null
++++ b/Plugins/MassBattle/Source/MassBattle/Public/BattleBallistics.h
+@@ -0,0 +1,81 @@
++// BattleBallistics.h -- Phase 3 ballistic seam (spec ranged-stack §4.1-§4.3,
++// brief A1): the launch solver, deterministic dispersion, the fixed-DT
++// stepper, and the heightfield LOS march. Free functions / plain structs,
++// meters, pure and deterministic -- no RNG streams, no wall-clock, no
++// GFrameCounter (the A13 discipline). ONE solver serves both trajectory
++// classes (RC2): bows and crossbows differ by profile speed and the bIndirect
++// FIRE RULE, never by a second integrator.
++//
++// A6 posture (ADR-30): constants below are T3.1-golden-locked placeholders;
++// the Phase-6 T6.1 audit swaps ported constants with diff review.
++#pragma once
++
++#include "CoreMinimal.h"
++#include "BattleCostGrid.h"
++
++/** T3.1-golden-locked placeholder constants (A6). */
++namespace FBallisticsConstants
++{
++	/** Standard gravity, m/s^2 (placeholder; T6.1 may port the game's feel). */
++	constexpr float GravityMps2 = 9.81f;
++	/** Numerical guards. */
++	constexpr float DistanceEpsilonM = 1e-4f;
++	constexpr float ConeEpsilonDeg = 1e-4f;
++}
++
++/** Launch solution for one shot (spec §4.1). */
++struct MASSBATTLE_API FBallisticSolution
++{
++	/** Unit launch direction: X/Y horizontal, Z up. */
++	FVector LaunchDir = FVector::ForwardVector;
++	/** Flight time to the target point, seconds. */
++	float FlightTimeS = 0.f;
++	/** False when the target is outside the speed/gravity envelope (the
++	 *  volley pass holds fire -- never force-fires an unreachable shot). */
++	bool bValid = false;
++};
++
++namespace FBallisticsMath
++{
++	/** Low-arc ballistic solution from FromM/FromZM to ToM/ToZM at the given
++	 *  muzzle speed (spec §4.1):
++	 *    tan(theta) = (v^2 - sqrt(v^4 - g*(g*d^2 + 2*dh*v^2))) / (g*d)
++	 *  d = horizontal distance, dh = target height minus launch height. The
++	 *  discriminant root selects the LOW arc (the M2TW flat-ish feel); a
++	 *  negative discriminant is out of envelope (bValid = false). Flight time
++	 *  = d / (v*cos(theta)). Deterministic; identical inputs -> identical
++	 *  bits. */
++	MASSBATTLE_API FBallisticSolution SolveLaunch(
++		const FVector2D& FromM, float FromZM, const FVector2D& ToM, float ToZM,
++		float SpeedMps, float GravityMps2);
++
++	/** Deterministic dispersion (spec §4.2): perturb Dir within a cone of
++	 *  half-angle ConeHalfDeg. Two Knuth-family hashes of the seed draw a
++	 *  point in the cone's DISC (rejection-free: radial sqrt + angle), so
++	 *  every perturbed direction stays inside the cone by construction.
++	 *  Same seed -> same bits; the caller derives the seed from entity
++	 *  identity + ShotsFired (ShotSeed) so it is run-invariant (A13). */
++	MASSBATTLE_API FVector PerturbDirection(const FVector& Dir, float ConeHalfDeg, uint32 Seed);
++
++	/** Run-invariant shot seed: the hash of entity identity + the lifetime
++	 *  shot count (never GFrameCounter -- the A13 rule; same Knuth family as
++	 *  FMeleeMath::CombatRoll01 / StaggeredPhaseOffset, the B-2 one-home
++	 *  posture -- a future audit may unify the constant's home). */
++	MASSBATTLE_API uint32 ShotSeed(uint32 EntityIndex, uint32 EntitySerial, uint16 ShotsFired);
++
++	/** Semi-implicit Euler step (the IntegrateProcessor family): position
++	 *  advances on the POST-update velocity, which keeps the parabola stable
++	 *  at the fixed sim DT. Returns the advanced position/velocity by
++	 *  reference; no allocation, branch-free. */
++	MASSBATTLE_API void StepProjectile(FVector& InOutPosM, FVector& InOutVelMps, float GravityMps2, float DT);
++
++	/** Heightfield line-of-sight march (spec §4.3, RC3): walks the segment in
++	 *  sub-cell steps (CellSize/2, deduped per crossed cell -- a DDA variant),
++	 *  sampling SampleHeight at each; blocked when terrain + ClearanceM is
++	 *  STRICTLY above the ray (the equal-height epsilon rule: flat ground
++	 *  never false-occludes). Arced fire calls this on the frontage segment
++	 *  only; flat fire on the full lane (the caller's fire rule, RC2). */
++	MASSBATTLE_API bool MarchClear(
++		const FBattleCostGrid& Grid, const FVector2D& FromM, float FromEyeZM,
++		const FVector2D& ToM, float ToZM, float ClearanceM);
++}
+diff --git a/Plugins/MassBattle/Source/MassBattle/Public/BattleCostGrid.h b/Plugins/MassBattle/Source/MassBattle/Public/BattleCostGrid.h
+index 65f15e5..9c2028e 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Public/BattleCostGrid.h
++++ b/Plugins/MassBattle/Source/MassBattle/Public/BattleCostGrid.h
+@@ -39,6 +39,14 @@ struct MASSBATTLE_API FBattleCostGrid
+ 	FVector2D CellCenter(int32 X, int32 Y) const;
+ 	void WorldToCell(const FVector2D& WorldPos, int32& OutX, int32& OutY) const;
+ 
++	/** Phase 3 (spec ranged-stack §4.3): bilinear terrain height at a
++	 *  WORLD position, meters -- the ballistic/LOS sampling read. The four
++	 *  surrounding cell heights are blended (flat grids read exactly 0, so
++	 *  the flags-off baseline is untouched); outside the grid reads 0
++	 *  (GetHeight's bounds rule). Net-new API, disclosed in the spec
++	 *  touch-point table: the ONLY BattleCostGrid change this phase. */
++	float SampleHeight(const FVector2D& WorldPosM) const;
++
+ 	/** A5 stamp override: mark all cells overlapping the world-space box
+ 	 *  [Min,Max] (m, inclusive) impassable. Idempotent. Returns cells stamped. */
+ 	int32 StampImpassable(const FVector2D& BoxMin, const FVector2D& BoxMax);
+diff --git a/Plugins/MassBattle/Source/MassBattleTest/Private/MassBattleRangedTests.cpp b/Plugins/MassBattle/Source/MassBattleTest/Private/MassBattleRangedTests.cpp
+new file mode 100644
+index 0000000..087b8aa
+--- /dev/null
++++ b/Plugins/MassBattle/Source/MassBattleTest/Private/MassBattleRangedTests.cpp
+@@ -0,0 +1,234 @@
++#if WITH_DEV_AUTOMATION_TESTS
++// MassBattleRangedTests.cpp -- Phase 3 ranged gates (spec ranged-stack §7).
++// T3.1 (Battle.Unit.Ranged.Ballistics): the solver + dispersion goldens.
++// T3.2 (Battle.Unit.Ranged.LOS): heightfield march golden hill cases.
++// T3.3 family (ammo/pool/volley/skirmish): unit-locked below.
++//
++// Golden posture: solver asserts are closed-form property checks with
++// tolerances (1e-3 analytic, 0.35 m for stepped landings -- the sim's own
++// semi-implicit integrator carries a g*T*DT/2 discretization band; the
++// IMPACT system must consume the stepper's truth, not the analytic one).
++#include "Misc/AutomationTest.h"
++
++#include "BattleBallistics.h"
++#include "BattleCostGrid.h"
++#include "BattleRanged.h"
++
++namespace
++{
++	/** Deterministic hill stamp for LOS fixtures: every cell whose center is
++	 *  inside the world-space box gets the height (test-local; the shipped
++	 *  stamping surface stays cost-shaped). */
++	void StampHill(FBattleCostGrid& Grid, const FVector2D& BoxMin, const FVector2D& BoxMax, float Height)
++	{
++		int32 X0 = 0, Y0 = 0, X1 = 0, Y1 = 0;
++		Grid.WorldToCell(BoxMin, X0, Y0);
++		Grid.WorldToCell(BoxMax, X1, Y1);
++		for (int32 Y = Y0; Y <= Y1; ++Y)
++		{
++			for (int32 X = X0; X <= X1; ++X)
++			{
++				if (Grid.IsInside(X, Y))
++				{
++					Grid.CellHeight[Grid.IndexOf(X, Y)] = Height;
++				}
++			}
++		}
++	}
++
++	/** Step a solved shot with the SEAM's own stepper for the flight time. */
++	FVector StepFlight(const FBallisticSolution& Solution, const FVector2D& FromM, float FromZM,
++		float SpeedMps, float GravityMps2, float DT)
++	{
++		FVector Pos(FromM.X, FromM.Y, FromZM);
++		FVector Vel = Solution.LaunchDir * SpeedMps;
++		int32 Steps = FMath::FloorToInt(Solution.FlightTimeS / DT);
++		for (int32 i = 0; i < Steps; ++i)
++		{
++			FBallisticsMath::StepProjectile(Pos, Vel, GravityMps2, DT);
++		}
++		return Pos;
++	}
++}
++
++// ---------------------------------------------------------------------------
++// T3.1: Battle.Unit.Ranged.Ballistics -- solver, dispersion, stepper.
++// ---------------------------------------------------------------------------
++IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRanged_Ballistics,
++	"Battle.Unit.Ranged.Ballistics",
++	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
++
++bool FRanged_Ballistics::RunTest(const FString& Parameters)
++{
++	using namespace FBallisticsMath;
++
++	// -- level ground at the 45-degree equivalence point (v^2/g = d): the
++	//    hand golden. v=10, g=10, d=10 -> theta = 45deg, T = sqrt(2).
++	{
++		const FBallisticSolution S = SolveLaunch(FVector2D::ZeroVector, 1.6f, FVector2D(10.f, 0.f), 1.6f, 10.f, 10.f);
++		TestTrue(TEXT("level 45deg solution valid"), S.bValid);
++		TestEqual(TEXT("level 45deg dir.X = cos(45)"), S.LaunchDir.X, 0.70710678f, 1e-3f);
++		TestEqual(TEXT("level 45deg dir.Z = sin(45)"), S.LaunchDir.Z, 0.70710678f, 1e-3f);
++		TestEqual(TEXT("level 45deg flight time = sqrt(2)"), S.FlightTimeS, 1.41421356f, 1e-3f);
++		TestEqual(TEXT("launch dir is unit"), S.LaunchDir.Size(), 1.f, 1e-4f);
++	}
++
++	// -- out of envelope: max level range is v^2/g; beyond it, invalid (the
++	//    volley pass holds fire, never force-fires).
++	{
++		const FBallisticSolution S = SolveLaunch(FVector2D::ZeroVector, 1.6f, FVector2D(30.f, 0.f), 1.6f, 5.f, 9.81f);
++		TestFalse(TEXT("out-of-envelope shot is invalid"), S.bValid);
++	}
++
++	// -- stepped-landing property at the profile speeds: the sim's own
++	//    integrator lands on the target within the discretization band.
++	{
++		const FProjectileProfile Arrow = GetProjectileProfile(EBattleProjectileKind::Arrow);
++		const FVector2D From(0.f, 0.f);
++		const FVector2D To(80.f, 0.f);
++		const FBallisticSolution S = SolveLaunch(From, 1.6f, To, 1.0f, Arrow.MuzzleSpeedMps, FBallisticsConstants::GravityMps2 * Arrow.GravityScale);
++		TestTrue(TEXT("arrow solution at 80 m valid"), S.bValid);
++		const FVector Landed = StepFlight(S, From, 1.6f, Arrow.MuzzleSpeedMps,
++			FBallisticsConstants::GravityMps2 * Arrow.GravityScale, 1.f / 60.f);
++		TestEqual(TEXT("arrow stepped landing X"), Landed.X, To.X, 0.35f);
++		TestEqual(TEXT("arrow stepped landing Z"), Landed.Z, 1.0f, 0.35f);
++
++		const FProjectileProfile Bolt = GetProjectileProfile(EBattleProjectileKind::Bolt);
++		const FBallisticSolution B = SolveLaunch(From, 1.6f, To, 1.0f, Bolt.MuzzleSpeedMps, FBallisticsConstants::GravityMps2 * Bolt.GravityScale);
++		TestTrue(TEXT("bolt solution at 80 m valid"), B.bValid);
++		const FVector LandedB = StepFlight(B, From, 1.6f, Bolt.MuzzleSpeedMps,
++			FBallisticsConstants::GravityMps2 * Bolt.GravityScale, 1.f / 60.f);
++		TestEqual(TEXT("bolt stepped landing X"), LandedB.X, To.X, 0.35f);
++		TestEqual(TEXT("bolt stepped landing Z"), LandedB.Z, 1.0f, 0.35f);
++	}
++
++	// -- RC2: ONE solver, profile-speed flatness. Same shot, higher speed ->
++	//    strictly flatter launch (the bolt's near-flat path is a data
++	//    property, not a second integrator).
++	{
++		const FVector2D From(0.f, 0.f);
++		const FVector2D To(60.f, 0.f);
++		const FBallisticSolution Slow = SolveLaunch(From, 1.6f, To, 1.6f, 35.f, 9.81f);
++		const FBallisticSolution Fast = SolveLaunch(From, 1.6f, To, 1.6f, 60.f, 9.81f);
++		TestTrue(TEXT("both solutions valid"), Slow.bValid && Fast.bValid);
++		TestTrue(TEXT("higher speed -> flatter launch (RC2)"), Fast.LaunchDir.Z < Slow.LaunchDir.Z);
++		TestTrue(TEXT("higher speed -> shorter flight"), Fast.FlightTimeS < Slow.FlightTimeS);
++	}
++
++	// -- determinism: identical inputs -> identical bits (two calls).
++	{
++		const FBallisticSolution A = SolveLaunch(FVector2D(3.f, -7.f), 1.6f, FVector2D(65.f, 12.f), 2.2f, 35.f, 9.81f);
++		const FBallisticSolution B = SolveLaunch(FVector2D(3.f, -7.f), 1.6f, FVector2D(65.f, 12.f), 2.2f, 35.f, 9.81f);
++		TestEqual(TEXT("solver deterministic: dir.X"), A.LaunchDir.X, B.LaunchDir.X);
++		TestEqual(TEXT("solver deterministic: dir.Y"), A.LaunchDir.Y, B.LaunchDir.Y);
++		TestEqual(TEXT("solver deterministic: dir.Z"), A.LaunchDir.Z, B.LaunchDir.Z);
++		TestEqual(TEXT("solver deterministic: flight time"), A.FlightTimeS, B.FlightTimeS);
++	}
++
++	// -- dispersion: bounded by the cone, deterministic per seed, zero cone
++	//    is identity (RC1).
++	{
++		const FVector Dir = FVector(1.f, 0.f, 0.f);
++		const float ConeDeg = 4.f; // arrow profile placeholder
++		float MaxAngleDeg = 0.f;
++		bool bAllDeterministic = true;
++		bool bSpread = false;
++		for (uint32 i = 0; i < 256; ++i)
++		{
++			const FVector P1 = PerturbDirection(Dir, ConeDeg, i);
++			const FVector P2 = PerturbDirection(Dir, ConeDeg, i);
++			bAllDeterministic = bAllDeterministic && P1.Equals(P2, 1e-6f);
++			const float AngleDeg = FMath::RadiansToDegrees(FMath::Acos(FMath::Clamp(FVector::DotProduct(Dir, P1), -1.f, 1.f)));
++			MaxAngleDeg = FMath::Max(MaxAngleDeg, AngleDeg);
++			bSpread = bSpread || (AngleDeg > ConeDeg * 0.25f); // not all collapsed at the axis
++		}
++		TestTrue(TEXT("dispersion deterministic per seed"), bAllDeterministic);
++		TestTrue(TEXT("dispersion within the cone"), MaxAngleDeg <= ConeDeg + 0.25f);
++		TestTrue(TEXT("dispersion actually spreads"), bSpread);
++		TestTrue(TEXT("zero cone is identity"),
++			PerturbDirection(Dir, 0.f, 12345u).Equals(Dir, 1e-6f));
++	}
++
++	// -- shot seed: run-invariant inputs -> deterministic, distinct per shot.
++	{
++		const uint32 S0 = ShotSeed(7u, 3u, 0);
++		const uint32 S0Again = ShotSeed(7u, 3u, 0);
++		const uint32 S1 = ShotSeed(7u, 3u, 1);
++		TestEqual(TEXT("shot seed deterministic"), S0, S0Again);
++		TestTrue(TEXT("shot seed differs per shot"), S0 != S1);
++	}
++
++	return true;
++}
++
++// ---------------------------------------------------------------------------
++// T3.2: Battle.Unit.Ranged.LOS -- heightfield march golden hill cases.
++// ---------------------------------------------------------------------------
++IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRanged_LOS,
++	"Battle.Unit.Ranged.LOS",
++	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
++
++bool FRanged_LOS::RunTest(const FString& Parameters)
++{
++	using namespace FBallisticsMath;
++
++	// The subsystem default shape: 86x86 cells, 3 m, centered at world 0.
++	FBattleCostGrid Grid;
++	Grid.InitFlat(86, 86, FVector2D::ZeroVector, 3.0f);
++
++	// -- flat ground never occludes at equal height (RC3's epsilon rule).
++	TestTrue(TEXT("flat: 50 m shot is clear"),
++		MarchClear(Grid, FVector2D(0.f, 0.f), 1.6f, FVector2D(50.f, 0.f), 1.6f, 0.3f));
++	TestTrue(TEXT("flat: long diagonal shot is clear"),
++		MarchClear(Grid, FVector2D(-60.f, -40.f), 1.6f, FVector2D(60.f, 45.f), 1.6f, 0.3f));
++
++	// -- a hill between shooter and target blocks the flat lane.
++	StampHill(Grid, FVector2D(22.f, -3.f), FVector2D(28.f, 3.f), 5.f);
++	TestFalse(TEXT("hill 5 m blocks a 1.6 m eye line"),
++		MarchClear(Grid, FVector2D(0.f, 0.f), 1.6f, FVector2D(50.f, 0.f), 1.6f, 0.3f));
++
++	// -- a low bump does not block.
++	StampHill(Grid, FVector2D(22.f, -3.f), FVector2D(28.f, 3.f), 0.5f);
++	TestTrue(TEXT("bump 0.5 m is clear under a 1.6 m eye line"),
++		MarchClear(Grid, FVector2D(0.f, 0.f), 1.6f, FVector2D(50.f, 0.f), 1.6f, 0.3f));
++
++	// -- the equal-height rule: terrain EXACTLY at the ray height does not
++	//    block (occlusion is strictly-greater, the RC3 epsilon rule).
++	StampHill(Grid, FVector2D(22.f, -3.f), FVector2D(28.f, 3.f), 1.6f);
++	TestTrue(TEXT("terrain at ray height does not false-occlude"),
++		MarchClear(Grid, FVector2D(0.f, 0.f), 1.6f, FVector2D(50.f, 0.f), 1.6f, 0.0f));
++
++	// -- shooting AT a hilltop target: the ray rises above a mid-slope hill.
++	StampHill(Grid, FVector2D(22.f, -3.f), FVector2D(28.f, 3.f), 10.f);
++	TestTrue(TEXT("rising lane over a 10 m mid-hill to a 20 m target is clear"),
++		MarchClear(Grid, FVector2D(0.f, 0.f), 1.6f, FVector2D(50.f, 0.f), 20.f, 0.3f));
++	StampHill(Grid, FVector2D(22.f, -3.f), FVector2D(28.f, 3.f), 11.f);
++	TestFalse(TEXT("an 11 m mid-hill blocks the rising lane"),
++		MarchClear(Grid, FVector2D(0.f, 0.f), 1.6f, FVector2D(50.f, 0.f), 20.f, 0.3f));
++
++	// -- bilinear SampleHeight: exact at a cell center, averaged at a corner.
++	{
++		FBattleCostGrid HGrid;
++		HGrid.InitFlat(86, 86, FVector2D::ZeroVector, 3.0f);
++		int32 CX = 0, CY = 0;
++		HGrid.WorldToCell(FVector2D(10.f, 10.f), CX, CY);
++		HGrid.CellHeight[HGrid.IndexOf(CX, CY)] = 4.f;
++		const FVector2D Center = HGrid.CellCenter(CX, CY);
++		TestEqual(TEXT("SampleHeight is exact at a cell center"), HGrid.SampleHeight(Center), 4.f, 1e-4f);
++		TestEqual(TEXT("SampleHeight fades off the hill"), HGrid.SampleHeight(Center + FVector2D(6.f, 0.f)), 0.f, 1e-4f);
++		// A corner between the 4 m cell and three flat cells averages ~1 m.
++		const FVector2D Corner = Center + FVector2D(1.5f, 1.5f);
++		TestEqual(TEXT("SampleHeight bilinear at a cell corner"), HGrid.SampleHeight(Corner), 1.f, 1e-3f);
++	}
++
++	// -- march determinism: two identical calls agree.
++	{
++		const bool A = MarchClear(Grid, FVector2D(-5.f, 2.f), 1.6f, FVector2D(45.f, -8.f), 1.2f, 0.3f);
++		const bool B = MarchClear(Grid, FVector2D(-5.f, 2.f), 1.6f, FVector2D(45.f, -8.f), 1.2f, 0.3f);
++		TestEqual(TEXT("march deterministic"), A, B);
++	}
++
++	return true;
++}
++
++#endif // WITH_DEV_AUTOMATION_TESTS
+-- 
+2.32.0.windows.2
+

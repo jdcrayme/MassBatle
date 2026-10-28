@@ -61,3 +61,12 @@ an A6-disclosed placeholder (ADR-30). No UE build was available at author
 time; every commit message carries its "MUST re-run" note per AGENTS §2
 (evidence before claim). The golden re-signs (T0.2 schema, SpawnComposition
 growth) are disclosed in `0012` per the standing re-sign policy.
+
+First-pass verification (2026-10-28, no UE machine): the series applies
+cleanly via `git am` and was CORRECTED in-branch before landing on main --
+one UHT compile blocker (`EBattleProjectileKind` needed `UENUM()`, `0011`),
+one fatal pool-test index (`0014`), doc nits (`0016`), and the authoring
+tool's whole-series tab->space expansion restored (raw diff +8,168/-5,259 ->
++2,970/-49). The `.patch` files here are the corrected-series exports.
+Details and the deferred UE-machine list:
+`Docs/phases/phase-3/kickoff-verification.md` (fixes F-K1..K6).

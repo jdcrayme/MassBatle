@@ -1,0 +1,720 @@
+From 5ba6a1b74e7d97cc89eb78c349f6a0f725c1041e Mon Sep 17 00:00:00 2001
+From: Z User <z@container>
+Date: Wed, 28 Oct 2026 18:55:16 +0000
+Subject: [PATCH 11/16] phase3: task 0 gate skeleton -- ranged fragments, CVAR
+ block, failing T3.4/T3.5 stubs
+
+- BattleTypes.h: EBattleProjectileKind (fragment-value discriminator, not a
+  composition tag) + FUnitRuntimeState fire-control fields (bFireAtWill /
+  bSkirmish / bOutOfAmmo, spec ranged-stack section 3.2)
+- BattleRangedFragments.h (new): FRangedStateFragment (Kind/RangeM/
+  InitialAmmo spawn-immutable; AmmoCount/ReloadTimer/ShotsFired sim state)
+- BattleRanged.h/.cpp (new): the Battle.Ranged.* CVAR block (13 flags,
+  Enable default 0 per B.8 item 6) + FProjectileProfile table + the volley/
+  skirmish seam DECLARATIONS with task-0 stub bodies (the Phase 2 task-0
+  pattern; the seam task replaces them, T3.3-locked)
+- BattleSpatialHash.h: ECombatHashFlags defined (RangedCapable = 1<<0, the
+  field's reserved-for-ranged bit since Phase 2); ADR-31 consumers noted in
+  the header contract (lane/impact queries join the sanctioned circle set)
+- BattleFuncTestActor.h/.cpp + MassBattleFuncTestHarness.cpp: S6_Volley +
+  SkirmishBehavior fail-by-design skeletons (T3.4/T3.5 gates; the C-6
+  lesson applied: NO perf stub, T3.6 lands as a fixture with its task)
+
+MUST re-run on the UE machine: unit tier (expect green, no behavior change:
+no processor consumes the fragment yet) + func tier (expect exactly the two
+new skeletons red, counted). Static patch: brace-balanced, include-complete;
+no engine build was available at author time.
+---
+ .../MassBattle/Private/BattleRanged.cpp       | 186 ++++++++++++++++++
+ .../Source/MassBattle/Public/BattleRanged.h   | 132 +++++++++++++
+ .../MassBattle/Public/BattleRangedFragments.h |  46 +++++
+ .../MassBattle/Public/BattleSpatialHash.h     |  18 +-
+ .../Source/MassBattle/Public/BattleTypes.h    |  22 +++
+ .../Private/BattleFuncTestActor.cpp           |  94 +++++++++
+ .../Private/MassBattleFuncTestHarness.cpp     |  47 +++++
+ .../Public/BattleFuncTestActor.h              |  38 ++++
+ 8 files changed, 579 insertions(+), 4 deletions(-)
+ create mode 100644 Plugins/MassBattle/Source/MassBattle/Private/BattleRanged.cpp
+ create mode 100644 Plugins/MassBattle/Source/MassBattle/Public/BattleRanged.h
+ create mode 100644 Plugins/MassBattle/Source/MassBattle/Public/BattleRangedFragments.h
+
+diff --git a/Plugins/MassBattle/Source/MassBattle/Private/BattleRanged.cpp b/Plugins/MassBattle/Source/MassBattle/Private/BattleRanged.cpp
+new file mode 100644
+index 0000000..a7ca5ba
+--- /dev/null
++++ b/Plugins/MassBattle/Source/MassBattle/Private/BattleRanged.cpp
+@@ -0,0 +1,186 @@
++// BattleRanged.cpp -- the Battle.Ranged.* CVAR block (spec ranged-stack
++// §4.11) + the ranged seam bodies. Task 0 ships the CVAR block live and the
++// seam functions as STUBS (the Phase 2 task-0 pattern: CI-visible gates,
++// empty math); the seam task replaces the stubs with the implementations
++// locked by T3.3. Defaults are A6 placeholders (ADR-30).
++#include "BattleRanged.h"
++#include "HAL/IConsoleManager.h"
++
++// -- Battle.Ranged.* CVAR block (spec §4.11; defaults are A6 placeholders) --
++namespace
++{
++	TAutoConsoleVariable<int32> GCRangedEnable(
++		TEXT("Battle.Ranged.Enable"),
++		0,
++		TEXT("Master ranged flag. 0 = pre-ranged behavior (byte-identical; B.8 item 6). "
++			 "Flips to default 1 when the impact-resolution task lands end-to-end."),
++		ECVF_Default);
++
++	TAutoConsoleVariable<int32> GCRangedStep(
++		TEXT("Battle.Ranged.Step"),
++		1,
++		TEXT("Projectile stepping pass (integrator + ground/TTL release + impact queries)."),
++		ECVF_Default);
++
++	TAutoConsoleVariable<int32> GCRangedFire(
++		TEXT("Battle.Ranged.Fire"),
++		1,
++		TEXT("Ranged fire pass (reload, volley selection, dispersion, ammo, skirmish)."),
++		ECVF_Default);
++
++	TAutoConsoleVariable<int32> GCRangedSkirmish(
++		TEXT("Battle.Ranged.Skirmish"),
++		1,
++		TEXT("Skirmish auto-retreat evaluation (RC7; retreat is a registry move order)."),
++		ECVF_Default);
++
++	TAutoConsoleVariable<int32> GCRangedPoolCapacity(
++		TEXT("Battle.Ranged.PoolCapacity"),
++		4096,
++		TEXT("Projectile pool capacity, reserved at battle start only. Acquire beyond "
++			 "capacity fails closed (drops metric) -- the pool never grows mid-volley (RC9)."),
++		ECVF_Default);
++
++	TAutoConsoleVariable<int32> GCRangedVolleyRanks(
++		TEXT("Battle.Ranged.VolleyRanks"),
++		2,
++		TEXT("Front ranks allowed to fire, arced profiles (flat = front rank only, fixed)."),
++		ECVF_Default);
++
++	TAutoConsoleVariable<float> GCRangedReloadInterval(
++		TEXT("Battle.Ranged.ReloadInterval"),
++		3.0f,
++		TEXT("Base reload cycle, seconds (handle-hash staggered per entity, RC1)."),
++		ECVF_Default);
++
++	TAutoConsoleVariable<float> GCRangedMinRangeM(
++		TEXT("Battle.Ranged.MinRangeM"),
++		8.0f,
++		TEXT("Minimum engagement distance, meters."),
++		ECVF_Default);
++
++	TAutoConsoleVariable<float> GCRangedFrontageClearM(
++		TEXT("Battle.Ranged.FrontageClearM"),
++		8.0f,
++		TEXT("Arced LOS check length ahead of the shooter (frontage clearance, RC3)."),
++		ECVF_Default);
++
++	TAutoConsoleVariable<int32> GCRangedFriendlyImpactTolerance(
++		TEXT("Battle.Ranged.FriendlyImpactTolerance"),
++		0,
++		TEXT("Arced hold-fire rule: friendly bodies tolerated inside the estimated "
++			 "impact zone before holding fire (A7; impacts stay team-blind regardless)."),
++		ECVF_Default);
++
++	TAutoConsoleVariable<float> GCRangedSkirmishBreakDistM(
++		TEXT("Battle.Ranged.SkirmishBreakDistM"),
++		25.0f,
++		TEXT("Auto-retreat trigger distance, meters (RC7)."),
++		ECVF_Default);
++
++	TAutoConsoleVariable<float> GCRangedSkirmishResumeFactor(
++		TEXT("Battle.Ranged.SkirmishResumeFactor"),
++		1.3f,
++		TEXT("Resume-fire distance as a factor of the break distance (hysteresis)."),
++		ECVF_Default);
++
++	TAutoConsoleVariable<int32> GCRangedSoakVolley(
++		TEXT("Battle.Ranged.SoakVolley"),
++		0,
++		TEXT("Soak volley-mix variant on the movement soak controller (nightly; "
++			 "0 = byte-identical baseline, the R-C9 pattern)."),
++		ECVF_Default);
++}
++
++namespace FRangedCVars
++{
++	bool Enable() { return GCRangedEnable.GetValueOnAnyThread() != 0; }
++	bool Step() { return GCRangedStep.GetValueOnAnyThread() != 0; }
++	bool Fire() { return GCRangedFire.GetValueOnAnyThread() != 0; }
++	bool Skirmish() { return GCRangedSkirmish.GetValueOnAnyThread() != 0; }
++	int32 PoolCapacity() { return GCRangedPoolCapacity.GetValueOnAnyThread(); }
++	int32 VolleyRanks() { return GCRangedVolleyRanks.GetValueOnAnyThread(); }
++	float ReloadInterval() { return GCRangedReloadInterval.GetValueOnAnyThread(); }
++	float MinRangeM() { return GCRangedMinRangeM.GetValueOnAnyThread(); }
++	float FrontageClearM() { return GCRangedFrontageClearM.GetValueOnAnyThread(); }
++	int32 FriendlyImpactTolerance() { return GCRangedFriendlyImpactTolerance.GetValueOnAnyThread(); }
++	float SkirmishBreakDistM() { return GCRangedSkirmishBreakDistM.GetValueOnAnyThread(); }
++	float SkirmishResumeFactor() { return GCRangedSkirmishResumeFactor.GetValueOnAnyThread(); }
++	bool SoakVolley() { return GCRangedSoakVolley.GetValueOnAnyThread() != 0; }
++}
++
++FProjectileProfile GetProjectileProfile(EBattleProjectileKind Kind)
++{
++	FProjectileProfile P;
++	switch (Kind)
++	{
++	case EBattleProjectileKind::Arrow:
++		P.MuzzleSpeedMps = 35.f;
++		P.GravityScale = 1.f;
++		P.bIndirect = true;
++		P.DispersionDeg = 4.f;
++		P.HitRadiusM = 0.5f;
++		P.bArmorPiercing = false;
++		break;
++	case EBattleProjectileKind::Bolt:
++		P.MuzzleSpeedMps = 60.f;
++		P.GravityScale = 1.f;
++		P.bIndirect = false;
++		P.DispersionDeg = 2.f;
++		P.HitRadiusM = 0.5f;
++		P.bArmorPiercing = true;
++		break;
++	default:
++		P.MuzzleSpeedMps = 0.f;
++		P.bIndirect = false;
++		break;
++	}
++	return P;
++}
++
++// -- Seam stubs (task 0; replaced by the seam task, T3.3-locked) --
++
++int32 SelectVolleyShots(
++	TArray<FVolleyShooterView>& InOutShooters,
++	const FVolleyTargetView& Target,
++	const FProjectileProfile& Profile,
++	const FBattleCostGrid& Grid,
++	const TArray<FVector2D>& FriendlyLaneBlockersM,
++	float AccuracyMult,
++	int32 FriendlyImpactTolerance,
++	TArray<FVolleyShot>& OutShots)
++{
++	// STUB: the volley task implements eligibility + solving + dispersion.
++	(void)InOutShooters;
++	(void)Target;
++	(void)Profile;
++	(void)Grid;
++	(void)FriendlyLaneBlockersM;
++	(void)AccuracyMult;
++	(void)FriendlyImpactTolerance;
++	(void)OutShots;
++	return 0;
++}
++
++float ComputeAmmoFraction(int32 AmmoSum, int32 InitialAmmo, int32 RosterSize)
++{
++	if (InitialAmmo <= 0 || RosterSize <= 0)
++	{
++		return -1.f; // non-ranged unit (RC5)
++	}
++	return static_cast<float>(AmmoSum) / (static_cast<float>(InitialAmmo) * static_cast<float>(RosterSize));
++}
++
++ESkirmishDecision EvaluateSkirmish(
++	float NearestEnemyDistM, bool bReloadReady, bool bFireAtWill,
++	bool bRetreating, float BreakDistM, float ResumeDistM)
++{
++	// STUB: the skirmish task implements the hysteresis decision (RC7).
++	(void)NearestEnemyDistM;
++	(void)bReloadReady;
++	(void)bFireAtWill;
++	(void)bRetreating;
++	(void)BreakDistM;
++	(void)ResumeDistM;
++	return ESkirmishDecision::Hold;
++}
+diff --git a/Plugins/MassBattle/Source/MassBattle/Public/BattleRanged.h b/Plugins/MassBattle/Source/MassBattle/Public/BattleRanged.h
+new file mode 100644
+index 0000000..34f3a30
+--- /dev/null
++++ b/Plugins/MassBattle/Source/MassBattle/Public/BattleRanged.h
+@@ -0,0 +1,132 @@
++// BattleRanged.h -- Phase 3 ranged seam (spec ranged-stack §4.4-§4.8, §4.11;
++// brief A1): weapon profiles, rank-limited volley selection, ammo accounting,
++// and the skirmish decision -- free functions / plain structs, meters,
++// deterministic, seed-derived RNG only (the A13 discipline: hash-family
++// inputs, never streams, never wall-clock, never GFrameCounter).
++//
++// Task 0 ships this header + the CVAR block with STUB bodies (the Phase 2
++// task-0 pattern); the volley/skirmish implementations land with the seam
++// task and are unit-locked by T3.3. Ballistic solving and LOS live in their
++// own seam (BattleBallistics.h) -- this seam CONSUMES solutions, it never
++// integrates them.
++//
++// A6 posture (ADR-30): the profile constants below are T3.1-golden-locked
++// placeholders honoring the community model's structure; the Phase-6 T6.1
++// audit swaps ported constants with diff review, never silently.
++#pragma once
++
++#include "CoreMinimal.h"
++#include "Mass/EntityHandle.h"
++#include "BattleTypes.h"
++#include "BattleCostGrid.h"
++
++/** CVAR block accessors (definitions + defaults in BattleRanged.cpp; the
++ *  FCombatCVars pattern). Game-thread processors are the only runtime
++ *  consumers; accessors read GetValueOnAnyThread() per the worker-read
++ *  contract (engine-api Part B, the audit A-1 verification note). */
++namespace FRangedCVars
++{
++	MASSBATTLE_API bool Enable();                    // Battle.Ranged.Enable (0 until impact lands, B.8 item 6)
++	MASSBATTLE_API bool Step();                      // Battle.Ranged.Step
++	MASSBATTLE_API bool Fire();                      // Battle.Ranged.Fire
++	MASSBATTLE_API bool Skirmish();                  // Battle.Ranged.Skirmish
++	MASSBATTLE_API int32 PoolCapacity();             // Battle.Ranged.PoolCapacity
++	MASSBATTLE_API int32 VolleyRanks();              // Battle.Ranged.VolleyRanks (arced; flat = 1 fixed)
++	MASSBATTLE_API float ReloadInterval();           // Battle.Ranged.ReloadInterval
++	MASSBATTLE_API float MinRangeM();                // Battle.Ranged.MinRangeM
++	MASSBATTLE_API float FrontageClearM();           // Battle.Ranged.FrontageClearM
++	MASSBATTLE_API int32 FriendlyImpactTolerance();  // Battle.Ranged.FriendlyImpactTolerance
++	MASSBATTLE_API float SkirmishBreakDistM();       // Battle.Ranged.SkirmishBreakDistM
++	MASSBATTLE_API float SkirmishResumeFactor();     // Battle.Ranged.SkirmishResumeFactor
++	MASSBATTLE_API bool SoakVolley();                // Battle.Ranged.SoakVolley (nightly variant; 0 = baseline identity)
++}
++
++/** Weapon profile per projectile kind (spec §4.2). Constants are A6
++ *  placeholders golden-locked at T3.1 (ADR-30): speeds make the bolt's solved
++ *  path near-flat (ONE solver, spec §4.1); the trajectory CLASS is the fire
++ *  rule (bIndirect), never a second integrator (RC2). */
++struct MASSBATTLE_API FProjectileProfile
++{
++	float MuzzleSpeedMps = 35.f;  // Arrow 35, Bolt 60 (placeholders)
++	float GravityScale = 1.f;
++	bool bIndirect = true;        // arced: frontage-clearance LOS only (fires over friends)
++	float DispersionDeg = 4.f;    // cone half-angle at AccuracyMult 1 (Arrow 4, Bolt 2)
++	float HitRadiusM = 0.5f;      // swept-segment impact radius
++	bool bArmorPiercing = false;  // Bolt true (M2TW crossbow feel, placeholder)
++};
++
++/** The profile table (one row per EBattleProjectileKind != None). */
++MASSBATTLE_API FProjectileProfile GetProjectileProfile(EBattleProjectileKind Kind);
++
++/** Volley pass input: one ranged entity's fire-relevant view (spec §4.4).
++ *  Plain mirror assembled by the processor in roster order -- the seam never
++ *  touches fragments or worlds. */
++struct FVolleyShooterView
++{
++	FMassEntityHandle Entity;
++	FUnitHandle Unit;
++	FVector2D PosM = FVector2D::ZeroVector;   // planar position, meters
++	float EyeZM = 1.6f;                       // launch height, meters
++	EBattleProjectileKind Kind = EBattleProjectileKind::None;
++	int16 Ammo = 0;
++	float ReloadTimer = 0.f;
++	uint16 ShotsFired = 0;
++	int32 Rank = 0;                           // 0 = front rank
++};
++
++/** Volley pass target view (the intent/record enemy, spec §4.4 + brief A11). */
++struct FVolleyTargetView
++{
++	FVector2D PosM = FVector2D::ZeroVector;
++	float ZM = 0.f;
++	FUnitHandle Unit;
++};
++
++/** One emitted shot (the pool write payload). LaunchDir is a unit vector
++ *  (X/Y horizontal, Z up); Seed is the deterministic dispersion/roll seed
++ *  (hash of entity identity + ShotsFired, computed by the caller so the
++ *  pool entry stays plain data). */
++struct FVolleyShot
++{
++	FMassEntityHandle Entity;
++	FUnitHandle Unit;
++	EBattleProjectileKind Kind = EBattleProjectileKind::Arrow;
++	FVector LaunchPosM = FVector::ZeroVector;
++	FVector LaunchDir = FVector::ForwardVector;
++	float FlightTimeS = 0.f;
++	uint32 Seed = 0;
++};
++
++/** Rank-limited volley selection (spec §4.4, RC1/RC4). Eligibility per
++ *  shooter: reload elapsed, ammo > 0, rank within the profile limit
++ *  (VolleyRanks cvar arced / front rank flat), distance in (MinRangeM,
++ *  RangeM], LOS pass, friendly-rule pass. Passing shooters mutate in place
++ *  (ammo--, reload reset, shots++) and append a solved+dispersed shot to
++ *  OutShots (preallocated by the caller; never grown per entity). Returns
++ *  the shot count. Emission order = shooter array order (deterministic).
++ *
++ *  FriendlyLaneBlockersM: friendly body positions for the flat-lane rule
++ *  (A7); the arced impact-zone estimate uses the same list around Target.
++ *  STUB until the seam task: returns 0, mutates nothing. */
++MASSBATTLE_API int32 SelectVolleyShots(
++	TArray<FVolleyShooterView>& InOutShooters,
++	const FVolleyTargetView& Target,
++	const FProjectileProfile& Profile,
++	const FBattleCostGrid& Grid,
++	const TArray<FVector2D>& FriendlyLaneBlockersM,
++	float AccuracyMult,
++	int32 FriendlyImpactTolerance,
++	TArray<FVolleyShot>& OutShots);
++
++/** Unit ammo fraction for the registry aggregate (RC5): AmmoSum over
++ *  (InitialAmmo * RosterSize); -1 for non-ranged (InitialAmmo == 0). */
++MASSBATTLE_API float ComputeAmmoFraction(int32 AmmoSum, int32 InitialAmmo, int32 RosterSize);
++
++/** Skirmish decision (spec §4.8, RC7). Hysteresis: Fire requires
++ *  NearestEnemyDistM > BreakDistM (or bRetreating and > ResumeDistM);
++ *  Retreat inside BreakDistM. FireAtWill gates Fire only -- Retreat still
++ *  fires (hold-fire is not hold-ground). STUB until the seam task: Hold. */
++enum class ESkirmishDecision : uint8 { Hold = 0, Fire = 1, Retreat = 2 };
++MASSBATTLE_API ESkirmishDecision EvaluateSkirmish(
++	float NearestEnemyDistM, bool bReloadReady, bool bFireAtWill,
++	bool bRetreating, float BreakDistM, float ResumeDistM);
+diff --git a/Plugins/MassBattle/Source/MassBattle/Public/BattleRangedFragments.h b/Plugins/MassBattle/Source/MassBattle/Public/BattleRangedFragments.h
+new file mode 100644
+index 0000000..8d3e8f4
+--- /dev/null
++++ b/Plugins/MassBattle/Source/MassBattle/Public/BattleRangedFragments.h
+@@ -0,0 +1,46 @@
++// BattleRangedFragments.h -- Phase 3 ranged data spine (spec ranged-stack
++// §3.1, brief task 0). Blittable rules per arch §3.1: enums, fixed scalars
++// -- no FString / UObject* / TArray. The fragment rides RANGED-CAPABLE
++// compositions only (arch §3.2: "a spearman has no ranged fragments, so the
++// ranged-fire processor never touches his chunks"); the archetype count grows
++// by the bow-capable compositions (6 -> 8 expected, SpawnComposition
++// re-signed -- spec §3.1). Unit conventions: fragment fields carry METERS
++// where marked (seam convention) -- the fire pass is a seam consumer and
++// converts once at the pool boundary, never per query.
++#pragma once
++
++#include "CoreMinimal.h"
++#include "Mass/EntityElementTypes.h"
++#include "Mass/EntityHandle.h"
++#include "BattleTypes.h"
++#include "BattleRangedFragments.generated.h"
++
++/** Per-entity ranged state (spec ranged-stack §3.1; the architecture's
++ *  FRangedStateFragment slot finally filled). Kind/RangeM/InitialAmmo are
++ *  spawn-immutable (stamped from the EDU row at the spawn fixup); the rest
++ *  is sim state and a state-hash term (spec §3.4). */
++USTRUCT()
++struct FRangedStateFragment : public FMassFragment
++{
++	GENERATED_BODY()
++
++	// -- spawn-immutable (excluded from the state hash: base-stats
++	//    precedent; mutation would be a spawn-path bug, not sim drift) --
++	UPROPERTY() EBattleProjectileKind Kind = EBattleProjectileKind::None;
++	/** Weapon range, meters (EDU stat_pri range value). */
++	UPROPERTY() float RangeM = 0.f;
++	/** Ammo per man at spawn (EDU stat_pri ammo value). */
++	UPROPERTY() uint16 InitialAmmo = 0;
++
++	// -- sim state (state-hash terms, spec §3.4) --
++	/** Rounds remaining; decremented exactly once per emitted shot (RC5);
++	 *  clamped at 0 (a decrement below zero is a loud bug, never silent). */
++	UPROPERTY() int16 AmmoCount = 0;
++	/** Seconds until the entity is eligible to fire again; handle-hash
++	 *  staggered at spawn so volleys never serialize (RC1, ADR-05
++	 *  discipline -- StaggeredPhaseOffset's family). */
++	UPROPERTY() float ReloadTimer = 0.f;
++	/** Lifetime shots fired (T3.3 accounting input + the deterministic
++	 *  roll/dispersion seed's run-invariant count -- A13). */
++	UPROPERTY() uint16 ShotsFired = 0;
++};
+diff --git a/Plugins/MassBattle/Source/MassBattle/Public/BattleSpatialHash.h b/Plugins/MassBattle/Source/MassBattle/Public/BattleSpatialHash.h
+index 5fde934..f583808 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Public/BattleSpatialHash.h
++++ b/Plugins/MassBattle/Source/MassBattle/Public/BattleSpatialHash.h
+@@ -2,9 +2,10 @@
+ // arch §7.1; task 5). Game-thread rebuild each tick from end-of-last-tick
+ // transforms via a two-pass counting sort into preallocated arrays (EC9: zero
+ // per-tick allocation in the steady fight -- arrays grow at battle start
+-// only). QueryCircle serves COVERAGE and MOB TARGETING only -- formed-fight
+-// targeting reads defender slot tables (data, not proximity; arch §7.1):
+-// lanes never do circle queries.
++// only). QueryCircle serves COVERAGE, MOB TARGETING, and (Phase 3, ADR-31)
++// PROJECTILE lane/impact queries -- formed-fight targeting reads defender
++// slot tables (data, not proximity; arch §7.1): lanes never do circle
++// queries.
+ #pragma once
+ 
+ #include "CoreMinimal.h"
+@@ -13,12 +14,21 @@
+ #include "BattleTypes.h"
+ #include "BattleSpatialHash.generated.h"
+ 
++/** Hash-entry flag bits (spec ranged-stack §3.3). Phase 3 defines the first
++ *  bit (the field was "reserved for ranged/LOD" since Phase 2); LOD bands
++ *  extend this set in Phase 5. */
++enum class ECombatHashFlags : uint8
++{
++	None = 0,
++	RangedCapable = 1 << 0   /**< Loadout-stamped: ranged-capable entity (targeting priority + impact debug). */
++};
++
+ /** One hash entry (spec §3.3): packed, blittable, sorted by cell. */
+ struct FBattleHashEntry
+ {
+ 	FMassEntityHandle Entity;
+ 	FUnitHandle Unit;
+-	/** ECombatHashFlags bits (currently none; reserved for ranged/LOD). */
++	/** ECombatHashFlags bits. */
+ 	uint8 Flags = 0;
+ 	/** Body radius, centimeters (fact 1.9: 40 cm infantry). */
+ 	uint8 RadiusCm = 40;
+diff --git a/Plugins/MassBattle/Source/MassBattle/Public/BattleTypes.h b/Plugins/MassBattle/Source/MassBattle/Public/BattleTypes.h
+index 47c5b53..323544b 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Public/BattleTypes.h
++++ b/Plugins/MassBattle/Source/MassBattle/Public/BattleTypes.h
+@@ -43,6 +43,18 @@ enum class EBattleWeaponReach : uint8
+ 	Pike = 4
+ };
+ 
++/** Projectile class (spec ranged-stack §3.1): the ranged discriminator is a
++ *  fragment VALUE, not a composition tag -- bow and crossbow units share one
++ *  ranged-capable composition (archetype discipline, spec §3.1); the profile
++ *  table (BattleRanged.h) keys speed/dispersion/AP posture off this enum. */
++UENUM(BlueprintType)
++enum class EBattleProjectileKind : uint8
++{
++	None = 0,
++	Arrow = 1,   // arced: indirect-capable, fires over a friendly frontage
++	Bolt = 2     // flat: high-speed solution, lane-gated (spec §4.2)
++};
++
+ /** Plain-struct mirror of the closed GAS attribute set (arch §10.1). Cached in
+  *  the registry; UnitSync derives the shared-fragment multipliers from it. */
+ struct MASSBATTLE_API FBattleAttributeSnapshot
+@@ -119,6 +131,16 @@ struct FUnitRuntimeState
+ 	// inputs), rebuilt by the 4 Hz cluster pass. Game thread only.
+ 	int32 EngagedCount = 0;
+ 	int32 ChargingCount = 0; // written by the charge processor (task 7)
++
++	// Phase 3 (spec ranged-stack §3.2): unit-level fire-control toggles + the
++	// out-of-ammo aggregate flip. bFireAtWill defaults on; bSkirmish defaults on
++	// for class-missile rows at spawn (A8); bOutOfAmmo flips exactly once when
++	// the entity ammo sum hits zero (RC5, A14) and never un-flips (no resupply
++	// v1). Registry APIs land with the Phase 3 data-spine task; the fields are
++	// plain struct state so the save round-trip captures them verbatim.
++	bool bFireAtWill = true;
++	bool bSkirmish = false;
++	bool bOutOfAmmo = false;
+ };
+ 
+ /** Spawn request: one parsed EDU row + roster size. Formation params seed the
+diff --git a/Plugins/MassBattle/Source/MassBattleTest/Private/BattleFuncTestActor.cpp b/Plugins/MassBattle/Source/MassBattleTest/Private/BattleFuncTestActor.cpp
+index dabf7fe..54fd4cc 100644
+--- a/Plugins/MassBattle/Source/MassBattleTest/Private/BattleFuncTestActor.cpp
++++ b/Plugins/MassBattle/Source/MassBattleTest/Private/BattleFuncTestActor.cpp
+@@ -5763,3 +5763,97 @@ namespace
+ 	}
+ 	const FBattleFuncTestRegistry::FRegistrar GRegDetTwoRun(TEXT("ADeterminismTwoRunTest"), &MakeDeterminismTwoRunTest);
+ }
++
++// ---------------------------------------------------------------------------
++// Phase 3 task 0: T3.4/T3.5 gate skeletons (fail-by-design until the ranged
++// pipeline tasks land). The implementing task replaces these bodies with the
++// real scenario machines (spec ranged-stack section 5).
++// ---------------------------------------------------------------------------
++
++AS6VolleyTest::AS6VolleyTest()
++{
++	TimeLimit = 180.f;
++	TimesUpResult = EFunctionalTestResult::Error;
++}
++
++void AS6VolleyTest::BeginTest()
++{
++	SetActorTickEnabled(true);
++	PrimaryActorTick.bCanEverTick = true;
++	bIsRunning = true;
++	Result = EFunctionalTestResult::Running;
++}
++
++void AS6VolleyTest::CompleteTest(EFunctionalTestResult TestResult, const FString& Message)
++{
++	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S6_Volley %s %s"),
++		TestResult == EFunctionalTestResult::Succeeded ? TEXT("PASS") : TEXT("FAIL"), *Message);
++	Result = TestResult;
++	bIsRunning = false;
++	SetActorTickEnabled(false);
++}
++
++void AS6VolleyTest::StartTest()
++{
++	// SKELETON: the S6 scenario (dispersion, LOS, friendly-fire, ammo
++	// accounting in one scenario) lands with the Phase 3 scenario task.
++	CompleteTest(EFunctionalTestResult::Error,
++		TEXT("skeleton: S6_Volley lands with the phase-3 scenario task (T3.4)"));
++}
++
++void AS6VolleyTest::Tick(float DeltaSeconds)
++{
++	// Nothing to step while the skeleton stands.
++}
++
++ASkirmishBehaviorTest::ASkirmishBehaviorTest()
++{
++	TimeLimit = 180.f;
++	TimesUpResult = EFunctionalTestResult::Error;
++}
++
++void ASkirmishBehaviorTest::BeginTest()
++{
++	SetActorTickEnabled(true);
++	PrimaryActorTick.bCanEverTick = true;
++	bIsRunning = true;
++	Result = EFunctionalTestResult::Running;
++}
++
++void ASkirmishBehaviorTest::CompleteTest(EFunctionalTestResult TestResult, const FString& Message)
++{
++	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SkirmishBehavior %s %s"),
++		TestResult == EFunctionalTestResult::Succeeded ? TEXT("PASS") : TEXT("FAIL"), *Message);
++	Result = TestResult;
++	bIsRunning = false;
++	SetActorTickEnabled(false);
++}
++
++void ASkirmishBehaviorTest::StartTest()
++{
++	// SKELETON: the skirmish scenario (break/resume/hysteresis, hold-fire
++	// still retreats, player-order override) lands with the Phase 3 scenario
++	// task.
++	CompleteTest(EFunctionalTestResult::Error,
++		TEXT("skeleton: SkirmishBehavior lands with the phase-3 scenario task (T3.5)"));
++}
++
++void ASkirmishBehaviorTest::Tick(float DeltaSeconds)
++{
++	// Nothing to step while the skeleton stands.
++}
++
++namespace
++{
++	AFunctionalTest* MakeS6VolleyTest(UWorld* World)
++	{
++		return World->SpawnActor<AS6VolleyTest>();
++	}
++	const FBattleFuncTestRegistry::FRegistrar GRegS6Volley(TEXT("AS6VolleyTest"), &MakeS6VolleyTest);
++
++	AFunctionalTest* MakeSkirmishBehaviorTest(UWorld* World)
++	{
++		return World->SpawnActor<ASkirmishBehaviorTest>();
++	}
++	const FBattleFuncTestRegistry::FRegistrar GRegSkirmishBehavior(TEXT("ASkirmishBehaviorTest"), &MakeSkirmishBehaviorTest);
++}
+diff --git a/Plugins/MassBattle/Source/MassBattleTest/Private/MassBattleFuncTestHarness.cpp b/Plugins/MassBattle/Source/MassBattleTest/Private/MassBattleFuncTestHarness.cpp
+index db8cead..d9e85a6 100644
+--- a/Plugins/MassBattle/Source/MassBattleTest/Private/MassBattleFuncTestHarness.cpp
++++ b/Plugins/MassBattle/Source/MassBattleTest/Private/MassBattleFuncTestHarness.cpp
+@@ -287,6 +287,14 @@ namespace
+ 				{
+ 					Det->BeginTest();
+ 				}
++				else if (AS6VolleyTest* Volley = Cast<AS6VolleyTest>(TestActor))
++				{
++					Volley->BeginTest();
++				}
++				else if (ASkirmishBehaviorTest* Skirm = Cast<ASkirmishBehaviorTest>(TestActor))
++				{
++					Skirm->BeginTest();
++				}
+ 				// T0.9: apply + assert the test-mode contract at scenario start
+ 				// (roadmap B.0: assert ACTIVE engine settings, not CVars being
+ 				// set; the -game process does not seed the contract on its own).
+@@ -733,4 +741,43 @@ bool FDeterminismTwoRun::RunTest(const FString& Parameters)
+ 	return true;
+ }
+ 
++// ---------------------------------------------------------------------------
++// Phase 3 task 0: T3.4/T3.5 gate skeletons (fail-by-design until the ranged
++// pipeline tasks land; counted + listed in the phase-3 progress log).
++// ---------------------------------------------------------------------------
++
++IMPLEMENT_CUSTOM_COMPLEX_AUTOMATION_TEST(FS6Volley, FBattleFuncTestBase,
++	"Battle.Func.S6_Volley", (EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter))
++
++void FS6Volley::GetTests(TArray<FString>& OutBeautifiedNames, TArray<FString>& OutTestCommands) const
++{
++	OutBeautifiedNames.Add(TEXT("S6_Volley"));
++	OutTestCommands.Add(TEXT(""));
++}
++
++bool FS6Volley::RunTest(const FString& Parameters)
++{
++	IFunctionalTestingModule::Get().MarkPendingActivation();
++	ADD_LATENT_AUTOMATION_COMMAND(FOpenBattleFuncMap(this));
++	ADD_LATENT_AUTOMATION_COMMAND(FRunBattleFuncTest(this, TEXT("S6_Volley"), TEXT("AS6VolleyTest")));
++	return true;
++}
++
++IMPLEMENT_CUSTOM_COMPLEX_AUTOMATION_TEST(FSkirmishBehavior, FBattleFuncTestBase,
++	"Battle.Func.SkirmishBehavior", (EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter))
++
++void FSkirmishBehavior::GetTests(TArray<FString>& OutBeautifiedNames, TArray<FString>& OutTestCommands) const
++{
++	OutBeautifiedNames.Add(TEXT("SkirmishBehavior"));
++	OutTestCommands.Add(TEXT(""));
++}
++
++bool FSkirmishBehavior::RunTest(const FString& Parameters)
++{
++	IFunctionalTestingModule::Get().MarkPendingActivation();
++	ADD_LATENT_AUTOMATION_COMMAND(FOpenBattleFuncMap(this));
++	ADD_LATENT_AUTOMATION_COMMAND(FRunBattleFuncTest(this, TEXT("SkirmishBehavior"), TEXT("ASkirmishBehaviorTest")));
++	return true;
++}
++
+ #endif // WITH_DEV_AUTOMATION_TESTS
+diff --git a/Plugins/MassBattle/Source/MassBattleTest/Public/BattleFuncTestActor.h b/Plugins/MassBattle/Source/MassBattleTest/Public/BattleFuncTestActor.h
+index cfeb982..5a48c7d 100644
+--- a/Plugins/MassBattle/Source/MassBattleTest/Public/BattleFuncTestActor.h
++++ b/Plugins/MassBattle/Source/MassBattleTest/Public/BattleFuncTestActor.h
+@@ -635,6 +635,44 @@ private:
+ 	void RestoreCvars();
+ };
+ 
++// ---------------------------------------------------------------------------
++// Phase 3 task 0: T3.4/T3.5 gate SKELETONS (fail-by-design until the ranged
++// pipeline tasks land; counted + listed in the phase-3 progress log -- the
++// Phase 2 task-0 pattern, with the audit's C-6 lesson applied: no perf stub
++// ships, T3.6 lands as a fixture + measured metrics with its task). The
++// implementing tasks replace these actors with the real scenario machines
++// (spec ranged-stack section 5).
++// ---------------------------------------------------------------------------
++UCLASS()
++class MASSBATTLETEST_API AS6VolleyTest : public AFunctionalTest
++{
++	GENERATED_BODY()
++
++public:
++	AS6VolleyTest();
++
++	void BeginTest();
++	void CompleteTest(EFunctionalTestResult TestResult, const FString& Message);
++	virtual void StartTest() override;
++	virtual void Tick(float DeltaSeconds) override;
++	virtual bool IsReady_Implementation() override { return true; }
++};
++
++UCLASS()
++class MASSBATTLETEST_API ASkirmishBehaviorTest : public AFunctionalTest
++{
++	GENERATED_BODY()
++
++public:
++	ASkirmishBehaviorTest();
++
++	void BeginTest();
++	void CompleteTest(EFunctionalTestResult TestResult, const FString& Message);
++	virtual void StartTest() override;
++	virtual void Tick(float DeltaSeconds) override;
++	virtual bool IsReady_Implementation() override { return true; }
++};
++
+ // ---------------------------------------------------------------------------
+ // S-scenario actor factory registry -- deterministic, reflection-free class
+ // lookup for the automation harness (FindObject with /Script/ paths and
+-- 
+2.32.0.windows.2
+

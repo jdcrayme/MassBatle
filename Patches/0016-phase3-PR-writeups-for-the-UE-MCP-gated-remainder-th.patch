@@ -1,0 +1,280 @@
+From 9be490da8246036ac40c803bc92698e09960af07 Mon Sep 17 00:00:00 2001
+From: Z User <z@container>
+Date: Wed, 28 Oct 2026 19:13:40 +0000
+Subject: [PATCH 16/16] phase3: PR writeups for the UE/MCP-gated remainder +
+ the Patches map
+
+- PRs/PR-6: RangedFire + ProjectileStep processors (the pipeline; impact
+  resolution through the melee machinery, registry toggle/out-of-ammo
+  surface, ExecBridge fixtures; full tier cycle)
+- PRs/PR-7: S6_Volley + SkirmishBehavior scenario bodies (replace the
+  0011 skeletons; blocks on PR-6)
+- PRs/PR-8: M4 arrow-volley visualization (ISM asset via MCP, PIE; the
+  Phase-5 Niagara batching is the destination, this is the interim seam)
+- PRs/PR-9: T3.6 perf evidence + the SoakVolley nightly variant +
+  reference-machine baselines (owner-gated promotion)
+- Patches/README.md: the phase-3 kickoff series table (0010..0016) + the
+  verification-status posture
+
+Docs-only commit: no code paths touched, nothing to re-run.
+---
+ .../PR-6-ranged-fire-and-step-processors.md   | 38 +++++++++++++
+ Patches/PRs/PR-7-s6-and-skirmish-scenarios.md | 36 ++++++++++++
+ .../PRs/PR-8-m4-arrow-demo-visualization.md   | 34 +++++++++++
+ ...R-9-ranged-perf-gate-and-soak-baselines.md | 34 +++++++++++
+ Patches/README.md                             | 57 ++++++++++++++-----
+ 5 files changed, 185 insertions(+), 14 deletions(-)
+ create mode 100644 Patches/PRs/PR-6-ranged-fire-and-step-processors.md
+ create mode 100644 Patches/PRs/PR-7-s6-and-skirmish-scenarios.md
+ create mode 100644 Patches/PRs/PR-8-m4-arrow-demo-visualization.md
+ create mode 100644 Patches/PRs/PR-9-ranged-perf-gate-and-soak-baselines.md
+
+diff --git a/Patches/PRs/PR-6-ranged-fire-and-step-processors.md b/Patches/PRs/PR-6-ranged-fire-and-step-processors.md
+new file mode 100644
+index 0000000..47b9d54
+--- /dev/null
++++ b/Patches/PRs/PR-6-ranged-fire-and-step-processors.md
+@@ -0,0 +1,38 @@
++# PR-6: Ranged fire + projectile stepping processors (the Phase 3 pipeline)
++
++| | |
++|---|---|
++| **Finds** | Phase-3 brief Tasks 3-5 (spec ranged-stack sections 4.9-4.10): the seams, fragments, pool, hash terms, and gates all exist (kickoff patches `0011`-`0015`); the PROCESSORS that consume them do not |
++| **Blocks on** | UE build + full unit/func tier cycle on the reference machine (processor registration, command-buffer defer paths, GAS attribute writes all need runtime evidence) |
++| **Owner** | ADR-28 ratification (the game-thread deviation from arch section 4 row 9's worker label) when the architecture log is reconciled |
++
++## Motivation
++
++Everything Phase 3 needs is staged: `FRangedStateFragment` is spawn-stamped, `FBattleProjectilePool` lives in `UBattleProjectileSubsystem`, `SelectVolleyShots`/`EvaluateSkirmish` are T3.3-locked, the state hash covers ammo + pool, and the two S-scenario skeletons fail by design. What is missing is the runtime: two game-thread processors (fire + step), the impact resolution through the melee machinery (RC6), the registry toggle/out-of-ammo surface, and the ExecBridge fixtures that make it all observable. None of that can be evidenced without the UE machine.
++
++## Proposed change
++
++1. `ProjectileStepProcessor` (game-thread, FIRST in the `Battle` group, `Battle.Ranged.Step`): integrator loop over live pool entries (the `StepProjectile` seam), TTL/ground-hit release (`SampleHeight`), impact STUB first (log-only), then the real swept-segment query (midpoint circle + height early-out, R-R2). Kills defer `FDeadTag` through the command buffer -- the F2 death path, never a new damage queue.
++2. `RangedFireProcessor` (game-thread, after `AssignPairs`, `Battle.Ranged.Fire`): roster-ordered shooter-view gather, `SelectVolleyShots`, pool writes, reload advance, out-of-ammo aggregate + the one-shot `bOutOfAmmo` flip + the `AmmoPool` GAS mirror (A14), skirmish evaluation on the 4 Hz cluster geometry with the self-issued retreat move (A8).
++3. Registry: `SetUnitFireToggles` / `GetUnitFireToggles` / `GetUnitAmmoFraction` (the fields + spawn default already shipped in `0012`); bad-handle `EXEC_RESULT` rejects per the A11 pattern.
++4. `BuildSpatialHashProcessor`: the `ECombatHashFlags::RangedCapable` stamp (one line; the enum shipped in `0011`).
++5. ExecBridge: `Battle.Ranged.Toggle`, `Battle.Ranged.Dump`, `Battle.Ranged.SpawnVolley {line|skirmish}` (dictionary-keyed, the B-3 lesson), `Battle.Ranged.PerfStress` (the T3.6 fixture, PR-9 consumes it).
++6. `Battle.Ranged.Enable` -> default 1 when the impact task lands end-to-end (B.8 item 6; the flags-off identity is asserted before the flip).
++
++## Files
++
++- New: `Plugins/MassBattle/Source/MassBattle/Public|Private/{RangedFireProcessor,ProjectileStepProcessor}.h|.cpp`
++- Edit: `BattleRegistry.h/.cpp` (toggle surface + ammo fraction), `BattleExecCommands.cpp` (four commands), `BuildSpatialHashProcessor.cpp` (stamp), `BattleDebugSubsystem.h/.cpp` (Shots/Holds/Hits/FriendlyHits/Drops/InFlightPeak/FireMs/StepMs metrics + trajectory/impact overlay rows), `BattleMovementSoakController.cpp` (the SoakVolley variant, PR-9)
++- Reset path: `ResetBattleState` clears the pool (`ResetForBattle`) + toggles
++
++## Evidence to gather on the UE machine
++
++- Unit tier green (the kickoff suites + extended `SaveRoundTrip` v2 once the toggles persist); func tier green EXCEPT the two skeletons until PR-7
++- `Battle.Ranged.SpawnVolley line` -> `EXEC_RESULT` chain: eligibility -> shots -> pool entries -> decrements -> impacts -> `RosterDeath` (the ChargeMechanics kill-chain precedent)
++- Hold-fire + friendly-lane holds observable via `Battle.Ranged.Dump` (Holds metric by rule)
++- Flags-off identity: the unchanged T1.8/T2 soaks with `Battle.Ranged.Enable=0`
++- Archetype count stable (8 expected) across all spawn paths
++
++## Rollback
++
++`Battle.Ranged.Enable=0` restores byte-identical pre-ranged behavior (the step processor early-outs on live-count 0; the fire processor gates on the flag). Every subsystem addition is additive.
+diff --git a/Patches/PRs/PR-7-s6-and-skirmish-scenarios.md b/Patches/PRs/PR-7-s6-and-skirmish-scenarios.md
+new file mode 100644
+index 0000000..fcd3e02
+--- /dev/null
++++ b/Patches/PRs/PR-7-s6-and-skirmish-scenarios.md
+@@ -0,0 +1,36 @@
++# PR-7: S6_Volley + SkirmishBehavior scenario actors (replace the skeletons)
++
++| | |
++|---|---|
++| **Finds** | Phase-3 brief Task 6: the T3.4/T3.5 gates are registered as fail-by-design skeletons (kickoff patch `0011`); the real scenario machines need the PR-6 pipeline |
++| **Blocks on** | PR-6 landed and green; the func tier deliberately runs RED on the two skeletons until this PR replaces them |
++| **Owner** | None (pure code + the existing harness; no editor work) |
++
++## Motivation
++
++S6 is the Phase 3 exit criterion: dispersion, LOS, friendly-fire rules, and ammo accounting asserted in ONE scenario (roadmap B.3), plus the skirmish behaviors (T3.5). The skeleton actors, the harness registrations, the factory entries, and the cast branches all shipped in `0011` -- only the scenario bodies (spawn -> order -> sample -> assert phase machines) are missing, and they cannot be written against a pipeline that does not run yet.
++
++## Proposed change
++
++1. `AS6VolleyTest` body (replace `StartTest`/`Tick`): one archer unit vs one formed infantry unit at 100 m, flat ground, seeded; phase machine over fixed ticks:
++   - dispersion: gather impact markers (the debug-subsystem records), assert the spread stays inside the profile cone bound projected at the target range;
++   - LOS: the scripted hill variant (a `StampHill`-shaped fixture through the mutable cost grid) holds the flat-profile fire while the arced profile fires (the RC2/RC3 demonstrable pair);
++   - friendly-fire: walk a friendly unit into the lane (holds) + a scripted stray-hit case (impact-point damage on a friendly);
++   - ammo: decrements == shots (the `Battle.Ranged.Dump` probe), the aggregate reaches zero, `bOutOfAmmo` flips exactly once.
++2. `ASkirmishBehaviorTest` body: archers with skirmish on; cavalry ordered at them. Assert: retreat triggers inside `SkirmishBreakDistM`, the unit keeps facing, resumes fire past the resume distance (hysteresis, no thrash over a settle window), the hold-fire variant never fires but still retreats, and a player `Move` order overrides the auto-retreat (order-serial guard).
++3. Local cvar save/restore including the ranged block (the `ClashSetCvars` precedent); `EXEC_RESULT` evidence lines per phase.
++
++## Files
++
++- Edit: `Plugins/MassBattle/Source/MassBattleTest/Private/BattleFuncTestActor.cpp` (the two bodies; the declarations, factories, harness entries, and cast branches already exist)
++- Edit: `Public/BattleFuncTestActor.h` only if the actors grow state fields (phase enums, sample arrays)
++
++## Evidence to gather on the UE machine
++
++- Func tier FULLY green (the two skeletons now pass; 23+ `Battle.Func.*` total)
++- Verbatim `EXEC_RESULT S6_Volley ...` / `EXEC_RESULT SkirmishBehavior ...` lines with the sampled numbers (the S4/S5 evidence precedent)
++- Determinism spot: rerun S6 under the same seed twice -> identical sample lines
++
++## Rollback
++
++The scenario actors are test-only code; reverting the bodies restores the skeletons (the func tier goes red on exactly those two, by design). No runtime surface is touched.
+diff --git a/Patches/PRs/PR-8-m4-arrow-demo-visualization.md b/Patches/PRs/PR-8-m4-arrow-demo-visualization.md
+new file mode 100644
+index 0000000..856f029
+--- /dev/null
++++ b/Patches/PRs/PR-8-m4-arrow-demo-visualization.md
+@@ -0,0 +1,34 @@
++# PR-8: M4 arrow-volley demo -- visible arrows (ISM pool, gray-box)
++
++| | |
++|---|---|
++| **Finds** | Roadmap M4 ("Arrow volleys -- proves the ranged stack") needs a visible arrow mass to be a demo at all; the sim renders arrows only as debug-overlay segments (Phase 3's gray-box posture, spec section 1) |
++| **Blocks on** | Editor asset authoring (an arrow ISM mesh + material via MCP), PIE verification on the reference machine; Phase 5 owns the full representation bands (arch section 11.5: volleys = one Niagara batch per volley, arrow-stick decals pooled) |
++| **Owner** | Mesh/material choice for the gray-box arrow (a capsule or low-poly shaft is in keeping with B.1's capsules-first rule) |
++
++## Motivation
++
++M4 is the phase's milestone demo, and "arrow storm" is the M2TW signature the whole project chases. The pool's SoA layout is already the render feed (spec section 10: "the pool's SoA layout IS the render feed"), but a visible arrow needs an instanced mesh component nobody can author from a static patch -- an asset, a component registration, and a PIE eyeball pass.
++
++## Proposed change
++
++1. A `UBattleArrowVisualComponent` on the demo side (`Source/MassBattleGame/`, the owner-decided demo home): one `UInstancedStaticMeshComponent` fed from `UBattleProjectileSubsystem` each frame (batch transform update from the pool's SoA, one draw call; capacity-clamped with the oldest-first skip).
++2. Gray-box arrow asset: `/Game/MassBattle/Demo/SM_Arrow` (low-poly shaft + head, unlit material, ~20 cm) authored via MCP.
++3. Volley polish hook: per spec section 10/Phase 5, ONE Niagara batch per volley replaces the ISM feed when Phase 5 lands -- this component is the interim seam, not the destination.
++4. Demo fixtures `Battle.Ranged.SpawnVolley {line|skirmish}` (PR-6) drive it; a camera preset on the demo map that frames the volley arc.
++
++## Files
++
++- New: `Source/MassBattleGame/BattleArrowVisualComponent.h/.cpp` (demo module; consumes the plugin's public pool API only -- the ADR-18 pattern)
++- New asset: `Content/MassBattle/Demo/SM_Arrow.uasset` (+ material)
++- Edit: `DemoGameMode` (component attach when the ranged flags are on)
++
++## Evidence to gather on the UE machine
++
++- PIE on the demo map: `Battle.Ranged.SpawnVolley line` -> a visible arcing arrow mass, ~1,000 instances without a frame hitch (the T3.6 fixture doubles as the visual stress)
++- Draw-call count unchanged by arrow count (one ISM)
++- Screenshot tier sanity (B.1 tolerance): arrows present, animating along arcs (positions update per frame)
++
++## Rollback
++
++The component is demo-module-only and flag-gated; deleting the component registration leaves the sim untouched (the pool never knew about rendering).
+diff --git a/Patches/PRs/PR-9-ranged-perf-gate-and-soak-baselines.md b/Patches/PRs/PR-9-ranged-perf-gate-and-soak-baselines.md
+new file mode 100644
+index 0000000..53ce55e
+--- /dev/null
++++ b/Patches/PRs/PR-9-ranged-perf-gate-and-soak-baselines.md
+@@ -0,0 +1,34 @@
++# PR-9: Ranged perf gate (T3.6) + nightly soak variant + baseline notes
++
++| | |
++|---|---|
++| **Finds** | Roadmap T3.6: "1,000 in flight < 0.3 ms sim; pool never allocates mid-volley"; the B.6/B.7 regression ladder needs the Phase 3 entry; `entity_spawn_80_us` needs the re-baseline with the ranged fragment present |
++| **Blocks on** | The reference machine (nightly hardware path, R10) + one staged nightly run; baseline promotion is owner-gated per the audit H2 discipline |
++| **Owner** | Baseline JSON acceptance (the candidate promotes only on a green compare, exactly like the T2.9 precedent) |
++
++## Motivation
++
++The T2.9 pattern is the template: the perf gate reads the measured `BattleMetrics` line (not the baseline JSON) from a dedicated fixture, and the nightly soak variant rides the existing `BattleMovementSoakController` behind a default-off flag whose zero state is byte-identical to the baseline. T3.6 needs its fixture (`Battle.Ranged.PerfStress`, shipped with PR-6), the soak variant wiring, the FINAL-line extension (positionally APPENDED per the F14 note -- `write_baseline.py` regexes are positional), and the re-baselined spawn metric.
++
++## Proposed change
++
++1. Soak variant: `Battle.Ranged.SoakVolley=1` on the existing controller (the `SoakClash` precedent): ~25% of spawned units become archer rows issuing fire orders on the order cadence; FINAL line appends `volleys=%d inFlightPeak=%d friendlyHits=%d poolDrops=%d`. Flag off = byte-identical T1.8/T2 baseline (R-C9).
++2. Perf evidence: the `BattleMetrics` line extended with `StepMs/FireMs/InFlightPeak/PoolDrops` (PR-6's metrics); the gate asserts step + fire + hash-terms < 0.3 ms at the 1,000-in-flight peak; the measured line is recorded verbatim in the baseline notes (the 0.452 ms T2.9 precedent).
++3. `entity_spawn_80_us` re-baseline with the ranged fragment + stat_sec fields present (the garrison precedent: 4.8 us -> measure, disclose the delta).
++4. One staged nightly as evidence; the soak variant rides the next scheduled run (the engagement-phase precedent for deferring the staged run).
++
++## Files
++
++- Edit: `Plugins/MassBattle/Source/MassBattleTest/Private/BattleMovementSoakController.cpp` (variant + counters)
++- Edit: `Tools/CI/write_baseline.py` (parse the appended counters into candidate metrics; reference JSONs keep carrying them forward via `--seed-from`)
++- Edit: `Baselines/perf/ref-i7-9700F-1660Ti/nightly-smoke.json` (the spawn re-baseline, owner-gated)
++
++## Evidence to gather on the reference machine
++
++- `Battle.Ranged.PerfStress` at the 1,000-in-flight peak: `StepMs + FireMs + hash terms < 0.3 ms`, verbatim line
++- Soak variant FINAL: `settled stuck=0 separation=0 archetypes=8 (spawn 8)` + sane volley counters; flag-off run byte-identical to the current baseline
++- `compare_baseline.py` green on the promoted candidate (smoke duration + spawn us within tolerance)
++
++## Rollback
++
++The variant is default-off and additive; the baseline JSON only promotes on a green compare. Reverting the controller edit restores the exact current FINAL line.
+diff --git a/Patches/README.md b/Patches/README.md
+index 43c936d..81407e2 100644
+--- a/Patches/README.md
++++ b/Patches/README.md
+@@ -1,14 +1,16 @@
+-# Audit patches (phase-2 engagement audit, 2026-10-28)
++# Patch series (Patches/)
++
++Two series live here:
++
++## Phase-2 engagement audit (2026-10-28)
+ 
+ Branch: `audit/phase2-engagement` (from `main` @ `5e46a1b`).
+ Findings register: `Docs/phases/phase-2/audit-engagement.md`.
+ 
+-## Committed patch series (releases without UE access)
+-
+ Each `.patch` file is one commit; apply in order with `git am`:
+ 
+ | # | Patch | Groups | Must re-run on the UE machine |
+-|---|---|---|---|
++|---|-------|--------|-------------------------------|
+ | 1 | `0001-...scaffolding.patch` | C-1 C-2 C-4 C-5 | full unit + func tier (deletions only) |
+ | 2 | `0002-...cull-static-maps.patch` | A-2 | func tier (soak/escalation metrics unchanged) |
+ | 3 | `0003-...body-radius-home.patch` | B-1 B-5 | T2.1 golden (formality) |
+@@ -18,17 +20,44 @@ Each `.patch` file is one commit; apply in order with `git am`:
+ | 7 | `0007-...fixture-data.patch` | B-3 D-3 B-7 B-8 B-6 | S5_Mob + CombatSmoke (fixture path touched) |
+ | 8 | `0008-...doc-map.patch` | docs | none |
+ 
+-## PR writeups (require UE / MCP / owner decisions -- NOT in the patch series)
++PR writeups from that audit: `PRs/PR-1` .. `PR-5` (below).
++
++## Phase-3 kickoff (2026-10-29)
++
++Branch: `phase3/kickoff` (from `main` @ `48f1553`).
++Companion docs: `Docs/spec/ranged-stack.md` (the design spec) + `Docs/phases/phase-3/brief.md` (the phase brief; its task plan consumes this series).
++
++The brief-per-phase workflow, extended to the kickoff itself: everything a
++STATIC environment can land before the UE machine touches the phase -- the
++spec + brief, the EDU `stat_sec` extension + ranged fixture rows + spawn
++mapping, the gate skeletons (fragments + CVAR block + failing T3.4/T3.5
++stubs), both pure-math seams fully implemented and unit-locked (ballistics,
++volley/ammo/skirmish, the projectile pool), and the state-hash ranged terms
+++ pool block. The implementing agent's Task 0 applies + verifies this series
++(`Docs/phases/phase-3/brief.md` §5) before building the pipeline.
++
++| # | Patch | Contents | Must re-run on the UE machine |
++|---|-------|----------|-------------------------------|
++| 10 | `0010-...docs.patch` | the ranged-stack spec + the phase-3 brief + the README map/status | none (docs only) |
++| 11 | `0011-...gate-skeleton.patch` | `FRangedStateFragment`, `Battle.Ranged.*` CVAR block, `ECombatHashFlags`, FUnitRuntimeState toggle fields, S6/skirmish fail-by-design stubs | unit tier green; func tier red on exactly the two skeletons (counted) |
++| 12 | `0012-...edu-data-spine.patch` | `stat_sec` schema (15 keys) + 2 ranged fixture rows + FromEdu missile branch + spawn stamping + T0.2 golden re-sign + SpawnComposition extension | unit tier (Battle.Data.* re-signed goldens, SpawnComposition, spawn-dependent suites) |
++| 13 | `0013-...ballistics-seam.patch` | `BattleBallistics` (solver, dispersion, stepper, LOS march) + `SampleHeight` + T3.1/T3.2 | unit tier (the two new tests; FMA watch item documented) |
++| 14 | `0014-...volley-pool-seams.patch` | `BattleProjectilePool` SoA + `SelectVolleyShots`/`EvaluateSkirmish` bodies + T3.3 family (Pool/AmmoAccounting/VolleySelection/SkirmishMath) | unit tier (six Battle.Unit.Ranged.* green; cvar-default dependence documented) |
++| 15 | `0015-...state-hash-ranged-terms.patch` | hash blocks 8 (ranged terms) + 9 (pool, index order) + `UBattleProjectileSubsystem` + HashTerms extension | unit tier (HashTerms + ranged suite; melee-only hashes unchanged by construction) |
++| 16 | `0016-...pr-writeups.patch` | this README section + `PRs/PR-6` .. `PR-9` | none (docs only) |
++
++PR writeups (require UE / MCP / owner decisions -- NOT in the patch series):
+ 
+-- `PRs/PR-1-data-driven-scenario-composition.md` (editor assets + PIE cycle)
+-- `PRs/PR-2-editor-owned-input-mapping.md` (IMC asset authoring + PIE verification)
+-- `PRs/PR-3-share-tile-extent-with-demo.md` (plugin API + UE test cycle)
+-- `PRs/PR-4-assign-seams-and-registry-state.md` (processor refactor + full tier)
+-- `PRs/PR-5-remove-agent-patch-scripts.md` (owner repo-policy call)
++- `PRs/PR-6-ranged-fire-and-step-processors.md` (the pipeline: fire + step processors, impact resolution, registry surface, ExecBridge fixtures; full tier cycle)
++- `PRs/PR-7-s6-and-skirmish-scenarios.md` (the T3.4/T3.5 scenario bodies; blocks on PR-6)
++- `PRs/PR-8-m4-arrow-demo-visualization.md` (arrow ISM asset + PIE; gray-box now, Niagara volley batching in Phase 5)
++- `PRs/PR-9-ranged-perf-gate-and-soak-baselines.md` (T3.6 fixture evidence + soak variant + reference-machine baselines)
+ 
+ ## Verification status
+ 
+-Static audit: all patches are brace-balanced, include-complete, and value-neutral by
+-construction (identical constants, same formulas, deletions of dead code). No UE build was
+-available in the audit environment; each commit message carries its "MUST re-run" note per
+-AGENTS §2 (evidence before claim).
++Static authorship for the phase-3 series (same posture as the audit series):
++all patches are brace-balanced, include-complete, and every new constant is
++an A6-disclosed placeholder (ADR-30). No UE build was available at author
++time; every commit message carries its "MUST re-run" note per AGENTS §2
++(evidence before claim). The golden re-signs (T0.2 schema, SpawnComposition
++growth) are disclosed in `0012` per the standing re-sign policy.
+-- 
+2.32.0.windows.2
+

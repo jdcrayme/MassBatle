@@ -1,0 +1,740 @@
+From 5f8f326a4ea4eda36b18d52aa368e8f8ec6736ab Mon Sep 17 00:00:00 2001
+From: Z User <z@container>
+Date: Wed, 28 Oct 2026 19:02:49 +0000
+Subject: [PATCH 12/16] phase3: task 2a EDU data spine -- stat_sec schema +
+ ranged rows + spawn mapping
+
+- BattleEduParser: stat_sec joins the schema (11-value arity, same kinds as
+  stat_pri, canonical position after stat_pri) -> SchemaFieldCount 15. T0.2
+  golden RE-SIGNED (disclosed): fixture + embedded GoldenCanonical + every
+  inline edge fixture carry the field.
+- golden_edu_v1.txt: +2 ranged rows (Peasant Archers: arrow/120m/25 ammo,
+  arced; Mercenary Crossbowmen: bolt/160m/18 ammo, flat); the 2 melee rows
+  carry stat_sec mirroring stat_pri. Values are A6 placeholders (ADR-30).
+- FBattleRowStats::FromEdu: the missile branch (spec ranged-stack section 6)
+  -- stat_pri is the missile weapon when its missile slot != 'no'; stat_sec
+  is then the melee backup. Unknown missile tokens fail loudly. bSkirmishDefault
+  from class 'missile' (A8).
+- UBattleSpawnLibrary: FRangedStateFragment rides ranged-capable compositions
+  only (arch section 3.2; bRanged branch in the archetype build + fixup with
+  the StaggeredPhaseOffset reload scatter); registry SetUnitSkirmishDefault
+  stamp at spawn. Archetype growth MEASURED by SpawnComposition (one ranged
+  composition expected; itemized in the phase report, F6 disclosed re-sign).
+- BattleUnitTrait (Route B parity): Kind/RangedRangeM/AmmoPerMan properties
+  + conditional fragment stamp; BuildT0Configs authors the two ranged configs.
+- MassBattleEduTests: counts + goldens re-signed; ranged spot checks
+  (missile kind, range, ammo, stat_sec melee attack); stat_sec arity +
+  missing-field edge cases.
+- MassBattleCombatTests SpawnComposition: ranged-roster fragment
+  presence/absence checks + archetype growth evidence line.
+
+MUST re-run on the UE machine: unit tier (Battle.Data.* re-signed goldens,
+SpawnComposition, all spawn-dependent suites) + func tier (unchanged
+expectations: the two task-0 skeletons red only). Static patch: brace-
+balanced, include-complete; no engine build was available at author time.
+---
+ Content/Data/EDU/golden_edu_v1.txt            |  40 +++++-
+ .../MassBattle/Private/BattleEduParser.cpp    |   1 +
+ .../MassBattle/Private/BattleExecCommands.cpp |  20 ++-
+ .../MassBattle/Private/BattleRegistry.cpp     |  12 ++
+ .../MassBattle/Private/BattleSpawnLibrary.cpp | 128 +++++++++++++++---
+ .../MassBattle/Private/BattleUnitTrait.cpp    |  14 ++
+ .../MassBattle/Public/BattleEduParser.h       |  10 +-
+ .../Source/MassBattle/Public/BattleRegistry.h |   8 ++
+ .../MassBattle/Public/BattleSpawnLibrary.h    |  13 +-
+ .../MassBattle/Public/BattleUnitTrait.h       |   6 +
+ .../Private/MassBattleCombatTests.cpp         |  46 +++++++
+ .../Private/MassBattleEduTests.cpp            |  93 ++++++++++++-
+ 12 files changed, 361 insertions(+), 30 deletions(-)
+
+diff --git a/Content/Data/EDU/golden_edu_v1.txt b/Content/Data/EDU/golden_edu_v1.txt
+index 3abf130..492025a 100644
+--- a/Content/Data/EDU/golden_edu_v1.txt
++++ b/Content/Data/EDU/golden_edu_v1.txt
+@@ -1,5 +1,9 @@
+ // Phase 0 T0.2 fixture draft -- validate field semantics against findings refs [27][28] before parser work; unknown fields must be rejected loudly.
+-// Placeholder values pending the Phase 6 formula audit (roadmap). ASCII, LF line endings, exactly 2 unit types.
++// Placeholder values pending the Phase 6 formula audit (roadmap). ASCII, LF line endings.
++// Phase 3 re-sign (2026-10-29, spec ranged-stack section 6): stat_sec joins the schema
++// (15 keys); two ranged rows added (Peasant Archers: arced arrow profile; Mercenary
++// Crossbowmen: flat bolt profile); the two melee rows carry stat_sec mirroring their
++// stat_pri. Values remain A6 placeholders pending the Phase 6 T6.1 audit.
+ 
+ type Peasant Levy
+ dictionary Peasant_Levy
+@@ -10,6 +14,7 @@ attributes sea_faring, hide_forest, very_hardy
+ formation 1.2, 1.2, 2.4, 2.4, 3, square
+ stat_health 1, 1
+ stat_pri 1, 2, no, 0, 0, melee, simple, other, 10, 0.2, 0.2
++stat_sec 1, 2, no, 0, 0, melee, simple, other, 10, 0.2, 0.2
+ stat_pri_armour 0, 1, 0, flesh
+ stat_mental 2, low, untrained
+ stat_charge_dist 30
+@@ -25,8 +30,41 @@ attributes sea_faring, hide_forest, hardy, can_withdraw, spear_wall
+ formation 1.2, 1.2, 2.4, 2.4, 3, square
+ stat_health 1, 1
+ stat_pri 4, 4, no, 0, 0, melee, blade_piercing, spear, 25, 0.35, 0.35
++stat_sec 4, 4, no, 0, 0, melee, blade_piercing, spear, 25, 0.35, 0.35
+ stat_pri_armour 4, 5, 0, metal
+ stat_mental 6, normal, trained
+ stat_charge_dist 30
+ stat_cost 1, 250, 220, 90, 120, 220
+ ownership england, france
++
++type Peasant Archers
++dictionary Peasant_Archers
++category infantry
++class missile
++soldier Peasant_Archer, 40, 0, 1
++attributes sea_faring, hide_forest, hardy, can_withdraw, can_skirmish
++formation 1.2, 1.2, 2.4, 2.4, 3, square
++stat_health 1, 1
++stat_pri 6, 2, arrow, 120, 25, missile, simple, other, 10, 0.2, 0.2
++stat_sec 4, 2, no, 0, 0, melee, simple, other, 10, 0.2, 0.2
++stat_pri_armour 0, 1, 0, flesh
++stat_mental 4, low, untrained
++stat_charge_dist 30
++stat_cost 1, 150, 130, 60, 90, 130
++ownership slave, england
++
++type Mercenary Crossbowmen
++dictionary Mercenary_Crossbowmen
++category infantry
++class missile
++soldier Mercenary_Crossbow, 40, 0, 1
++attributes sea_faring, hide_forest, hardy, can_withdraw
++formation 1.2, 1.2, 2.4, 2.4, 3, square
++stat_health 1, 1
++stat_pri 9, 2, bolt, 160, 18, missile, simple, other, 10, 0.25, 0.25
++stat_sec 5, 3, no, 0, 0, melee, simple, other, 10, 0.2, 0.2
++stat_pri_armour 3, 4, 0, metal
++stat_mental 5, normal, trained
++stat_charge_dist 30
++stat_cost 1, 300, 260, 100, 130, 260
++ownership england, france
+diff --git a/Plugins/MassBattle/Source/MassBattle/Private/BattleEduParser.cpp b/Plugins/MassBattle/Source/MassBattle/Private/BattleEduParser.cpp
+index 9037243..85e8f79 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Private/BattleEduParser.cpp
++++ b/Plugins/MassBattle/Source/MassBattle/Private/BattleEduParser.cpp
+@@ -34,6 +34,7 @@ namespace
+ 			{TEXT("formation"),        6,  6, {EduFloat, EduFloat, EduFloat, EduFloat, EduFloat, EduToken},     false},
+ 			{TEXT("stat_health"),      2,  2, {EduInt, EduInt},                                                 false},
+ 			{TEXT("stat_pri"),        11, 11, {EduInt, EduInt, EduToken, EduInt, EduInt, EduToken, EduToken, EduToken, EduInt, EduFloat, EduFloat}, false},
++			{TEXT("stat_sec"),        11, 11, {EduInt, EduInt, EduToken, EduInt, EduInt, EduToken, EduToken, EduToken, EduInt, EduFloat, EduFloat}, false},
+ 			{TEXT("stat_pri_armour"),  4,  4, {EduInt, EduInt, EduInt, EduToken},                               false},
+ 			{TEXT("stat_mental"),      3,  3, {EduInt, EduToken, EduToken},                                     false},
+ 			{TEXT("stat_charge_dist"), 1,  1, {EduInt},                                                         false},
+diff --git a/Plugins/MassBattle/Source/MassBattle/Private/BattleExecCommands.cpp b/Plugins/MassBattle/Source/MassBattle/Private/BattleExecCommands.cpp
+index 173fec4..b5cc100 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Private/BattleExecCommands.cpp
++++ b/Plugins/MassBattle/Source/MassBattle/Private/BattleExecCommands.cpp
+@@ -184,6 +184,8 @@ namespace BattleExec
+ 		const FConfigSpec Specs[] = {
+ 			{ TEXT("PeasantLevy"), 0 },
+ 			{ TEXT("SergeantSpearmen"), 1 },
++			{ TEXT("PeasantArchers"), 2 },
++			{ TEXT("MercenaryCrossbowmen"), 3 },
+ 		};
+ 
+ 		int32 Authored = 0;
+@@ -218,11 +220,27 @@ namespace BattleExec
+ 					Trait->BaseHealth = 1.f; Trait->MeleeAttack = 1.f; Trait->MeleeDefense = 2.f;
+ 					Trait->Armor = 0.f; Trait->MoraleBase = 2.f; Trait->ChargeDistance = 30.f;
+ 				}
+-				else // Sergeant Spearmen
++				else if (Spec.Row == 1) // Sergeant Spearmen
+ 				{
+ 					Trait->BaseHealth = 1.f; Trait->MeleeAttack = 4.f; Trait->MeleeDefense = 4.f;
+ 					Trait->Armor = 4.f; Trait->MoraleBase = 6.f; Trait->ChargeDistance = 30.f;
+ 				}
++				else if (Spec.Row == 2) // Peasant Archers (spec ranged-stack section 3.1)
++				{
++					Trait->BaseHealth = 1.f; Trait->MeleeAttack = 4.f; Trait->MeleeDefense = 2.f;
++					Trait->RangedAttack = 6.f; Trait->Armor = 0.f; Trait->MoraleBase = 4.f;
++					Trait->ChargeDistance = 30.f;
++					Trait->Kind = EBattleProjectileKind::Arrow; Trait->RangedRangeM = 120.f; Trait->AmmoPerMan = 25;
++					Trait->bMelee = false; Trait->bBow = true;
++				}
++				else // Mercenary Crossbowmen
++				{
++					Trait->BaseHealth = 1.f; Trait->MeleeAttack = 5.f; Trait->MeleeDefense = 3.f;
++					Trait->RangedAttack = 9.f; Trait->Armor = 3.f; Trait->MoraleBase = 5.f;
++					Trait->ChargeDistance = 30.f;
++					Trait->Kind = EBattleProjectileKind::Bolt; Trait->RangedRangeM = 160.f; Trait->AmmoPerMan = 18;
++					Trait->bMelee = false; Trait->bBow = true;
++				}
+ 			}
+ 
+ 			const FString FileName = FPackageName::LongPackageNameToFilename(PackageName, FPackageName::GetAssetPackageExtension());
+diff --git a/Plugins/MassBattle/Source/MassBattle/Private/BattleRegistry.cpp b/Plugins/MassBattle/Source/MassBattle/Private/BattleRegistry.cpp
+index 92078a2..1f4745b 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Private/BattleRegistry.cpp
++++ b/Plugins/MassBattle/Source/MassBattle/Private/BattleRegistry.cpp
+@@ -195,6 +195,18 @@ void UUnitRegistrySubsystem::UpdateCachedAttributes(FUnitHandle Handle, const FB
+ 	}
+ }
+ 
++void UUnitRegistrySubsystem::SetUnitSkirmishDefault(FUnitHandle Handle, bool bInSkirmish)
++{
++	// Phase 3 (spec ranged-stack §3.2, A8): spawn-time default only -- the
++	// runtime toggle surface lands with the Phase 3 data-spine task. Called
++	// from UBattleSpawnLibrary::SpawnUnit right after SetRoster.
++	UE_MT_SCOPED_WRITE_ACCESS(AccessDetector);
++	if (FUnitRuntimeState* State = Units.Find(Handle))
++	{
++		State->bSkirmish = bInSkirmish;
++	}
++}
++
+ const FBattleAttributeSnapshot* UUnitRegistrySubsystem::FindCachedAttributes(FUnitHandle Handle) const
+ {
+ 	UE_MT_SCOPED_READ_ACCESS(AccessDetector);
+diff --git a/Plugins/MassBattle/Source/MassBattle/Private/BattleSpawnLibrary.cpp b/Plugins/MassBattle/Source/MassBattle/Private/BattleSpawnLibrary.cpp
+index 172b281..9f55114 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Private/BattleSpawnLibrary.cpp
++++ b/Plugins/MassBattle/Source/MassBattle/Private/BattleSpawnLibrary.cpp
+@@ -1,8 +1,11 @@
+ #include "BattleSpawnLibrary.h"
+ #include "BattleFragments.h"
+ #include "BattleCombatFragments.h"
++#include "BattleRangedFragments.h"
+ #include "BattleMovementFragments.h"
+ #include "BattleRegistry.h"
++#include "BattleMelee.h"
++#include "BattleRanged.h"
+ #include "MassBattleModule.h"
+ 
+ #include "Engine/World.h"
+@@ -45,15 +48,66 @@ bool FBattleRowStats::FromEdu(const FEduUnit& Row, FBattleRowStats& OutStats, FS
+ 	OutStats.TypeName = Type->GetValue();
+ 	OutStats.SoldierCount = FCString::Atoi(*Soldier->Values[1]);
+ 	OutStats.BaseHealth = FCString::Atof(*Health->Values[0]);
+-	OutStats.MeleeAttack = FCString::Atof(*Pri->Values[0]);
+-	OutStats.MeleeDefense = FCString::Atof(*Pri->Values[1]);
+ 	OutStats.Armor = FCString::Atof(*Armour->Values[0]);
+ 	OutStats.MoraleBase = FCString::Atof(*Mental->Values[0]);
+ 	OutStats.ChargeDistance = FCString::Atof(*Charge->Values[0]);
+ 
+ 	OutStats.bInfantry = (Category->GetValue() == TEXT("infantry"));
+ 	OutStats.bCavalry = (Category->GetValue() == TEXT("cavalry"));
+-	// Phase 0 fixture classes are melee ('light', 'spear'); bow flag arrives with ranged rows.
++
++	// Phase 3 ranged branch (spec ranged-stack section 6; brief F3):
++	// stat_pri is the missile weapon when its missile slot != "no";
++	// stat_sec is then the melee backup. Unknown missile tokens fail
++	// loudly (a "catapult_ball" row must not silently become melee).
++	if (Pri->Values.Num() > 4)
++	{
++		const FString& Missile = Pri->Values[2];
++		if (Missile == TEXT("no"))
++		{
++			OutStats.Kind = EBattleProjectileKind::None;
++		}
++		else if (Missile == TEXT("arrow"))
++		{
++			OutStats.Kind = EBattleProjectileKind::Arrow;
++		}
++		else if (Missile == TEXT("bolt"))
++		{
++			OutStats.Kind = EBattleProjectileKind::Bolt;
++		}
++		else
++		{
++			OutError = FString::Printf(TEXT("EDU row '%s': unknown missile kind '%s' (arrow|bolt|no)"),
++				*OutStats.TypeName, *Missile);
++			return false;
++		}
++	}
++	OutStats.bBow = (OutStats.Kind != EBattleProjectileKind::None);
++	OutStats.bSkirmishDefault = (Class->GetValue() == TEXT("missile"));
++
++	if (OutStats.bBow)
++	{
++		// Missile row: stat_pri carries the ranged weapon, stat_sec the
++		// melee backup (weapon-switch modeling is a spec section 10
++		// extension point -- v1 maps the backup as the melee stats).
++		OutStats.RangedAttack = FCString::Atof(*Pri->Values[0]);
++		OutStats.RangedRangeM = FCString::Atof(*Pri->Values[3]);
++		OutStats.AmmoPerMan = FCString::Atoi(*Pri->Values[4]);
++		const FEduField* Sec = Need(TEXT("stat_sec"), 2);
++		if (!Sec)
++		{
++			return false;
++		}
++		OutStats.MeleeAttack = FCString::Atof(*Sec->Values[0]);
++		OutStats.MeleeDefense = FCString::Atof(*Sec->Values[1]);
++	}
++	else
++	{
++		// Melee row: stat_pri is the melee weapon (the Phase 0-2
++		// mapping, unchanged); stat_sec mirrors it in the fixture and
++		// is not consumed.
++		OutStats.MeleeAttack = FCString::Atof(*Pri->Values[0]);
++		OutStats.MeleeDefense = FCString::Atof(*Pri->Values[1]);
++	}
+ 	OutStats.bMelee = !OutStats.bBow;
+ 
+ 	// Phase 2 combat fields (task 2 step 1, R-C10): typed extractions of the
+@@ -145,24 +199,35 @@ FBattleSpawnResult UBattleSpawnLibrary::SpawnUnit(UWorld* World, const FUnitSpaw
+ 	// 3. Per-role archetype (Route A): fragments + tags + the shared fragment types.
+ 	// Phase 1: the movement spine rides on every battle entity uniformly so the
+ 	// role archetypes do not split further (Task 2 archetype probe).
+-	const UScriptStruct* Fragments[] = {
+-		FOwnerUnitFragment::StaticStruct(),
+-		FLoadoutFragment::StaticStruct(),
+-		FBaseStatsFragment::StaticStruct(),
+-		FHealthFragment::StaticStruct(),
+-		FTransformFragment::StaticStruct(),   // MassCommon: position (engine stack, cm)
+-		FMassVelocityFragment::StaticStruct(),// MassMovement: adopted per arch §3.1 note
+-		FSlotAssignmentFragment::StaticStruct(),
+-		FSlotTargetFragment::StaticStruct(),
+-		FMovementStateFragment::StaticStruct(),
+-		FServoStateFragment::StaticStruct(),
+-		// Phase 2 combat spine (spec §3.1, A2): on EVERY battle entity
+-		// uniformly -- zero new tags, composition grows, the archetype count
+-		// stays 6 (F6).
+-		FCombatIntentFragment::StaticStruct(),
+-		FCombatPairFragment::StaticStruct(),
+-		FChargeFragment::StaticStruct(),
+-	};
++	// Phase 3 (spec ranged-stack §3.1): the ranged fragment rides
++	// RANGED-CAPABLE rows only (arch §3.2: a spearman has no ranged
++	// fragments, so the ranged-fire processor never touches his chunks);
++	// bow and crossbow share ONE composition (Kind is a fragment value).
++	// The archetype count grows by the ranged compositions -- measured +
++	// itemized by SpawnComposition, growth disclosed in the phase report
++	// (F6).
++	const bool bRanged = Row.Kind != EBattleProjectileKind::None;
++	TArray<const UScriptStruct*> Fragments;
++	Fragments.Reserve(16);
++	Fragments.Add(FOwnerUnitFragment::StaticStruct());
++	Fragments.Add(FLoadoutFragment::StaticStruct());
++	Fragments.Add(FBaseStatsFragment::StaticStruct());
++	Fragments.Add(FHealthFragment::StaticStruct());
++	Fragments.Add(FTransformFragment::StaticStruct());   // MassCommon: position (engine stack, cm)
++	Fragments.Add(FMassVelocityFragment::StaticStruct());// MassMovement: adopted per arch §3.1 note
++	Fragments.Add(FSlotAssignmentFragment::StaticStruct());
++	Fragments.Add(FSlotTargetFragment::StaticStruct());
++	Fragments.Add(FMovementStateFragment::StaticStruct());
++	Fragments.Add(FServoStateFragment::StaticStruct());
++	// Phase 2 combat spine (spec §3.1, A2): on EVERY battle entity
++	// uniformly -- zero new tags, composition grows (F6).
++	Fragments.Add(FCombatIntentFragment::StaticStruct());
++	Fragments.Add(FCombatPairFragment::StaticStruct());
++	Fragments.Add(FChargeFragment::StaticStruct());
++	if (bRanged)
++	{
++		Fragments.Add(FRangedStateFragment::StaticStruct());
++	}
+ 	TArray<const UScriptStruct*> Tags;
+ 	if (Row.bInfantry) { Tags.Add(FInfantryTag::StaticStruct()); }
+ 	if (Row.bCavalry)  { Tags.Add(FCavalryTag::StaticStruct()); }
+@@ -251,6 +316,23 @@ FBattleSpawnResult UBattleSpawnLibrary::SpawnUnit(UWorld* World, const FUnitSpaw
+ 		Charge.ImpactSpeed = 0.f;
+ 		Charge.bConnected = 0;
+ 
++		// Phase 3 ranged spine init (spec ranged-stack §3.1): spawn-immutable
++		// fields from the row; reload staggered via the handle-hash family so
++		// volleys never serialize (RC1 -- the StaggeredPhaseOffset
++		// discipline, one home for the Knuth multipliers). Fragments carry
++		// METERS here (the seam convention; the pool boundary converts once).
++		if (bRanged)
++		{
++			FRangedStateFragment& Ranged = View.GetFragmentData<FRangedStateFragment>();
++			Ranged.Kind = Row.Kind;
++			Ranged.RangeM = Row.RangedRangeM;
++			Ranged.InitialAmmo = static_cast<uint16>(FMath::Clamp(Row.AmmoPerMan, 0, 65535));
++			Ranged.AmmoCount = static_cast<int16>(Ranged.InitialAmmo);
++			Ranged.ReloadTimer = FMeleeMath::StaggeredPhaseOffset(
++				Entities[i].Index, FRangedCVars::ReloadInterval());
++			Ranged.ShotsFired = 0;
++		}
++
+ 		// Movement spine init (phase-1 Task 2): spawn transform, zeroed
+ 		// velocity, initial slot layout, HoldSlot state. Entities spawn at
+ 		// their FORMED slot positions (rank-major around the anchor) -- a
+@@ -286,6 +368,10 @@ FBattleSpawnResult UBattleSpawnLibrary::SpawnUnit(UWorld* World, const FUnitSpaw
+ 	// 6. Publish the roster + initial attribute cache.
+ 	Registry->SetRoster(Unit, MoveTemp(Entities));
+ 
++	// Phase 3 (spec ranged-stack §3.2, A8): class-missile rows default the
++	// skirmish toggle on at spawn; the registry owns the toggle state.
++	Registry->SetUnitSkirmishDefault(Unit, Row.bSkirmishDefault);
++
+ 	FBattleAttributeSnapshot Snapshot;
+ 	Snapshot.Morale = Row.MoraleBase;
+ 	Registry->UpdateCachedAttributes(Unit, Snapshot);
+diff --git a/Plugins/MassBattle/Source/MassBattle/Private/BattleUnitTrait.cpp b/Plugins/MassBattle/Source/MassBattle/Private/BattleUnitTrait.cpp
+index b637d71..82dc096 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Private/BattleUnitTrait.cpp
++++ b/Plugins/MassBattle/Source/MassBattle/Private/BattleUnitTrait.cpp
+@@ -1,5 +1,6 @@
+ #include "BattleUnitTrait.h"
+ #include "BattleFragments.h"
++#include "BattleRangedFragments.h"
+ #include "MassEntityTemplateRegistry.h"
+ #include "StructUtils/SharedStruct.h"
+ 
+@@ -21,6 +22,19 @@ void UBattleUnitTrait::BuildTemplate(FMassEntityTemplateBuildContext& BuildConte
+ 
+ 	BuildContext.AddFragment<FHealthFragment>();
+ 
++	// Phase 3 (spec ranged-stack §3.1): the ranged fragment rides
++	// ranged-capable compositions only, mirroring Route A (arch §3.2).
++	if (Kind != EBattleProjectileKind::None)
++	{
++		FRangedStateFragment& Ranged = BuildContext.AddFragment_GetRef<FRangedStateFragment>();
++		Ranged.Kind = Kind;
++		Ranged.RangeM = RangedRangeM;
++		Ranged.InitialAmmo = static_cast<uint16>(FMath::Clamp(AmmoPerMan, 0, 65535));
++		Ranged.AmmoCount = static_cast<int16>(Ranged.InitialAmmo);
++		Ranged.ReloadTimer = 0.f;
++		Ranged.ShotsFired = 0;
++	}
++
+ 	if (bInfantry) { BuildContext.AddTag<FInfantryTag>(); }
+ 	if (bCavalry)  { BuildContext.AddTag<FCavalryTag>(); }
+ 	if (bMelee)    { BuildContext.AddTag<FMeleeTag>(); }
+diff --git a/Plugins/MassBattle/Source/MassBattle/Public/BattleEduParser.h b/Plugins/MassBattle/Source/MassBattle/Public/BattleEduParser.h
+index cb9e6ae..e19b414 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Public/BattleEduParser.h
++++ b/Plugins/MassBattle/Source/MassBattle/Public/BattleEduParser.h
+@@ -1,11 +1,13 @@
+ // BattleEduParser.h -- pure EDU-format parser/serializer (roadmap R11/B.0
+ // pure-math seam: free functions + plain structs, no UObject, fully unit-testable).
+ //
+-// Schema source of truth: Content/Data/EDU/golden_edu_v1.txt -- 14 field keys per unit
+-// (BRIEF §1.8 as corrected by reality during this run):
++// Schema source of truth: Content/Data/EDU/golden_edu_v1.txt -- 15 field keys per unit
++// (14 through Phase 2; Phase 3 adds stat_sec, the ranged-stack brief F3 /
++// spec ranged-stack section 6 touch-point table; golden re-signed per the
++// T0.2 disclosed-re-sign policy):
+ //   type, dictionary, category, class, soldier, attributes, formation,
+-//   stat_health, stat_pri, stat_pri_armour, stat_mental, stat_charge_dist,
+-//   stat_cost, ownership
++//   stat_health, stat_pri, stat_sec, stat_pri_armour, stat_mental,
++//   stat_charge_dist, stat_cost, ownership
+ //
+ // STRICTNESS (T0.2): unknown fields are rejected loudly (error carries the key
+ // and the line number); wrong arity, duplicate fields, and malformed numbers
+diff --git a/Plugins/MassBattle/Source/MassBattle/Public/BattleRegistry.h b/Plugins/MassBattle/Source/MassBattle/Public/BattleRegistry.h
+index 35d8b6e..31de187 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Public/BattleRegistry.h
++++ b/Plugins/MassBattle/Source/MassBattle/Public/BattleRegistry.h
+@@ -295,6 +295,14 @@ public:
+ 	void UpdateCachedAttributes(FUnitHandle Handle, const FBattleAttributeSnapshot& Snapshot);
+ 	const FBattleAttributeSnapshot* FindCachedAttributes(FUnitHandle Handle) const;
+ 
++	// -- Phase 3 fire-control toggles (spec ranged-stack §3.2) --
++
++	/** Spawn-time skirmish default (A8): class-missile rows call this with
++	 *  true right after registration. The full toggle surface
++	 *  (SetUnitFireToggles) lands with the Phase 3 data-spine task on the UE
++	 *  machine; the spawn default is what the save round-trip captures. */
++	void SetUnitSkirmishDefault(FUnitHandle Handle, bool bInSkirmish);
++
+ 	/** Idempotent: marking twice in one frame leaves one dirty entry. */
+ 	void MarkStatsDirty(FUnitHandle Handle);
+ 	void ClearStatsDirty(FUnitHandle Handle);
+diff --git a/Plugins/MassBattle/Source/MassBattle/Public/BattleSpawnLibrary.h b/Plugins/MassBattle/Source/MassBattle/Public/BattleSpawnLibrary.h
+index e2b722a..457ad48 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Public/BattleSpawnLibrary.h
++++ b/Plugins/MassBattle/Source/MassBattle/Public/BattleSpawnLibrary.h
+@@ -18,7 +18,7 @@ struct FBattleRowStats
+ 	float BaseHealth = 1.f;
+ 	float MeleeAttack = 0.f;
+ 	float MeleeDefense = 0.f;
+-	float RangedAttack = 0.f;   // fixture has no stat_sec; 0 until ranged rows exist
++	float RangedAttack = 0.f;   // stat_pri attack for missile rows (stat_sec is then the melee backup)
+ 	float Armor = 0.f;
+ 	float MoraleBase = 0.f;
+ 	float ChargeDistance = 0.f;
+@@ -43,6 +43,17 @@ struct FBattleRowStats
+ 	bool bMelee = false;
+ 	bool bBow = false;
+ 
++	// Phase 3 ranged mapping (spec ranged-stack section 6; brief F3):
++	// stat_pri is the MISSILE weapon when its missile slot != "no" (the
++	// M2TW convention); stat_sec is then the melee backup. Kind is the
++	// fragment-value discriminator (BattleTypes.h); the profile table
++	// (BattleRanged.h) keys speed/dispersion/AP posture off it. Constants
++	// are A6 placeholders pending the Phase-6 T6.1 audit.
++	EBattleProjectileKind Kind = EBattleProjectileKind::None;
++	float RangedRangeM = 0.f;   // stat_pri range value, meters
++	int32 AmmoPerMan = 0;       // stat_pri ammo value
++	bool bSkirmishDefault = false; // class "missile" rows default the toggle on (A8)
++
+ 	/** Map one parsed FEduUnit row onto typed stats. Fails loudly on missing fields. */
+ 	static MASSBATTLE_API bool FromEdu(const FEduUnit& Row, FBattleRowStats& OutStats, FString& OutError);
+ };
+diff --git a/Plugins/MassBattle/Source/MassBattle/Public/BattleUnitTrait.h b/Plugins/MassBattle/Source/MassBattle/Public/BattleUnitTrait.h
+index 6753035..b292a45 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Public/BattleUnitTrait.h
++++ b/Plugins/MassBattle/Source/MassBattle/Public/BattleUnitTrait.h
+@@ -27,6 +27,12 @@ public:
+ 	UPROPERTY(EditAnywhere, Category = "Battle") float MoraleBase = 0.f;
+ 	UPROPERTY(EditAnywhere, Category = "Battle") float ChargeDistance = 0.f;
+ 
++	/** Phase 3 ranged fields (spec ranged-stack §3.1): the fragment rides
++	 *  ranged-capable compositions only (arch §3.2), mirroring Route A. */
++	UPROPERTY(EditAnywhere, Category = "Battle") EBattleProjectileKind Kind = EBattleProjectileKind::None;
++	UPROPERTY(EditAnywhere, Category = "Battle") float RangedRangeM = 0.f;
++	UPROPERTY(EditAnywhere, Category = "Battle") int32 AmmoPerMan = 0;
++
+ 	/** Capability tags to apply (arch §3.2). */
+ 	UPROPERTY(EditAnywhere, Category = "Battle") bool bInfantry = true;
+ 	UPROPERTY(EditAnywhere, Category = "Battle") bool bCavalry = false;
+diff --git a/Plugins/MassBattle/Source/MassBattleTest/Private/MassBattleCombatTests.cpp b/Plugins/MassBattle/Source/MassBattleTest/Private/MassBattleCombatTests.cpp
+index 57b1f33..1f09442 100644
+--- a/Plugins/MassBattle/Source/MassBattleTest/Private/MassBattleCombatTests.cpp
++++ b/Plugins/MassBattle/Source/MassBattleTest/Private/MassBattleCombatTests.cpp
+@@ -16,6 +16,7 @@
+ #include "BattleStateHash.h"
+ #include "BattleFragments.h"
+ #include "BattleCombatFragments.h"
++#include "BattleRangedFragments.h"
+ #include "BattleRngRegistry.h"
+ #include "BattleEduParser.h"
+ #include "Engine/Engine.h"
+@@ -439,6 +440,50 @@ bool FCombat_SpawnComposition::RunTest(const FString& Parameters)
+ 		World->DestroyWorld(false);
+ 	}
+ 
++	// Phase 3 (spec ranged-stack §3.1): ranged rows carry FRangedStateFragment +
++	// FBowTag on a SEPARATE composition (arch §3.2); bow and crossbow share it
++	// (Kind is a fragment value). The growth is MEASURED here and itemized in
++	// the phase report (F6 disclosed re-sign); the invariants asserted are:
++	// ranged fragments present on ranged rosters, absent on melee rosters,
++	// identical-run determinism, and a non-negative growth delta.
++	int32 ArchetypesRanged = -1;
++	bool bRangedFragmentsCorrect = true;
++	{
++		UWorld* World = MakeCombatTestWorld();
++		const FBattleSpawnResult MeleeA = SpawnRow(World, Rows[0]);
++		const FBattleSpawnResult RangedA = SpawnRow(World, Rows[2]);
++		const FBattleSpawnResult RangedB = SpawnRow(World, Rows[3]);
++		UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>();
++		UMassEntitySubsystem* EntitySubsystem = World->GetSubsystem<UMassEntitySubsystem>();
++		FMassEntityManager& EntityManager = EntitySubsystem->GetMutableEntityManager();
++#if WITH_MASSENTITY_DEBUG
++		ArchetypesRanged = EntityManager.DebugGetArchetypesCount();
++#endif
++		const auto CheckRoster = [&](const FBattleSpawnResult& Result, bool bExpectRanged)
++		{
++			const TArray<FMassEntityHandle>* Roster = Registry->FindRoster(Result.Unit);
++			if (!TestNotNull(TEXT("roster"), Roster) || Roster->Num() == 0)
++			{
++				return;
++			}
++			for (const FMassEntityHandle& Entity : *Roster)
++			{
++				const FMassEntityView View(EntityManager, Entity);
++				const bool bHasRanged = View.GetFragmentDataPtr<FRangedStateFragment>() != nullptr;
++				bRangedFragmentsCorrect = bRangedFragmentsCorrect && (bHasRanged == bExpectRanged);
++			}
++		};
++		CheckRoster(MeleeA, /*bExpectRanged*/ false);
++		CheckRoster(RangedA, /*bExpectRanged*/ true);
++		CheckRoster(RangedB, /*bExpectRanged*/ true);
++#if WITH_MASSENTITY_DEBUG
++		TestTrue(TEXT("ranged rows grow the archetype count (composition added)"), ArchetypesRanged >= ArchetypesA);
++		AddInfo(FString::Printf(TEXT("archetypes: melee-only=%d with-ranged=%d (growth %d, one ranged composition expected; itemized in the phase report)"),
++				ArchetypesA, ArchetypesRanged, ArchetypesRanged - ArchetypesA));
++#endif
++		World->DestroyWorld(false);
++	}
++
+ #if WITH_MASSENTITY_DEBUG
+ 	TestEqual(TEXT("identical spawns -> identical archetype count"), ArchetypesB, ArchetypesA);
+ 	AddInfo(FString::Printf(TEXT("archetypes with combat fragments (2 infantry units): %d"), ArchetypesA));
+@@ -446,6 +491,7 @@ bool FCombat_SpawnComposition::RunTest(const FString& Parameters)
+ 	AddInfo(TEXT("shipping build: archetype count folds 0 (debug API absent)"));
+ #endif
+ 	TestTrue(TEXT("combat fragments on every spawned entity"), bFragmentsPresent);
++	TestTrue(TEXT("ranged fragments: present on ranged rosters, absent on melee rosters"), bRangedFragmentsCorrect);
+ 	return true;
+ }
+ 
+diff --git a/Plugins/MassBattle/Source/MassBattleTest/Private/MassBattleEduTests.cpp b/Plugins/MassBattle/Source/MassBattleTest/Private/MassBattleEduTests.cpp
+index 924e640..31570b0 100644
+--- a/Plugins/MassBattle/Source/MassBattleTest/Private/MassBattleEduTests.cpp
++++ b/Plugins/MassBattle/Source/MassBattleTest/Private/MassBattleEduTests.cpp
+@@ -3,6 +3,10 @@
+ // The on-disk fixture (Data/EDU/golden_edu_v1.txt) is the schema source of
+ // truth; tests load it via FPaths::ProjectDir (per-commit tier runs in the
+ // editor context, where ProjectDir is the repo root).
++// Phase 3 re-sign (2026-10-29, spec ranged-stack section 6): stat_sec joins
++// the schema (15 keys) and the fixture gains two ranged rows; the golden and
++// every inline edge fixture carry the new field. Disclosed re-sign per the
++// T0.2 policy -- any drift is a facts-correction entry (AGENTS section 4).
+ #include "Misc/AutomationTest.h"
+ #include "Misc/Paths.h"
+ #include "Misc/FileHelper.h"
+@@ -54,8 +58,8 @@ bool FEdu_RoundTripGolden::RunTest(const FString& Parameters)
+ 		AddError(FString::Printf(TEXT("parse error line %d: %s"), Err.LineNumber, *Err.Message));
+ 		return false;
+ 	}
+-	TestEqual(TEXT("schema field count is 14 (reality-corrected)"), FBattleEduParser::SchemaFieldCount(), 14);
+-	TestEqual(TEXT("fixture unit count"), Units.Num(), 2);
++	TestEqual(TEXT("schema field count is 15 (phase 3 re-sign: +stat_sec)"), FBattleEduParser::SchemaFieldCount(), 15);
++	TestEqual(TEXT("fixture unit count"), Units.Num(), 4);
+ 
+ 	// Spot-check the tables against the fixture content.
+ 	const FEduField* Type0 = Units[0].FindField(TEXT("type"));
+@@ -83,6 +87,34 @@ bool FEdu_RoundTripGolden::RunTest(const FString& Parameters)
+ 		TestEqual(TEXT("unit1 stat_pri value count"), Pri1->Values.Num(), 11);
+ 		TestEqual(TEXT("unit1 stat_pri damage"), Pri1->Values[8], FString(TEXT("25")));
+ 	}
++	// Phase 3 ranged rows: stat_pri carries the missile weapon (M2TW
++	// convention), stat_sec the melee backup; spot-check the extraction
++	// inputs FromEdu consumes (spec ranged-stack section 6, brief F3).
++	const FEduField* Pri2 = Units[2].FindField(TEXT("stat_pri"));
++	const FEduField* Sec2 = Units[2].FindField(TEXT("stat_sec"));
++	TestNotNull(TEXT("unit2 stat_sec present"), Sec2);
++	if (Pri2 && Sec2)
++	{
++		TestEqualSensitive(TEXT("unit2 missile kind (token lowercased)"), Pri2->Values[2], FString(TEXT("arrow")));
++		TestEqual(TEXT("unit2 range"), Pri2->Values[3], FString(TEXT("120")));
++		TestEqual(TEXT("unit2 ammo"), Pri2->Values[4], FString(TEXT("25")));
++		TestEqual(TEXT("unit2 stat_sec melee attack"), Sec2->Values[0], FString(TEXT("4")));
++	}
++	const FEduField* Type3 = Units[3].FindField(TEXT("type"));
++	const FEduField* Pri3 = Units[3].FindField(TEXT("stat_pri"));
++	if (Type3 && Pri3)
++	{
++		TestEqualSensitive(TEXT("unit3 is Mercenary Crossbowmen"), Type3->GetValue(), FString(TEXT("Mercenary Crossbowmen")));
++		TestEqualSensitive(TEXT("unit3 missile kind"), Pri3->Values[2], FString(TEXT("bolt")));
++		TestEqual(TEXT("unit3 range"), Pri3->Values[3], FString(TEXT("160")));
++		TestEqual(TEXT("unit3 ammo"), Pri3->Values[4], FString(TEXT("18")));
++	}
++	// Melee rows mirror stat_sec with a "no" missile slot.
++	const FEduField* Sec0 = Units[0].FindField(TEXT("stat_sec"));
++	if (Sec0)
++	{
++		TestEqualSensitive(TEXT("unit0 stat_sec missile is no"), Sec0->Values[2], FString(TEXT("no")));
++	}
+ 
+ 	// tables -> canonical text
+ 	// Audit M3: canonical-form equality is byte-sensitive by definition --
+@@ -112,6 +144,7 @@ bool FEdu_RoundTripGolden::RunTest(const FString& Parameters)
+ 		"formation 1.2, 1.2, 2.4, 2.4, 3, square\n"
+ 		"stat_health 1, 1\n"
+ 		"stat_pri 1, 2, no, 0, 0, melee, simple, other, 10, 0.2, 0.2\n"
++		"stat_sec 1, 2, no, 0, 0, melee, simple, other, 10, 0.2, 0.2\n"
+ 		"stat_pri_armour 0, 1, 0, flesh\n"
+ 		"stat_mental 2, low, untrained\n"
+ 		"stat_charge_dist 30\n"
+@@ -127,10 +160,43 @@ bool FEdu_RoundTripGolden::RunTest(const FString& Parameters)
+ 		"formation 1.2, 1.2, 2.4, 2.4, 3, square\n"
+ 		"stat_health 1, 1\n"
+ 		"stat_pri 4, 4, no, 0, 0, melee, blade_piercing, spear, 25, 0.35, 0.35\n"
++		"stat_sec 4, 4, no, 0, 0, melee, blade_piercing, spear, 25, 0.35, 0.35\n"
+ 		"stat_pri_armour 4, 5, 0, metal\n"
+ 		"stat_mental 6, normal, trained\n"
+ 		"stat_charge_dist 30\n"
+ 		"stat_cost 1, 250, 220, 90, 120, 220\n"
++		"ownership england, france\n"
++		"\n"
++		"type Peasant Archers\n"
++		"dictionary Peasant_Archers\n"
++		"category infantry\n"
++		"class missile\n"
++		"soldier Peasant_Archer, 40, 0, 1\n"
++		"attributes sea_faring, hide_forest, hardy, can_withdraw, can_skirmish\n"
++		"formation 1.2, 1.2, 2.4, 2.4, 3, square\n"
++		"stat_health 1, 1\n"
++		"stat_pri 6, 2, arrow, 120, 25, missile, simple, other, 10, 0.2, 0.2\n"
++		"stat_sec 4, 2, no, 0, 0, melee, simple, other, 10, 0.2, 0.2\n"
++		"stat_pri_armour 0, 1, 0, flesh\n"
++		"stat_mental 4, low, untrained\n"
++		"stat_charge_dist 30\n"
++		"stat_cost 1, 150, 130, 60, 90, 130\n"
++		"ownership slave, england\n"
++		"\n"
++		"type Mercenary Crossbowmen\n"
++		"dictionary Mercenary_Crossbowmen\n"
++		"category infantry\n"
++		"class missile\n"
++		"soldier Mercenary_Crossbow, 40, 0, 1\n"
++		"attributes sea_faring, hide_forest, hardy, can_withdraw\n"
++		"formation 1.2, 1.2, 2.4, 2.4, 3, square\n"
++		"stat_health 1, 1\n"
++		"stat_pri 9, 2, bolt, 160, 18, missile, simple, other, 10, 0.25, 0.25\n"
++		"stat_sec 5, 3, no, 0, 0, melee, simple, other, 10, 0.2, 0.2\n"
++		"stat_pri_armour 3, 4, 0, metal\n"
++		"stat_mental 5, normal, trained\n"
++		"stat_charge_dist 30\n"
++		"stat_cost 1, 300, 260, 100, 130, 260\n"
+ 		"ownership england, france\n");
+ 	TestEqualSensitive(TEXT("canonical text matches hand-written golden"), Canonical1, GoldenCanonical);
+ 
+@@ -148,6 +214,7 @@ bool FEdu_EdgeCases::RunTest(const FString& Parameters)
+ 		const FString Bad = TEXT("type X\ndictionary X\ncategory infantry\nclass light\n"
+ 			"soldier X, 40, 0, 1\nattributes\nformation 1.2, 1.2, 2.4, 2.4, 3, square\n"
+ 			"stat_health 1, 1\nstat_pri 1, 2, no, 0, 0, melee, simple, other, 10, 0.2, 0.2\n"
++			"stat_sec 1, 2, no, 0, 0, melee, simple, other, 10, 0.2, 0.2\n"
+ 			"stat_pri_armour 0, 1, 0, flesh\nstat_mental 2, low, untrained\n"
+ 			"stat_charge_dist 30\nstat_cost 1, 100, 90, 40, 60, 90\nownership england\n"
+ 			"stat_magic 5\n"); // <- unknown
+@@ -164,6 +231,7 @@ bool FEdu_EdgeCases::RunTest(const FString& Parameters)
+ 		const FString Dup = TEXT("type X\ntype Y\ndictionary X\ncategory infantry\nclass light\n"
+ 			"soldier X, 40, 0, 1\nattributes\nformation 1.2, 1.2, 2.4, 2.4, 3, square\n"
+ 			"stat_health 1, 1\nstat_pri 1, 2, no, 0, 0, melee, simple, other, 10, 0.2, 0.2\n"
++			"stat_sec 1, 2, no, 0, 0, melee, simple, other, 10, 0.2, 0.2\n"
+ 			"stat_pri_armour 0, 1, 0, flesh\nstat_mental 2, low, untrained\n"
+ 			"stat_charge_dist 30\nstat_cost 1, 100, 90, 40, 60, 90\nownership england\n");
+ 		TArray<FEduUnit> Units;
+@@ -173,15 +241,34 @@ bool FEdu_EdgeCases::RunTest(const FString& Parameters)
+ 		const FString BadArity = TEXT("type X\ndictionary X\ncategory infantry\nclass light\n"
+ 			"soldier X, 40\nattributes\nformation 1.2, 1.2, 2.4, 2.4, 3, square\n" // soldier needs 4
+ 			"stat_health 1, 1\nstat_pri 1, 2, no, 0, 0, melee, simple, other, 10, 0.2, 0.2\n"
++			"stat_sec 1, 2, no, 0, 0, melee, simple, other, 10, 0.2, 0.2\n"
+ 			"stat_pri_armour 0, 1, 0, flesh\nstat_mental 2, low, untrained\n"
+ 			"stat_charge_dist 30\nstat_cost 1, 100, 90, 40, 60, 90\nownership england\n");
+ 		Err = FEduParseError();
+ 		TestFalse(TEXT("wrong arity fails"), FBattleEduParser::Parse(BadArity, Units, Err));
+ 
++		const FString BadSecArity = TEXT("type X\ndictionary X\ncategory infantry\nclass light\n"
++			"soldier X, 40, 0, 1\nattributes\nformation 1.2, 1.2, 2.4, 2.4, 3, square\n"
++			"stat_health 1, 1\nstat_pri 1, 2, no, 0, 0, melee, simple, other, 10, 0.2, 0.2\n"
++			"stat_sec 4, 2\n" // <- stat_sec needs 11
++			"stat_pri_armour 0, 1, 0, flesh\nstat_mental 2, low, untrained\n"
++			"stat_charge_dist 30\nstat_cost 1, 100, 90, 40, 60, 90\nownership england\n");
++		Err = FEduParseError();
++		TestFalse(TEXT("wrong stat_sec arity fails"), FBattleEduParser::Parse(BadSecArity, Units, Err));
++
++		const FString MissingSec = TEXT("type X\ndictionary X\ncategory infantry\nclass light\n"
++			"soldier X, 40, 0, 1\nattributes\nformation 1.2, 1.2, 2.4, 2.4, 3, square\n"
++			"stat_health 1, 1\nstat_pri 1, 2, no, 0, 0, melee, simple, other, 10, 0.2, 0.2\n"
++			"stat_pri_armour 0, 1, 0, flesh\nstat_mental 2, low, untrained\n"
++			"stat_charge_dist 30\nstat_cost 1, 100, 90, 40, 60, 90\nownership england\n");
++		Err = FEduParseError();
++		TestFalse(TEXT("missing stat_sec fails (schema completeness)"), FBattleEduParser::Parse(MissingSec, Units, Err));
++
+ 		const FString BadNum = TEXT("type X\ndictionary X\ncategory infantry\nclass light\n"
+ 			"soldier X, 40, 0, 1\nattributes\nformation 1.2, 1.2, 2.4, 2.4, 3, square\n"
+ 			"stat_health abc, 1\n" // <- not an int
+ 			"stat_pri 1, 2, no, 0, 0, melee, simple, other, 10, 0.2, 0.2\n"
++			"stat_sec 1, 2, no, 0, 0, melee, simple, other, 10, 0.2, 0.2\n"
+ 			"stat_pri_armour 0, 1, 0, flesh\nstat_mental 2, low, untrained\n"
+ 			"stat_charge_dist 30\nstat_cost 1, 100, 90, 40, 60, 90\nownership england\n");
+ 		Err = FEduParseError();
+@@ -201,6 +288,7 @@ bool FEdu_EdgeCases::RunTest(const FString& Parameters)
+ 			"formation 1.20, 1.2, 2.40, 2.4, 3.00, square\n" // float forms
+ 			"stat_health 1, 1\n"
+ 			"stat_pri 07, 2, NO, 0, 0, melee, simple, other, 10, 0.2, 0.2\n"
++			"stat_sec 4, 2, ARROW, 120, 025, missile, simple, other, 10, 0.2, 0.2\n"
+ 			"stat_pri_armour 0, 1, 0, flesh\n"
+ 			"stat_mental 2, low, untrained\n"
+ 			"stat_charge_dist 30\n"
+@@ -226,6 +314,7 @@ bool FEdu_EdgeCases::RunTest(const FString& Parameters)
+ 			"formation 1.2, 1.2, 2.4, 2.4, 3, square\n" // float forms normalized
+ 			"stat_health 1, 1\n"
+ 			"stat_pri 7, 2, no, 0, 0, melee, simple, other, 10, 0.2, 0.2\n"
++			"stat_sec 4, 2, arrow, 120, 25, missile, simple, other, 10, 0.2, 0.2\n"
+ 			"stat_pri_armour 0, 1, 0, flesh\n"
+ 			"stat_mental 2, low, untrained\n"
+ 			"stat_charge_dist 30\n"
+-- 
+2.32.0.windows.2
+

@@ -1,0 +1,771 @@
+From c3365f27ce96bc06f0ce65585698c17d8ee91a7a Mon Sep 17 00:00:00 2001
+From: Z User <z@container>
+Date: Wed, 28 Oct 2026 19:10:06 +0000
+Subject: [PATCH 14/16] phase3: task 4 volley/ammo/skirmish seams + projectile
+ pool + T3.3 family
+
+- BattleProjectilePool.h/.cpp (new, spec ranged-stack section 3.3, ADR-27):
+  the SoA pooled store -- NOT entities, NOT actors; (index, generation)
+  identity; Reserve-only allocation (Acquire fails closed into the Drops
+  metric, RC9); LIFO free list; battle Reset preserves generations.
+- BattleRanged.cpp: the task-0 stubs replaced with the T3.3-locked bodies:
+  SelectVolleyShots (eligibility ladder: reload/ammo/rank/range -> LOS fire
+  rule: arced frontage vs flat full lane, RC2/RC3 -> friendly rules A7: flat
+  lane corridor + arced impact-zone tolerance -> solve + disperse + mutate
+  views: the accounting IS the shot, RC5); EvaluateSkirmish (RC7 truth
+  table: break trigger regardless of fire toggle, hysteresis resume).
+  FVolleyShooterView gains RangeM (the fragment-stamped weapon range).
+- MassBattleRangedTests.cpp: T3.3 family appended -- Pool (fails closed,
+  never grows, stale generations, churn, reset), AmmoAccounting (shots ==
+  decrements == ShotsFired sum; conservation; empty quivers never fire;
+  fraction invariants), VolleySelection (rank limits, range window, the
+  arced-over-hill vs flat-holds demonstrable pair, friendly holds both
+  rules, reload staggering), SkirmishMath (the RC7 truth table).
+
+MUST re-run on the UE machine: unit tier (the six Battle.Unit.Ranged.* tests
+green; cvar-default dependence documented: VolleyRanks=2, ReloadInterval=3,
+MinRangeM=8). Static patch: brace-balanced, include-complete; no engine
+build was available at author time.
+---
+ .../Private/BattleProjectilePool.cpp          |  76 ++++
+ .../MassBattle/Private/BattleRanged.cpp       | 165 +++++++--
+ .../MassBattle/Public/BattleProjectilePool.h  |  73 ++++
+ .../Source/MassBattle/Public/BattleRanged.h   |   1 +
+ .../Private/MassBattleRangedTests.cpp         | 346 ++++++++++++++++++
+ 5 files changed, 638 insertions(+), 23 deletions(-)
+ create mode 100644 Plugins/MassBattle/Source/MassBattle/Private/BattleProjectilePool.cpp
+ create mode 100644 Plugins/MassBattle/Source/MassBattle/Public/BattleProjectilePool.h
+
+diff --git a/Plugins/MassBattle/Source/MassBattle/Private/BattleProjectilePool.cpp b/Plugins/MassBattle/Source/MassBattle/Private/BattleProjectilePool.cpp
+new file mode 100644
+index 0000000..671e081
+--- /dev/null
++++ b/Plugins/MassBattle/Source/MassBattle/Private/BattleProjectilePool.cpp
+@@ -0,0 +1,76 @@
++// BattleProjectilePool.cpp -- the pooled projectile store (spec
++// ranged-stack §3.3, ADR-27). All allocation happens in Reserve; Acquire and
++// Release are O(1) stack operations with zero allocation.
++#include "BattleProjectilePool.h"
++
++void FBattleProjectilePool::Reserve(int32 InCapacity)
++{
++	Capacity = FMath::Max(0, InCapacity);
++	LiveCount = 0;
++	Drops = 0;
++
++	PosX.Init(0.f, Capacity);
++	PosY.Init(0.f, Capacity);
++	PosZ.Init(0.f, Capacity);
++	VelX.Init(0.f, Capacity);
++	VelY.Init(0.f, Capacity);
++	VelZ.Init(0.f, Capacity);
++	GravityScale.Init(1.f, Capacity);
++	TTL.Init(0.f, Capacity);
++	Kind.Init(0, Capacity);
++	Live.Init(0, Capacity);
++	GenerationArray.Init(0, Capacity);
++	OwnerUnit.Init(FUnitHandle(), Capacity);
++	ShooterEntity.Init(FMassEntityHandle(), Capacity);
++	RangedAttack.Init(0.f, Capacity);
++
++	// LIFO free list: slot order is deterministic (index order on a fresh
++	// pool -- the state hash's pool block depends on it, spec §3.4).
++	FreeIndices.SetNum(Capacity);
++	for (int32 i = 0; i < Capacity; ++i)
++	{
++		FreeIndices[Capacity - 1 - i] = i;
++	}
++}
++
++int32 FBattleProjectilePool::Acquire(uint32& OutGeneration)
++{
++	if (FreeIndices.Num() == 0)
++	{
++		++Drops; // fail closed (RC9): the pool NEVER grows mid-volley
++		OutGeneration = 0;
++		return InvalidIndex;
++	}
++	const int32 Index = FreeIndices.Pop();
++	Live[Index] = 1;
++	++LiveCount;
++	OutGeneration = GenerationArray[Index];
++	return Index;
++}
++
++void FBattleProjectilePool::Release(int32 Index)
++{
++	if (!IsLive(Index))
++	{
++		return;
++	}
++	Live[Index] = 0;
++	--LiveCount;
++	++GenerationArray[Index]; // stale indices die here
++	FreeIndices.Push(Index);
++}
++
++void FBattleProjectilePool::Reset()
++{
++	for (int32 i = 0; i < Capacity; ++i)
++	{
++		Live[i] = 0;
++	}
++	// Re-seed the free list in index order (fresh-pool determinism).
++	FreeIndices.SetNum(Capacity);
++	for (int32 i = 0; i < Capacity; ++i)
++	{
++		FreeIndices[Capacity - 1 - i] = i;
++	}
++	LiveCount = 0;
++}
+diff --git a/Plugins/MassBattle/Source/MassBattle/Private/BattleRanged.cpp b/Plugins/MassBattle/Source/MassBattle/Private/BattleRanged.cpp
+index a7ca5ba..0f2da0a 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Private/BattleRanged.cpp
++++ b/Plugins/MassBattle/Source/MassBattle/Private/BattleRanged.cpp
+@@ -1,9 +1,10 @@
+ // BattleRanged.cpp -- the Battle.Ranged.* CVAR block (spec ranged-stack
+-// §4.11) + the ranged seam bodies. Task 0 ships the CVAR block live and the
+-// seam functions as STUBS (the Phase 2 task-0 pattern: CI-visible gates,
+-// empty math); the seam task replaces the stubs with the implementations
+-// locked by T3.3. Defaults are A6 placeholders (ADR-30).
++// §4.11) + the ranged seam bodies (volley selection, ammo accounting,
++// skirmish decision -- T3.3-locked). The task-0 stubs are gone; the bodies
++// consume the ballistics seam (BattleBallistics.h) and never touch worlds or
++// fragments. Defaults are A6 placeholders (ADR-30).
+ #include "BattleRanged.h"
++#include "BattleBallistics.h"
+ #include "HAL/IConsoleManager.h"
+ 
+ // -- Battle.Ranged.* CVAR block (spec §4.11; defaults are A6 placeholders) --
+@@ -138,7 +139,27 @@ FProjectileProfile GetProjectileProfile(EBattleProjectileKind Kind)
+ 	return P;
+ }
+ 
+-// -- Seam stubs (task 0; replaced by the seam task, T3.3-locked) --
++// -- Seam bodies (the task-0 stubs replaced; T3.3-locked) --
++
++namespace
++{
++	/** Point-to-segment distance, 2D (the flat-lane corridor test, spec
++	 *  §4.5). Pure math, no allocation. */
++	float PointSegmentDist2D(const FVector2D& Point, const FVector2D& A, const FVector2D& B)
++	{
++		const FVector2D AB = B - A;
++		const float LenSq = AB.SizeSquared();
++		if (LenSq <= 1e-8f)
++		{
++			return FVector2D::Distance(Point, A);
++		}
++		const float T = FVector2D::DotProduct(Point - A, AB) / LenSq;
++		const float Clamped = FMath::Clamp(T, 0.f, 1.f);
++		return FVector2D::Distance(Point, A + AB * Clamped);
++	}
++
++	constexpr float VolleyBodyRadiusM = 0.4f; // the 40 cm body radius (B-1 family: one named constant per seam)
++}
+ 
+ int32 SelectVolleyShots(
+ 	TArray<FVolleyShooterView>& InOutShooters,
+@@ -150,16 +171,110 @@ int32 SelectVolleyShots(
+ 	int32 FriendlyImpactTolerance,
+ 	TArray<FVolleyShot>& OutShots)
+ {
+-	// STUB: the volley task implements eligibility + solving + dispersion.
+-	(void)InOutShooters;
+-	(void)Target;
+-	(void)Profile;
+-	(void)Grid;
+-	(void)FriendlyLaneBlockersM;
+-	(void)AccuracyMult;
+-	(void)FriendlyImpactTolerance;
+-	(void)OutShots;
+-	return 0;
++	// Rank limit (A10): arced profiles fire from the front VolleyRanks ranks;
++	// flat profiles from the front rank only (the fixed rule).
++	const int32 MaxRank = Profile.bIndirect ? FMath::Max(1, FRangedCVars::VolleyRanks()) : 1;
++	const float MinRangeM = FRangedCVars::MinRangeM();
++	const float GravityMps2 = FBallisticsConstants::GravityMps2 * Profile.GravityScale;
++
++	// Arced impact-zone estimate (A7): the dispersion cone scaled to the
++	// horizontal distance, plus the hit radius. Friends inside -> hold when
++	// the count exceeds the tolerance.
++	const float HorizDist = FVector2D::Distance(InOutShooters.Num() > 0 ? InOutShooters[0].PosM : FVector2D::ZeroVector, Target.PosM);
++	const float ConeRad = FMath::DegreesToRadians(FMath::Max(Profile.DispersionDeg, 0.01f));
++	const float ImpactZoneRadiusM = (InOutShooters.Num() > 0 ? HorizDist : 0.f) * FMath::Tan(ConeRad) + Profile.HitRadiusM;
++	int32 FriendsInZone = 0;
++	for (const FVector2D& Friend : FriendlyLaneBlockersM)
++	{
++		if (FVector2D::Distance(Friend, Target.PosM) <= ImpactZoneRadiusM)
++		{
++			++FriendsInZone;
++		}
++	}
++	const bool bArcedHold = Profile.bIndirect && FriendsInZone > FriendlyImpactTolerance;
++
++	// Flat-lane corridor (A7): any friendly body inside the corridor holds
++	// fire. Corridor half-width = 2 body radii + hit radius.
++	const float CorridorHalfM = 2.f * VolleyBodyRadiusM + Profile.HitRadiusM;
++
++	int32 ShotCount = 0;
++	for (FVolleyShooterView& Shooter : InOutShooters)
++	{
++		// -- eligibility (RC1), cheapest tests first --
++		if (Shooter.ReloadTimer > 0.f || Shooter.Ammo <= 0 || Shooter.Rank >= MaxRank)
++		{
++			continue;
++		}
++		const float Dist = FVector2D::Distance(Shooter.PosM, Target.PosM);
++		if (Dist <= MinRangeM || Dist > Shooter.RangeM)
++		{
++			continue;
++		}
++
++		// -- LOS (RC3): arced checks the frontage segment only; flat checks
++		//    the whole lane (the trajectory-class FIRE RULE, RC2).
++		bool bClear = false;
++		if (Profile.bIndirect)
++		{
++			const FVector2D Dir = (Target.PosM - Shooter.PosM).GetSafeNormal();
++			const FVector2D FrontageEnd = Shooter.PosM + Dir * FRangedCVars::FrontageClearM();
++			bClear = FBallisticsMath::MarchClear(Grid, Shooter.PosM, Shooter.EyeZM, FrontageEnd, Shooter.EyeZM, 0.3f);
++		}
++		else
++		{
++			bClear = FBallisticsMath::MarchClear(Grid, Shooter.PosM, Shooter.EyeZM, Target.PosM, Target.ZM, 0.3f);
++			if (bClear)
++			{
++				for (const FVector2D& Friend : FriendlyLaneBlockersM)
++				{
++					if (PointSegmentDist2D(Friend, Shooter.PosM, Target.PosM) <= CorridorHalfM)
++					{
++						bClear = false;
++						break;
++					}
++				}
++			}
++		}
++		if (!bClear)
++		{
++			continue;
++		}
++
++		// -- arced friendly-zone hold (A7) --
++		if (Profile.bIndirect && bArcedHold)
++		{
++			continue;
++		}
++
++		// -- solve + disperse (RC1/RC2) --
++		const FBallisticSolution Solution = FBallisticsMath::SolveLaunch(
++			Shooter.PosM, Shooter.EyeZM, Target.PosM, Target.ZM, Profile.MuzzleSpeedMps, GravityMps2);
++		if (!Solution.bValid)
++		{
++			continue; // out of envelope: hold, never force-fire
++		}
++		const uint32 Seed = FBallisticsMath::ShotSeed(
++			Shooter.Entity.Index, Shooter.Entity.SerialNumber, Shooter.ShotsFired);
++		const float ConeDeg = Profile.DispersionDeg / FMath::Max(AccuracyMult, 0.05f);
++		const FVector LaunchDir = FBallisticsMath::PerturbDirection(Solution.LaunchDir, ConeDeg, Seed);
++
++		FVolleyShot Shot;
++		Shot.Entity = Shooter.Entity;
++		Shot.Unit = Shooter.Unit;
++		Shot.Kind = Shooter.Kind;
++		Shot.LaunchPosM = FVector(Shooter.PosM.X, Shooter.PosM.Y, Shooter.EyeZM);
++		Shot.LaunchDir = LaunchDir;
++		Shot.FlightTimeS = Solution.FlightTimeS;
++		Shot.Seed = Seed;
++		OutShots.Add(Shot);
++		++ShotCount;
++
++		// -- mutate the view: the accounting IS the shot (RC5) --
++		--Shooter.Ammo;
++		Shooter.ReloadTimer = FRangedCVars::ReloadInterval();
++		++Shooter.ShotsFired;
++	}
++	return ShotCount;
+ }
+ 
+ float ComputeAmmoFraction(int32 AmmoSum, int32 InitialAmmo, int32 RosterSize)
+@@ -175,12 +290,16 @@ ESkirmishDecision EvaluateSkirmish(
+ 	float NearestEnemyDistM, bool bReloadReady, bool bFireAtWill,
+ 	bool bRetreating, float BreakDistM, float ResumeDistM)
+ {
+-	// STUB: the skirmish task implements the hysteresis decision (RC7).
+-	(void)NearestEnemyDistM;
+-	(void)bReloadReady;
+-	(void)bFireAtWill;
+-	(void)bRetreating;
+-	(void)BreakDistM;
+-	(void)ResumeDistM;
+-	return ESkirmishDecision::Hold;
++	// RC7: retreat triggers inside the break distance regardless of the fire
++	// toggle (hold-fire is not hold-ground); hysteresis holds the retreat
++	// until the resume distance; fire resumes only past it.
++	if (NearestEnemyDistM <= BreakDistM)
++	{
++		return ESkirmishDecision::Retreat;
++	}
++	if (bRetreating && NearestEnemyDistM < ResumeDistM)
++	{
++		return ESkirmishDecision::Retreat;
++	}
++	return (bReloadReady && bFireAtWill) ? ESkirmishDecision::Fire : ESkirmishDecision::Hold;
+ }
+diff --git a/Plugins/MassBattle/Source/MassBattle/Public/BattleProjectilePool.h b/Plugins/MassBattle/Source/MassBattle/Public/BattleProjectilePool.h
+new file mode 100644
+index 0000000..aaa95b1
+--- /dev/null
++++ b/Plugins/MassBattle/Source/MassBattle/Public/BattleProjectilePool.h
+@@ -0,0 +1,73 @@
++// BattleProjectilePool.h -- Phase 3 pooled projectile store (spec
++// ranged-stack §3.3, ADR-27): a subsystem-owned structure-of-arrays, NOT Mass
++// entities and NOT actors. 1,000 arrows must not cost archetype members or
++// entity handles. Identity is (index, generation) -- the registry handle
++// pattern miniaturized; a released slot's generation bumps so stale indices
++// die. Capacity is reserved at battle start ONLY: Acquire beyond capacity
++// fails closed into the Drops metric, never grows (RC9).
++//
++// Plain struct on the pure-math seam (B.0): meters, m/s, seconds. The
++// subsystem wrapper (game thread) lands with the Phase 3 pipeline task; the
++// pool itself is world-free and fully unit-testable.
++#pragma once
++
++#include "CoreMinimal.h"
++#include "Mass/EntityHandle.h"
++#include "BattleTypes.h"
++
++struct MASSBATTLE_API FBattleProjectilePool
++{
++	static constexpr int32 InvalidIndex = -1;
++
++	/** Reserve to Capacity; free-list seeded 0..Capacity-1; Drops = 0.
++	 *  Re-reserving (battle restart) resets everything. Allocates ONLY here
++	 *  -- never mid-volley (RC9, ground rule 3). */
++	void Reserve(int32 Capacity);
++
++	/** Take a slot; InvalidIndex + ++Drops when the free list is empty (the
++	 *  shot is skipped by the caller -- fail closed, never an assert in
++	 *  shipping paths). The acquired slot's generation is returned through
++	 *  OutGeneration for identity checks. */
++	int32 Acquire(uint32& OutGeneration);
++
++	/** Return a slot; its generation bumps (stale indices die). */
++	void Release(int32 Index);
++
++	/** Live-slot test (a generation is current while acquired). */
++	bool IsLive(int32 Index) const { return Index >= 0 && Index < Capacity && Live[Index] != 0; }
++	bool IsValid(int32 Index, uint32 Generation) const
++	{
++		return IsLive(Index) && GenerationArray[Index] == Generation;
++	}
++
++	/** Battle/test reset: everything released, generations PRESERVED (stale
++	 *  indices from a prior battle still die). */
++	void Reset();
++
++	int32 GetCapacity() const { return Capacity; }
++	int32 GetLiveCount() const { return LiveCount; }
++	int32 GetDrops() const { return Drops; }
++
++	// -- SoA arrays (all sized Capacity; live entries only are meaningful) --
++
++	TArray<float> PosX;                 // meters
++	TArray<float> PosY;
++	TArray<float> PosZ;
++	TArray<float> VelX;                 // m/s
++	TArray<float> VelY;
++	TArray<float> VelZ;
++	TArray<float> GravityScale;         // profile multiplier
++	TArray<float> TTL;                  // seconds; ground hit ends early
++	TArray<uint8>  Kind;                // EBattleProjectileKind
++	TArray<uint8>  Live;                // 0/1 slot state (iteration filter)
++	TArray<uint32> GenerationArray;     // slot stamps (stale-index rejection)
++	TArray<FUnitHandle> OwnerUnit;      // shooter's unit (attribution + friendly checks)
++	TArray<FMassEntityHandle> ShooterEntity; // roll-count identity for impact resolution
++	TArray<float> RangedAttack;         // stamped at fire (the impact attack term, spec §4.6)
++
++private:
++	int32 Capacity = 0;
++	int32 LiveCount = 0;
++	int32 Drops = 0;
++	TArray<int32> FreeIndices;          // LIFO stack
++};
+diff --git a/Plugins/MassBattle/Source/MassBattle/Public/BattleRanged.h b/Plugins/MassBattle/Source/MassBattle/Public/BattleRanged.h
+index 34f3a30..7e16658 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Public/BattleRanged.h
++++ b/Plugins/MassBattle/Source/MassBattle/Public/BattleRanged.h
+@@ -68,6 +68,7 @@ struct FVolleyShooterView
+ 	FVector2D PosM = FVector2D::ZeroVector;   // planar position, meters
+ 	float EyeZM = 1.6f;                       // launch height, meters
+ 	EBattleProjectileKind Kind = EBattleProjectileKind::None;
++	float RangeM = 0.f;                       // weapon range, meters (fragment-stamped)
+ 	int16 Ammo = 0;
+ 	float ReloadTimer = 0.f;
+ 	uint16 ShotsFired = 0;
+diff --git a/Plugins/MassBattle/Source/MassBattleTest/Private/MassBattleRangedTests.cpp b/Plugins/MassBattle/Source/MassBattleTest/Private/MassBattleRangedTests.cpp
+index 087b8aa..99e533a 100644
+--- a/Plugins/MassBattle/Source/MassBattleTest/Private/MassBattleRangedTests.cpp
++++ b/Plugins/MassBattle/Source/MassBattleTest/Private/MassBattleRangedTests.cpp
+@@ -12,7 +12,9 @@
+ 
+ #include "BattleBallistics.h"
+ #include "BattleCostGrid.h"
++#include "BattleProjectilePool.h"
+ #include "BattleRanged.h"
++#include "Math/RandomStream.h"
+ 
+ namespace
+ {
+@@ -231,4 +233,348 @@ bool FRanged_LOS::RunTest(const FString& Parameters)
+ 	return true;
+ }
+ 
++// ---------------------------------------------------------------------------
++// T3.3a: Battle.Unit.Ranged.Pool -- the SoA store (RC9: fails closed, never
++// grows; stale generations die; battle reset clears).
++// ---------------------------------------------------------------------------
++IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRanged_Pool,
++	"Battle.Unit.Ranged.Pool",
++	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
++
++bool FRanged_Pool::RunTest(const FString& Parameters)
++{
++	FBattleProjectilePool Pool;
++	Pool.Reserve(8);
++
++	// Fill to capacity.
++	uint32 Gen = 0;
++	TArray<int32> Slots;
++	for (int32 i = 0; i < 8; ++i)
++	{
++		const int32 S = Pool.Acquire(Gen);
++		TestTrue(TEXT("acquire within capacity"), S != FBattleProjectilePool::InvalidIndex);
++		Slots.Add(S);
++	}
++	TestEqual(TEXT("live count at capacity"), Pool.GetLiveCount(), 8);
++
++	// Beyond capacity: fail closed, count the drop, never grow (RC9).
++	const int32 Over = Pool.Acquire(Gen);
++	TestEqual(TEXT("acquire beyond capacity fails closed"), Over, FBattleProjectilePool::InvalidIndex);
++	TestEqual(TEXT("drop counted"), Pool.GetDrops(), 1);
++	TestEqual(TEXT("capacity unchanged"), Pool.GetCapacity(), 8);
++	TestEqual(TEXT("SoA arrays never grew"), Pool.PosX.Num(), 8);
++
++	// Release one, re-acquire: the SAME slot comes back (LIFO), generation
++	// bumped so the OLD handle is stale.
++	const uint32 OldGen = Pool.GenerationArray[Slots[3]];
++	Pool.Release(Slots[3]);
++	TestEqual(TEXT("release decrements live count"), Pool.GetLiveCount(), 7);
++	const int32 Re = Pool.Acquire(Gen);
++	TestEqual(TEXT("LIFO re-acquire returns the released slot"), Re, Slots[3]);
++	TestEqual(TEXT("generation bumped on release"), Pool.GenerationArray[Re], OldGen + 1);
++	TestFalse(TEXT("stale generation is invalid"), Pool.IsValid(Re, OldGen));
++	TestTrue(TEXT("current generation is valid"), Pool.IsValid(Re, OldGen + 1));
++
++	// A short volley burst: fill, release all, fill again -- the drop counter
++	// only counts genuine overflow. Drain to zero first so every round's
++	// acquires succeed: the fill above left the pool at capacity, and an
++	// Acquire on a full pool fails closed into InvalidIndex (the PosX write
++	// below would RangeCheck-assert on -1 in dev builds).
++	for (int32 S = 0; S < Pool.GetCapacity(); ++S)
++	{
++		if (Pool.IsLive(S))
++		{
++			Pool.Release(S);
++		}
++	}
++	TestEqual(TEXT("drain returns to zero live"), Pool.GetLiveCount(), 0);
++	for (int32 Round = 0; Round < 100; ++Round)
++	{
++		for (int32 i = 0; i < 4; ++i)
++		{
++			const int32 S = Pool.Acquire(Gen);
++			Pool.PosX[S] = static_cast<float>(Round * 4 + i);
++		}
++		for (int32 i = 0; i < 4; ++i)
++		{
++			// Release by scanning live slots (the stepper's iteration shape).
++			for (int32 S = 0; S < Pool.GetCapacity(); ++S)
++			{
++				if (Pool.IsLive(S))
++				{
++					Pool.Release(S);
++					break;
++				}
++			}
++		}
++	}
++	TestEqual(TEXT("churn rounds leave live count 0"), Pool.GetLiveCount(), 0);
++	TestEqual(TEXT("churn rounds add no drops"), Pool.GetDrops(), 1);
++
++	// Battle reset: everything released, generations PRESERVED (stale indices
++	// from a prior battle still die).
++	Pool.Reset();
++	TestEqual(TEXT("reset clears live count"), Pool.GetLiveCount(), 0);
++	TestEqual(TEXT("reset preserves the drop ledger until re-reserve"), Pool.GetDrops(), 1);
++
++	return true;
++}
++
++// ---------------------------------------------------------------------------
++// T3.3b: Battle.Unit.Ranged.AmmoAccounting -- shots == decrements; the unit
++// aggregate == the entity sum; out-of-ammo entities never fire (RC5).
++// ---------------------------------------------------------------------------
++IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRanged_AmmoAccounting,
++	"Battle.Unit.Ranged.AmmoAccounting",
++	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
++
++bool FRanged_AmmoAccounting::RunTest(const FString& Parameters)
++{
++	FBattleCostGrid Grid;
++	Grid.InitFlat(86, 86, FVector2D::ZeroVector, 3.0f);
++	const FProjectileProfile Arrow = GetProjectileProfile(EBattleProjectileKind::Arrow);
++	FVolleyTargetView Target;
++	Target.PosM = FVector2D(80.f, 0.f);
++	Target.ZM = 1.0f;
++
++	// 16 shooters, randomized reload states over 50 cycles: every emitted
++	// shot decrements exactly one shooter's ammo by exactly one.
++	FRandomStream Rng(20261029u);
++	FUnitHandle OwnerUnit;
++	OwnerUnit.Index = 1u;
++	OwnerUnit.Serial = 1u;
++	TArray<FVolleyShooterView> Shooters;
++	Shooters.SetNum(16);
++	for (int32 i = 0; i < Shooters.Num(); ++i)
++	{
++		Shooters[i].Entity = FMassEntityHandle(i + 1, 1);
++		Shooters[i].Unit = OwnerUnit;
++		Shooters[i].PosM = FVector2D(0.f, static_cast<float>(i - 8) * 1.2f);
++		Shooters[i].EyeZM = 1.6f;
++		Shooters[i].Kind = EBattleProjectileKind::Arrow;
++		Shooters[i].RangeM = 120.f;
++		Shooters[i].Ammo = 25;
++		Shooters[i].ReloadTimer = Rng.FRandRange(0.f, 3.f);
++		Shooters[i].ShotsFired = 0;
++		Shooters[i].Rank = (i < 8) ? 0 : 1; // VolleyRanks default 2: all eligible
++	}
++
++	TArray<FVolleyShot> Shots;
++	int32 TotalShots = 0;
++	for (int32 Cycle = 0; Cycle < 50; ++Cycle)
++	{
++		Shots.Reset();
++		// Advance reloads (the processor's job; emulated deterministically).
++		for (FVolleyShooterView& S : Shooters)
++		{
++			S.ReloadTimer = FMath::Max(0.f, S.ReloadTimer - 0.1f);
++		}
++		const int32 Fired = SelectVolleyShots(Shooters, Target, Arrow, Grid, TArray<FVector2D>(), 1.f, 0, Shots);
++		TotalShots += Fired;
++		TestTrue(TEXT("emitted shots carry launch data"), Fired == 0 || (Shots.Num() == Fired));
++	}
++	TestTrue(TEXT("randomized cycles produce shots"), TotalShots > 0);
++
++	// shots == decrements == ShotsFired sum (RC5).
++	int32 ShotsFiredSum = 0;
++	int32 AmmoSum = 0;
++	for (const FVolleyShooterView& S : Shooters)
++	{
++		ShotsFiredSum += S.ShotsFired;
++		AmmoSum += S.Ammo;
++	}
++	TestEqual(TEXT("shots == total decrements (ShotsFired sum)"), TotalShots, ShotsFiredSum);
++	TestEqual(TEXT("ammo conservation: sum + fired == 16 x 25"), AmmoSum + ShotsFiredSum, 16 * 25);
++
++	// Drain to zero: out-of-ammo entities never fire (no negative ammo, no
++	// reload zombie -- RC5).
++	for (FVolleyShooterView& S : Shooters)
++	{
++		S.Ammo = 0;
++		S.ReloadTimer = 0.f;
++	}
++	Shots.Reset();
++	TestEqual(TEXT("empty quivers never fire"),
++		SelectVolleyShots(Shooters, Target, Arrow, Grid, TArray<FVector2D>(), 1.f, 0, Shots), 0);
++	int32 MinAmmo = 25;
++	for (const FVolleyShooterView& S : Shooters)
++	{
++		MinAmmo = FMath::Min(MinAmmo, static_cast<int32>(S.Ammo));
++	}
++	TestEqual(TEXT("ammo never goes negative"), MinAmmo, 0);
++
++	// Fraction invariants (RC5): -1 non-ranged; 0 at the empty aggregate; the
++	// aggregate == the entity sum.
++	TestEqual(TEXT("fraction -1 for non-ranged"), ComputeAmmoFraction(0, 0, 40), -1.f, 1e-5f);
++	TestEqual(TEXT("fraction 0 at empty aggregate"), ComputeAmmoFraction(0, 25, 40), 0.f, 1e-5f);
++	TestEqual(TEXT("fraction 1 at full"), ComputeAmmoFraction(25 * 40, 25, 40), 1.f, 1e-5f);
++	TestEqual(TEXT("fraction 0.4 mid-band"), ComputeAmmoFraction(25 * 16, 25, 40), 0.4f, 1e-4f);
++
++	return true;
++}
++
++// ---------------------------------------------------------------------------
++// T3.3c: Battle.Unit.Ranged.VolleySelection -- eligibility matrix: rank
++// limits, range window, LOS fire rules (arced frontage vs flat lane, RC2/RC3),
++// friendly-fire holds (A7), reload staggering (RC1).
++// ---------------------------------------------------------------------------
++IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRanged_VolleySelection,
++	"Battle.Unit.Ranged.VolleySelection",
++	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
++
++bool FRanged_VolleySelection::RunTest(const FString& Parameters)
++{
++	const FProjectileProfile Arrow = GetProjectileProfile(EBattleProjectileKind::Arrow);
++	const FProjectileProfile Bolt = GetProjectileProfile(EBattleProjectileKind::Bolt);
++	FVolleyTargetView Target;
++	Target.PosM = FVector2D(80.f, 0.f);
++	Target.ZM = 1.0f;
++
++	const auto MakeShooter = [&](int32 Index, int32 Rank) -> FVolleyShooterView
++	{
++		FVolleyShooterView S;
++		S.Entity = FMassEntityHandle(Index + 1, 1);
++		FUnitHandle U;
++		U.Index = 1u;
++		U.Serial = 1u;
++		S.Unit = U;
++		S.PosM = FVector2D(0.f, 0.f);
++		S.EyeZM = 1.6f;
++		S.Kind = EBattleProjectileKind::Arrow;
++		S.RangeM = 120.f;
++		S.Ammo = 25;
++		S.ReloadTimer = 0.f;
++		S.ShotsFired = 0;
++		S.Rank = Rank;
++		return S;
++	};
++
++	// -- rank limits (A10): arced fires ranks 0..VolleyRanks-1; flat fires
++	//    rank 0 only.
++	{
++		FBattleCostGrid Grid;
++		Grid.InitFlat(86, 86, FVector2D::ZeroVector, 3.0f);
++		TArray<FVolleyShooterView> Shooters = { MakeShooter(0, 0), MakeShooter(1, 1), MakeShooter(2, 2) };
++		TArray<FVolleyShot> Shots;
++		// VolleyRanks default = 2: ranks 0,1 fire (arced).
++		TestEqual(TEXT("arced fires the front 2 ranks"),
++			SelectVolleyShots(Shooters, Target, Arrow, Grid, TArray<FVector2D>(), 1.f, 0, Shots), 2);
++		// Flat: rank 0 only.
++		Shooters = { MakeShooter(0, 0), MakeShooter(1, 1) };
++		Shots.Reset();
++		TestEqual(TEXT("flat fires the front rank only"),
++			SelectVolleyShots(Shooters, Target, Bolt, Grid, TArray<FVector2D>(), 1.f, 0, Shots), 1);
++	}
++
++	// -- range window: below MinRangeM (default 8) holds; beyond weapon range
++	//    holds; in between fires.
++	{
++		FBattleCostGrid Grid;
++		Grid.InitFlat(86, 86, FVector2D::ZeroVector, 3.0f);
++		FVolleyTargetView Near = Target;
++		Near.PosM = FVector2D(6.f, 0.f); // inside MinRangeM
++		TArray<FVolleyShooterView> Shooters = { MakeShooter(0, 0) };
++		TArray<FVolleyShot> Shots;
++		TestEqual(TEXT("too close holds"),
++			SelectVolleyShots(Shooters, Near, Arrow, Grid, TArray<FVector2D>(), 1.f, 0, Shots), 0);
++		FVolleyTargetView Far = Target;
++		Far.PosM = FVector2D(121.f, 0.f); // beyond the 120 m EDU range
++		TestEqual(TEXT("too far holds"),
++			SelectVolleyShots(Shooters, Far, Arrow, Grid, TArray<FVector2D>(), 1.f, 0, Shots), 0);
++		TestEqual(TEXT("in window fires"),
++			SelectVolleyShots(Shooters, Target, Arrow, Grid, TArray<FVector2D>(), 1.f, 0, Shots), 1);
++	}
++
++	// -- the trajectory-class FIRE RULE over terrain (RC2 + RC3): a hill
++	//    mid-lane holds the flat shot (whole-lane march) but NOT the arced
++	//    shot (frontage-only march -- arrows go over).
++	{
++		FBattleCostGrid Grid;
++		Grid.InitFlat(86, 86, FVector2D::ZeroVector, 3.0f);
++		StampHill(Grid, FVector2D(38.f, -3.f), FVector2D(44.f, 3.f), 5.f);
++		TArray<FVolleyShooterView> Shooters = { MakeShooter(0, 0) };
++		TArray<FVolleyShot> Shots;
++		TestEqual(TEXT("arced fires over a mid-lane hill (frontage clear)"),
++			SelectVolleyShots(Shooters, Target, Arrow, Grid, TArray<FVector2D>(), 1.f, 0, Shots), 1);
++		TestEqual(TEXT("flat holds on a mid-lane hill (lane blocked)"),
++			SelectVolleyShots(Shooters, Target, Bolt, Grid, TArray<FVector2D>(), 1.f, 0, Shots), 0);
++	}
++
++	// -- friendly fire (A7): flat holds with a friendly body in the lane
++	//    corridor; arced holds when friends stand at the impact zone.
++	{
++		FBattleCostGrid Grid;
++		Grid.InitFlat(86, 86, FVector2D::ZeroVector, 3.0f);
++		TArray<FVolleyShooterView> Shooters = { MakeShooter(0, 0) };
++		TArray<FVolleyShot> Shots;
++
++		// Flat: a friendly at the lane midpoint (corridor half-width ~1.3 m).
++		TArray<FVector2D> LaneBlockers = { FVector2D(40.f, 0.5f) };
++		TestEqual(TEXT("flat holds with a friendly in the lane"),
++			SelectVolleyShots(Shooters, Target, Bolt, Grid, LaneBlockers, 1.f, 0, Shots), 0);
++		// The same friendly far off the lane does not hold fire.
++		LaneBlockers = { FVector2D(40.f, 12.f) };
++		TestEqual(TEXT("flat fires past an off-lane friendly"),
++			SelectVolleyShots(Shooters, Target, Bolt, Grid, LaneBlockers, 1.f, 0, Shots), 1);
++
++		// Arced: a friendly at the impact zone holds (tolerance 0); off-zone
++		// does not.
++		TArray<FVector2D> ZoneBlockers = { FVector2D(80.f, 0.5f) };
++		TestEqual(TEXT("arced holds with a friendly at the impact zone"),
++			SelectVolleyShots(Shooters, Target, Arrow, Grid, ZoneBlockers, 1.f, 0, Shots), 0);
++		ZoneBlockers = { FVector2D(80.f, 25.f) };
++		TestEqual(TEXT("arced fires with friendlies far from the zone"),
++			SelectVolleyShots(Shooters, Target, Arrow, Grid, ZoneBlockers, 1.f, 0, Shots), 1);
++	}
++
++	// -- reload staggering (RC1): a spent shooter sits out the reload cycle.
++	{
++		FBattleCostGrid Grid;
++		Grid.InitFlat(86, 86, FVector2D::ZeroVector, 3.0f);
++		TArray<FVolleyShooterView> Shooters = { MakeShooter(0, 0) };
++		TArray<FVolleyShot> Shots;
++		TestEqual(TEXT("first cycle fires"),
++			SelectVolleyShots(Shooters, Target, Arrow, Grid, TArray<FVector2D>(), 1.f, 0, Shots), 1);
++		TestEqual(TEXT("reload timer set from the cvar"),
++			Shooters[0].ReloadTimer, FRangedCVars::ReloadInterval(), 1e-4f);
++		Shots.Reset();
++		TestEqual(TEXT("reloading shooter sits out"),
++			SelectVolleyShots(Shooters, Target, Arrow, Grid, TArray<FVector2D>(), 1.f, 0, Shots), 0);
++	}
++
++	return true;
++}
++
++// ---------------------------------------------------------------------------
++// T3.3d: Battle.Unit.Ranged.SkirmishMath -- the RC7 truth table: break
++// trigger, hysteresis resume, hold-fire suppresses fire but not retreat.
++// ---------------------------------------------------------------------------
++IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRanged_SkirmishMath,
++	"Battle.Unit.Ranged.SkirmishMath",
++	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
++
++bool FRanged_SkirmishMath::RunTest(const FString& Parameters)
++{
++	const float Break = 25.f;
++	const float Resume = 32.5f; // 1.3x
++
++	// Inside the break distance: retreat regardless of the fire toggle.
++	TestEqual(TEXT("inside break: retreat"), EvaluateSkirmish(20.f, true, true, false, Break, Resume), ESkirmishDecision::Retreat);
++	TestEqual(TEXT("inside break with hold-fire: still retreat"), EvaluateSkirmish(20.f, true, false, false, Break, Resume), ESkirmishDecision::Retreat);
++
++	// Past break but inside the resume band while retreating: keep retreating
++	// (hysteresis).
++	TestEqual(TEXT("hysteresis holds the retreat"), EvaluateSkirmish(30.f, true, true, true, Break, Resume), ESkirmishDecision::Retreat);
++
++	// Past resume: fire when ready + fire-at-will; hold otherwise.
++	TestEqual(TEXT("clear + ready + willing: fire"), EvaluateSkirmish(40.f, true, true, true, Break, Resume), ESkirmishDecision::Fire);
++	TestEqual(TEXT("clear + hold-fire: hold"), EvaluateSkirmish(40.f, true, false, true, Break, Resume), ESkirmishDecision::Hold);
++	TestEqual(TEXT("clear + not reloaded: hold"), EvaluateSkirmish(40.f, false, true, true, Break, Resume), ESkirmishDecision::Hold);
++
++	// Not retreating and past break: no hysteresis latch needed.
++	TestEqual(TEXT("past break, not retreating: fire"), EvaluateSkirmish(30.f, true, true, false, Break, Resume), ESkirmishDecision::Fire);
++
++	return true;
++}
++
+ #endif // WITH_DEV_AUTOMATION_TESTS
+-- 
+2.32.0.windows.2
+

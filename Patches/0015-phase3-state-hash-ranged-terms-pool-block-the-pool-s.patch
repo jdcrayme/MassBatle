@@ -1,0 +1,259 @@
+From fbaa875bbe04e1e0503b850c9074e23ac59235fd Mon Sep 17 00:00:00 2001
+From: Z User <z@container>
+Date: Wed, 28 Oct 2026 19:11:39 +0000
+Subject: [PATCH 15/16] phase3: state-hash ranged terms + pool block + the
+ pool's subsystem home
+
+- BattleStateHash.cpp: block 8 (per-entity ranged terms appended AFTER the
+  charge block, same sorted-handle pass, zero-fill when the fragment is
+  absent: AmmoCount, ReloadTimer 1e-2, ShotsFired -- spawn-immutable fields
+  excluded per the base-stats precedent) + block 9 (the projectile pool:
+  live count + per-live-entry Pos/Vel/TTL at 1e-2 in INDEX order, RC8).
+- BattleProjectileSubsystem.h/.cpp (new): the pool's game-thread lifetime
+  owner (ReserveForBattle reads the PoolCapacity cvar once per battle;
+  ResetForBattle clears) -- ships with the data spine so the hash's pool
+  block has its read surface from day one; the fire/step processors remain
+  the pipeline task's work. FBattleProjectilePool::EmptyPool() is the
+  null-subsystem fold (zero-capacity static).
+- MassBattleCombatTests HashTerms extended: ranged-row spawn (Peasant
+  Archers), ammo/reload/shots mutation sensitivity with reverts, pool
+  acquire/mutate/release hash sensitivity (spec section 3.4).
+
+MUST re-run on the UE machine: unit tier (HashTerms + the ranged suite
+green; melee-only hashes unchanged by construction -- the zero-fill term
+count is fixed). Static patch: brace-balanced, include-complete; no engine
+build was available at author time.
+---
+ .../Private/BattleProjectileSubsystem.cpp     | 15 +++++
+ .../MassBattle/Private/BattleStateHash.cpp    | 47 ++++++++++++++++
+ .../MassBattle/Public/BattleProjectilePool.h  |  9 +++
+ .../Public/BattleProjectileSubsystem.h        | 34 ++++++++++++
+ .../Private/MassBattleCombatTests.cpp         | 55 +++++++++++++++++++
+ 5 files changed, 160 insertions(+)
+ create mode 100644 Plugins/MassBattle/Source/MassBattle/Private/BattleProjectileSubsystem.cpp
+ create mode 100644 Plugins/MassBattle/Source/MassBattle/Public/BattleProjectileSubsystem.h
+
+diff --git a/Plugins/MassBattle/Source/MassBattle/Private/BattleProjectileSubsystem.cpp b/Plugins/MassBattle/Source/MassBattle/Private/BattleProjectileSubsystem.cpp
+new file mode 100644
+index 0000000..e93fcee
+--- /dev/null
++++ b/Plugins/MassBattle/Source/MassBattle/Private/BattleProjectileSubsystem.cpp
+@@ -0,0 +1,15 @@
++// BattleProjectileSubsystem.cpp -- the pool's game-thread lifetime owner
++// (spec ranged-stack §3.3). Reserve reads the cvar ONCE per battle; the
++// pool itself never allocates after that (RC9).
++#include "BattleProjectileSubsystem.h"
++#include "BattleRanged.h"
++
++void UBattleProjectileSubsystem::ReserveForBattle()
++{
++	Pool.Reserve(FMath::Max(16, FRangedCVars::PoolCapacity()));
++}
++
++void UBattleProjectileSubsystem::ResetForBattle()
++{
++	Pool.Reset();
++}
+diff --git a/Plugins/MassBattle/Source/MassBattle/Private/BattleStateHash.cpp b/Plugins/MassBattle/Source/MassBattle/Private/BattleStateHash.cpp
+index fa8ff83..79c956b 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Private/BattleStateHash.cpp
++++ b/Plugins/MassBattle/Source/MassBattle/Private/BattleStateHash.cpp
+@@ -2,7 +2,9 @@
+ #include "BattleFragments.h"
+ #include "BattleMovementFragments.h"
+ #include "BattleCombatFragments.h"
++#include "BattleRangedFragments.h"
+ #include "BattleRegistry.h"
++#include "BattleProjectileSubsystem.h"
+ #include "Hash/CityHash.h"
+ #include "MassEntitySubsystem.h"
+ #include "MassEntityManager.h"
+@@ -169,7 +171,52 @@ uint64 FBattleStateHash::Compute(UWorld* World)
+ 			{
+ 				AppendU64(0);
+ 			}
++			// 8. Ranged terms (spec ranged-stack §3.4): appended AFTER the
++			// charge block, same sorted-handle pass, per entity. Ammo count,
++			// reload timer (1e-2 s), shots fired. Kind/RangeM/InitialAmmo
++			// are spawn-immutable and excluded (the base-stats precedent).
++			// Fixed term count with zero-fill when the fragment is absent
++			// (melee compositions) keeps the stream position-stable.
++			if (const FRangedStateFragment* Ranged = EntityView.GetFragmentDataPtr<FRangedStateFragment>())
++			{
++				AppendU64(static_cast<uint64>(static_cast<int16>(Ranged->AmmoCount)));
++				AppendU64(static_cast<uint64>(Quantize2(Ranged->ReloadTimer)));
++				AppendU64(static_cast<uint64>(Ranged->ShotsFired));
++			}
++			else
++			{
++				AppendU64(0);
++				AppendU64(0);
++				AppendU64(0);
++			}
++		}
++	}
++
++	// 9. Projectile pool block (spec ranged-stack §3.4, RC8): the live count,
++	//    then per live entry in INDEX order (deterministic by construction --
++	//    the pool's slot order is the free-list discipline, never a hash-map
++	//    order). Position/velocity at 1e-2 m and m/s, TTL at 1e-2 s. The
++	//    subsystem lands with the Phase 3 pipeline task; until it exists the
++	//    block folds zero (position-stable, flags-off baseline untouched).
++	const UBattleProjectileSubsystem* ProjectileSubsystem =
++		World ? World->GetSubsystem<UBattleProjectileSubsystem>() : nullptr;
++	const FBattleProjectilePool& Pool = ProjectileSubsystem
++		? ProjectileSubsystem->GetPool()
++		: FBattleProjectilePool::EmptyPool();
++	AppendU64(static_cast<uint64>(Pool.GetLiveCount()));
++	for (int32 Slot = 0; Slot < Pool.GetCapacity(); ++Slot)
++	{
++		if (!Pool.IsLive(Slot))
++		{
++			continue;
+ 		}
++		AppendU64(static_cast<uint64>(Quantize2(Pool.PosX[Slot])));
++		AppendU64(static_cast<uint64>(Quantize2(Pool.PosY[Slot])));
++		AppendU64(static_cast<uint64>(Quantize2(Pool.PosZ[Slot])));
++		AppendU64(static_cast<uint64>(Quantize2(Pool.VelX[Slot])));
++		AppendU64(static_cast<uint64>(Quantize2(Pool.VelY[Slot])));
++		AppendU64(static_cast<uint64>(Quantize2(Pool.VelZ[Slot])));
++		AppendU64(static_cast<uint64>(Quantize2(Pool.TTL[Slot])));
+ 	}
+ 
+ 	return CityHash64(reinterpret_cast<const char*>(Bytes.GetData()), static_cast<uint32>(Bytes.Num()));
+diff --git a/Plugins/MassBattle/Source/MassBattle/Public/BattleProjectilePool.h b/Plugins/MassBattle/Source/MassBattle/Public/BattleProjectilePool.h
+index aaa95b1..a4883c5 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Public/BattleProjectilePool.h
++++ b/Plugins/MassBattle/Source/MassBattle/Public/BattleProjectilePool.h
+@@ -48,6 +48,15 @@ struct MASSBATTLE_API FBattleProjectilePool
+ 	int32 GetLiveCount() const { return LiveCount; }
+ 	int32 GetDrops() const { return Drops; }
+ 
++	/** The shared empty pool (the state hash's null-subsystem fold, spec
++	 *  §3.4): a zero-capacity static so the hash block reads a valid object
++	 *  before the subsystem initializes. */
++	static const FBattleProjectilePool& EmptyPool()
++	{
++		static FBattleProjectilePool Empty;
++		return Empty;
++	}
++
+ 	// -- SoA arrays (all sized Capacity; live entries only are meaningful) --
+ 
+ 	TArray<float> PosX;                 // meters
+diff --git a/Plugins/MassBattle/Source/MassBattle/Public/BattleProjectileSubsystem.h b/Plugins/MassBattle/Source/MassBattle/Public/BattleProjectileSubsystem.h
+new file mode 100644
+index 0000000..3c63941
+--- /dev/null
++++ b/Plugins/MassBattle/Source/MassBattle/Public/BattleProjectileSubsystem.h
+@@ -0,0 +1,34 @@
++// BattleProjectileSubsystem.h -- Phase 3 game-thread home for the pooled
++// projectile store (spec ranged-stack §3.3, ADR-27/28). The pool struct is
++// world-free seam math; this subsystem owns its lifetime: capacity is
++// reserved at battle start ONLY (never mid-volley, RC9) from the
++// Battle.Ranged.PoolCapacity cvar, and ResetBattleState clears through
++// ResetForBattle. The fire/step PROCESSORS land with the Phase 3 pipeline
++// task on the UE machine; this wrapper ships with the data spine so the
++// state hash's pool block (spec §3.4) has its read surface from day one.
++#pragma once
++
++#include "CoreMinimal.h"
++#include "Subsystems/WorldSubsystem.h"
++#include "BattleProjectilePool.h"
++#include "BattleProjectileSubsystem.generated.h"
++
++UCLASS()
++class MASSBATTLE_API UBattleProjectileSubsystem : public UWorldSubsystem
++{
++	GENERATED_BODY()
++
++public:
++	/** Reserves the pool at the cvar capacity (battle start / test setup).
++	 *  Safe to call repeatedly -- a re-reserve resets everything. */
++	void ReserveForBattle();
++
++	/** Battle/test reset: everything released, generations preserved. */
++	void ResetForBattle();
++
++	const FBattleProjectilePool& GetPool() const { return Pool; }
++	FBattleProjectilePool& GetMutablePool() { return Pool; }
++
++private:
++	FBattleProjectilePool Pool;
++};
+diff --git a/Plugins/MassBattle/Source/MassBattleTest/Private/MassBattleCombatTests.cpp b/Plugins/MassBattle/Source/MassBattleTest/Private/MassBattleCombatTests.cpp
+index 1f09442..a2d7366 100644
+--- a/Plugins/MassBattle/Source/MassBattleTest/Private/MassBattleCombatTests.cpp
++++ b/Plugins/MassBattle/Source/MassBattleTest/Private/MassBattleCombatTests.cpp
+@@ -17,6 +17,8 @@
+ #include "BattleFragments.h"
+ #include "BattleCombatFragments.h"
+ #include "BattleRangedFragments.h"
++#include "BattleProjectilePool.h"
++#include "BattleProjectileSubsystem.h"
+ #include "BattleRngRegistry.h"
+ #include "BattleEduParser.h"
+ #include "Engine/Engine.h"
+@@ -592,6 +594,59 @@ bool FCombat_HashTerms::RunTest(const FString& Parameters)
+ 		TestEqual(TEXT("all reverts restore hash"), FBattleStateHash::Compute(World), Hash0);
+ 	}
+ 
++	// Phase 3 (spec ranged-stack §3.4): ranged terms on a ranged-row roster +
++	// the pool block. The archer row carries the fragment; the melee roster
++	// above proves the zero-fill stability (its hash already round-trips).
++	if (Rows.Num() > 2)
++	{
++		const FBattleSpawnResult UnitB = SpawnRow(World, Rows[2]); // Peasant Archers
++		TestTrue(TEXT("ranged row spawned"), UnitB.Unit.IsValid());
++		const TArray<FMassEntityHandle>* RosterB = Registry->FindRoster(UnitB.Unit);
++		if (TestNotNull(TEXT("ranged roster"), RosterB) && RosterB->Num() > 0)
++		{
++			const uint64 HashR = FBattleStateHash::Compute(World);
++			TestEqual(TEXT("ranged hash stable"), FBattleStateHash::Compute(World), HashR);
++
++			FMassEntityView ViewB(EntityManager, (*RosterB)[0]);
++			FRangedStateFragment& Ranged = ViewB.GetFragmentData<FRangedStateFragment>();
++
++			// Ammo mutation.
++			const int16 OldAmmo = Ranged.AmmoCount;
++			Ranged.AmmoCount = static_cast<int16>(OldAmmo - 1);
++			TestNotEqual(TEXT("ammo mutation changes hash"), FBattleStateHash::Compute(World), HashR);
++			Ranged.AmmoCount = OldAmmo;
++			// Reload mutation (above the 1e-2 quantum).
++			const float OldReload = Ranged.ReloadTimer;
++			Ranged.ReloadTimer = OldReload + 0.5f;
++			TestNotEqual(TEXT("reload mutation changes hash"), FBattleStateHash::Compute(World), HashR);
++			Ranged.ReloadTimer = OldReload;
++			// Shots fired mutation.
++			const uint16 OldShots = Ranged.ShotsFired;
++			Ranged.ShotsFired = OldShots + 1;
++			TestNotEqual(TEXT("shots fired mutation changes hash"), FBattleStateHash::Compute(World), HashR);
++			Ranged.ShotsFired = OldShots;
++			TestEqual(TEXT("ranged reverts restore hash"), FBattleStateHash::Compute(World), HashR);
++
++			// The pool block: an acquired entry mutates the hash; release does too.
++			UBattleProjectileSubsystem* Projectiles = World->GetSubsystem<UBattleProjectileSubsystem>();
++			if (TestNotNull(TEXT("projectile subsystem"), Projectiles))
++			{
++				Projectiles->ReserveForBattle();
++				uint32 Gen = 0;
++				const int32 Slot = Projectiles->GetMutablePool().Acquire(Gen);
++				TestTrue(TEXT("pool slot acquired"), Slot != FBattleProjectilePool::InvalidIndex);
++				Projectiles->GetMutablePool().PosX[Slot] = 42.5f;
++				Projectiles->GetMutablePool().PosZ[Slot] = 3.25f;
++				Projectiles->GetMutablePool().TTL[Slot] = 1.75f;
++				TestNotEqual(TEXT("pool entry changes hash"), FBattleStateHash::Compute(World), HashR);
++				Projectiles->GetMutablePool().PosX[Slot] = 43.0f;
++				TestNotEqual(TEXT("pool position mutation changes hash"), FBattleStateHash::Compute(World), HashR);
++				Projectiles->GetMutablePool().Release(Slot);
++				TestEqual(TEXT("pool release restores hash"), FBattleStateHash::Compute(World), HashR);
++			}
++		}
++	}
++
+ 	World->DestroyWorld(false);
+ 	return true;
+ }
+-- 
+2.32.0.windows.2
+
