@@ -2,6 +2,7 @@
 #include "BattleRegistry.h"
 #include "BattleMovementFragments.h"
 #include "BattleExecCommands.h"
+#include "BattleProjectileSubsystem.h"
 #include "MassBattleModule.h"
 
 #include "DrawDebugHelpers.h"
@@ -49,6 +50,10 @@ void UBattleDebugSubsystem::ResetDiagnostics()
 	GarrisonFilingTicksTotal = 0;
 	GarrisonQueueWaits = 0;
 	GarrisonQueueWaitTicksTotal = 0;
+	// Phase 3 (task 3): the ranged pass costs + release causes.
+	ProjectileStepMs = 0.0;
+	ProjectileGroundHits = 0;
+	ProjectileTtlExpired = 0;
 }
 
 void UBattleDebugSubsystem::RecordGarrisonSettled(int32 FilingTicks, int32 QueueWaitTicks)
@@ -295,10 +300,24 @@ void UBattleDebugSubsystem::DumpMetrics()
 #endif
 	LastMetrics.ArchetypeCount = ArchetypeCount;
 
+	// Phase 3 (task 3): the ranged fields APPEND to the line -- the
+	// write_baseline regex parses positionally, existing fields never move
+	// (the F14 rule).
+	int32 PoolInFlight = 0;
+	int32 PoolDrops = 0;
+	int32 PoolCapacity = 0;
+	if (UBattleProjectileSubsystem* Projectiles = World->GetSubsystem<UBattleProjectileSubsystem>())
+	{
+		PoolInFlight = Projectiles->GetPool().GetLiveCount();
+		PoolDrops = Projectiles->GetPool().GetDrops();
+		PoolCapacity = Projectiles->GetPool().GetCapacity();
+	}
+
 	UE_LOG(LogMassBattle, Display,
-	       TEXT("EXEC_RESULT BattleMetrics Frame=%d Archetypes=%d Units=%d UnitSyncMs=%.3f BookkeepingHash=%u OverlayHook=%d CombatHashMs=%.3f TallyMs=%.3f AssignMs=%.3f Rolls=%d/%d ChargeConnects=%d DeathsF/F/R=%d/%d/%d"),
+	       TEXT("EXEC_RESULT BattleMetrics Frame=%d Archetypes=%d Units=%d UnitSyncMs=%.3f BookkeepingHash=%u OverlayHook=%d CombatHashMs=%.3f TallyMs=%.3f AssignMs=%.3f Rolls=%d/%d ChargeConnects=%d DeathsF/F/R=%d/%d/%d InFlight=%d StepMs=%.3f GroundHits=%d TtlExpired=%d PoolDrops=%d PoolCapacity=%d"),
 	       LastMetrics.Frame, ArchetypeCount, LastMetrics.UnitCount,
 	       LastMetrics.UnitSyncMs, static_cast<uint32>(LastMetrics.RegistryHash32), BattleDebugShowOverlay,
 	       CombatHashMs, TallyMs, AssignMs, CombatRolls.load(), CombatRollsLanded.load(), ChargeConnects.load(),
-	       DeathsByArc[0], DeathsByArc[1], DeathsByArc[2]);
+	       DeathsByArc[0], DeathsByArc[1], DeathsByArc[2],
+	       PoolInFlight, ProjectileStepMs, ProjectileGroundHits, ProjectileTtlExpired, PoolDrops, PoolCapacity);
 }

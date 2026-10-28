@@ -75,6 +75,18 @@ public:
 	double GetTallyMs() const { return TallyMs; }
 	double GetAssignMs() const { return AssignMs; }
 
+	/** Phase 3 (task 3): the stepping pass cost + release-cause counters
+	 *  (game-thread writer; InFlight/Drops read from the pool at dump time). */
+	void RecordProjectileStep(double Ms, int32 GroundHits, int32 TtlExpired)
+	{
+		ProjectileStepMs = Ms;
+		ProjectileGroundHits += GroundHits;
+		ProjectileTtlExpired += TtlExpired;
+	}
+	double GetProjectileStepMs() const { return ProjectileStepMs; }
+	int32 GetProjectileGroundHits() const { return ProjectileGroundHits; }
+	int32 GetProjectileTtlExpired() const { return ProjectileTtlExpired; }
+
 	/** T2.9 perf probe: dump the metrics line at N ticks after arming (the
 	 *  Exec fixtures run before the sim advances; the probe samples the
 	 *  steady state). Disarms after the dump. */
@@ -155,6 +167,11 @@ private:
 	double TallyMs = 0.0;
 	double AssignMs = 0.0;
 	int32 PerfProbeTicks = -1;
+
+	/** Phase 3 ranged pass costs + release causes (game thread only). */
+	double ProjectileStepMs = 0.0;
+	int32 ProjectileGroundHits = 0;
+	int32 ProjectileTtlExpired = 0;
 
 	/** Task 10 corpse ledger (capped FIFO; the overlay draws yaw-aligned
 	 *  rectangles). Game thread only (the death signal receiver). */

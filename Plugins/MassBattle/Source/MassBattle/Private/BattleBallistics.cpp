@@ -182,4 +182,42 @@ bool MarchClear(
 	return true;
 }
 
+FBallisticsMath::FPoolStepCounts FBallisticsMath::StepPool(
+	FBattleProjectilePool& Pool, const FBattleCostGrid* Grid, float DT)
+{
+	FPoolStepCounts Counts;
+	for (int32 Slot = 0; Slot < Pool.GetCapacity(); ++Slot)
+	{
+		if (!Pool.IsLive(Slot))
+		{
+			continue;
+		}
+		FVector Pos(Pool.PosX[Slot], Pool.PosY[Slot], Pool.PosZ[Slot]);
+		FVector Vel(Pool.VelX[Slot], Pool.VelY[Slot], Pool.VelZ[Slot]);
+		StepProjectile(Pos, Vel, FBallisticsConstants::GravityMps2 * Pool.GravityScale[Slot], DT);
+		Pool.PosX[Slot] = Pos.X;
+		Pool.PosY[Slot] = Pos.Y;
+		Pool.PosZ[Slot] = Pos.Z;
+		Pool.VelX[Slot] = Vel.X;
+		Pool.VelY[Slot] = Vel.Y;
+		Pool.VelZ[Slot] = Vel.Z;
+		Pool.TTL[Slot] -= DT;
+
+		const float GroundZ = Grid ? Grid->SampleHeight(FVector2D(Pos.X, Pos.Y)) : 0.f;
+		if (Pos.Z <= GroundZ)
+		{
+			// Task 5 replaces this terminal path's stub with the transient
+			// roll context; v1 the release IS the resolution (log-only).
+			++Counts.GroundHits;
+			Pool.Release(Slot);
+		}
+		else if (Pool.TTL[Slot] <= 0.f)
+		{
+			++Counts.TtlExpired;
+			Pool.Release(Slot);
+		}
+	}
+	return Counts;
+}
+
 } // namespace FBallisticsMath

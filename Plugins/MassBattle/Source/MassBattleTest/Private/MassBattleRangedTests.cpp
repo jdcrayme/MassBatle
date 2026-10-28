@@ -483,6 +483,220 @@ bool FRanged_AmmoAccounting::RunTest(const FString& Parameters)
 }
 
 // ---------------------------------------------------------------------------
+// Task 3: Battle.Unit.Ranged.PoolStep -- the stepping pass's seam half (RC9
+// stepping): a synthetic 64-shot volley lives, flies, and dies with an exact
+// TTL/ground split, two-run equality, an earlier hill kill, and zero
+// capacity violations. The processor shim (cvar gates + timing) is
+// flags-off-identity by construction; this tier locks the math it shims.
+// ---------------------------------------------------------------------------
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRanged_PoolStep,
+	"Battle.Unit.Ranged.PoolStep",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FRanged_PoolStep::RunTest(const FString& Parameters)
+{
+	constexpr float DT = 1.f / 60.f;
+	constexpr int32 NumTicks = 600;
+	constexpr int32 VolleySize = 32;
+
+	FBattleCostGrid Grid;
+	Grid.InitFlat(86, 86, FVector2D::ZeroVector, 3.0f);
+
+	// Deterministic initial state: 32 arced shots (35 m/s at 45 deg from
+	// 1.6 m, TTL 2 s -- still airborne at expiry) + 32 steep-down shots
+	// (35 m/s at -30 deg, TTL 20 s -- terrain ends them around tick 6).
+	auto SpawnVolley = [VolleySize](FBattleProjectilePool& Pool, float TtlArced, float TtlDown)
+	{
+		uint32 Gen = 0;
+		for (int32 i = 0; i < VolleySize; ++i)
+		{
+			const int32 Arc = Pool.Acquire(Gen);
+			Pool.PosX[Arc] = 0.f;
+			Pool.PosY[Arc] = static_cast<float>(i - VolleySize / 2) * 0.25f;
+			Pool.PosZ[Arc] = 1.6f;
+			const float C45 = FMath::Cos(FMath::DegreesToRadians(45.f));
+			Pool.VelX[Arc] = 35.f * C45;
+			Pool.VelY[Arc] = 0.f;
+			Pool.VelZ[Arc] = 35.f * C45;
+			Pool.TTL[Arc] = TtlArced;
+			Pool.GravityScale[Arc] = 1.f;
+
+			const int32 Down = Pool.Acquire(Gen);
+			Pool.PosX[Down] = 0.f;
+			Pool.PosY[Down] = static_cast<float>(i - VolleySize / 2) * 0.25f;
+			Pool.PosZ[Down] = 1.6f;
+			const float C30 = FMath::Cos(FMath::DegreesToRadians(30.f));
+			Pool.VelX[Down] = 35.f * C30;
+			Pool.VelY[Down] = 0.f;
+			Pool.VelZ[Down] = -35.f * FMath::Sin(FMath::DegreesToRadians(30.f));
+			Pool.TTL[Down] = TtlDown;
+			Pool.GravityScale[Down] = 1.f;
+		}
+	};
+
+	// -- The main volley: all 64 dead by tick 600, exact cause split, zero
+	//    capacity violations, live count never grows.
+	{
+		FBattleProjectilePool Pool;
+		Pool.Reserve(2 * VolleySize);
+		SpawnVolley(Pool, 2.f, 20.f);
+		TestEqual(TEXT("volley fills the pool"), Pool.GetLiveCount(), 2 * VolleySize);
+
+		int32 LastLive = Pool.GetLiveCount();
+		int32 FirstReleaseTick = -1;
+		for (int32 Tick = 1; Tick <= NumTicks; ++Tick)
+		{
+			FBallisticsMath::StepPool(Pool, &Grid, DT);
+			const int32 Live = Pool.GetLiveCount();
+			TestTrue(TEXT("live count never grows"), Live <= LastLive);
+			TestEqual(TEXT("capacity never changes"), Pool.GetCapacity(), 2 * VolleySize);
+			if (Live < LastLive && FirstReleaseTick < 0)
+			{
+				FirstReleaseTick = Tick;
+			}
+			LastLive = Live;
+			if (Live == 0)
+			{
+				break;
+			}
+		}
+		TestEqual(TEXT("all 64 dead by TTL or ground"), Pool.GetLiveCount(), 0);
+		TestEqual(TEXT("zero drops"), Pool.GetDrops(), 0);
+		TestTrue(TEXT("steep shots die early (first release by tick 10)"), FirstReleaseTick > 0 && FirstReleaseTick <= 10);
+	}
+
+	// Exact cause split: TTL-short arced volley alone.
+	{
+		FBattleProjectilePool Pool;
+		Pool.Reserve(VolleySize);
+		uint32 Gen = 0;
+		for (int32 i = 0; i < VolleySize; ++i)
+		{
+			const int32 S = Pool.Acquire(Gen);
+			Pool.PosX[S] = 0.f; Pool.PosY[S] = 0.f; Pool.PosZ[S] = 1.6f;
+			const float C45 = FMath::Cos(FMath::DegreesToRadians(45.f));
+			Pool.VelX[S] = 35.f * C45; Pool.VelY[S] = 0.f; Pool.VelZ[S] = 35.f * C45;
+			Pool.TTL[S] = 2.f; Pool.GravityScale[S] = 1.f;
+		}
+		int32 DrainTick = -1;
+		for (int32 Tick = 1; Tick <= NumTicks; ++Tick)
+		{
+			FBallisticsMath::StepPool(Pool, &Grid, DT);
+			if (Pool.GetLiveCount() == 0) { DrainTick = Tick; break; }
+		}
+		TestTrue(TEXT("arced volley drains at its 2 s TTL (within float slack)"),
+			DrainTick > 0 && DrainTick <= 130);
+		// Death at ~tick 120 is decades before the ~5.1 s ground time, so the
+		// only possible cause is TTL expiry; no drops either.
+		TestEqual(TEXT("arced volley adds no drops"), Pool.GetDrops(), 0);
+	}
+
+	// Steep-down volley alone: every death is a ground hit.
+	{
+		FBattleProjectilePool Pool;
+		Pool.Reserve(VolleySize);
+		uint32 Gen = 0;
+		const float C30 = FMath::Cos(FMath::DegreesToRadians(30.f));
+		const float S30 = FMath::Sin(FMath::DegreesToRadians(30.f));
+		for (int32 i = 0; i < VolleySize; ++i)
+		{
+			const int32 S = Pool.Acquire(Gen);
+			Pool.PosX[S] = 0.f; Pool.PosY[S] = 0.f; Pool.PosZ[S] = 1.6f;
+			Pool.VelX[S] = 35.f * C30; Pool.VelY[S] = 0.f; Pool.VelZ[S] = -35.f * S30;
+			Pool.TTL[S] = 20.f; Pool.GravityScale[S] = 1.f;
+		}
+		int32 GroundTicks = 0;
+		for (int32 Tick = 0; Tick < NumTicks; ++Tick)
+		{
+			if (Pool.GetLiveCount() == 0) { break; }
+			const FBallisticsMath::FPoolStepCounts Counts = FBallisticsMath::StepPool(Pool, &Grid, DT);
+			GroundTicks += Counts.GroundHits;
+		}
+		TestEqual(TEXT("steep volley drains to zero"), Pool.GetLiveCount(), 0);
+		TestEqual(TEXT("every steep death is a ground hit"), GroundTicks, VolleySize);
+	}
+
+	// Two-run equality: identical initials -> identical per-tick live counts
+	// (the pool-iteration-order determinism, RC8's stepping half at unit tier).
+	{
+		FBattleProjectilePool PoolA;
+		PoolA.Reserve(2 * VolleySize);
+		SpawnVolley(PoolA, 2.f, 20.f);
+		FBattleProjectilePool PoolB;
+		PoolB.Reserve(2 * VolleySize);
+		SpawnVolley(PoolB, 2.f, 20.f);
+		bool bIdentical = true;
+		for (int32 Tick = 0; Tick < NumTicks; ++Tick)
+		{
+			FBallisticsMath::StepPool(PoolA, &Grid, DT);
+			FBallisticsMath::StepPool(PoolB, &Grid, DT);
+			if (PoolA.GetLiveCount() != PoolB.GetLiveCount())
+			{
+				bIdentical = false;
+				break;
+			}
+		}
+		TestTrue(TEXT("two-run per-tick live counts identical"), bIdentical);
+		TestEqual(TEXT("both runs end empty"), PoolA.GetLiveCount() + PoolB.GetLiveCount(), 0);
+	}
+
+	// Hill twin: a 5 m hill under the steep-down lane kills on tick 1
+	// (terrain above the descent), the flat twin on tick ~6 -- ground reads
+	// the heightfield, not a hardcoded 0.
+	{
+		FBattleCostGrid HGrid;
+		HGrid.InitFlat(86, 86, FVector2D::ZeroVector, 3.0f);
+		StampHill(HGrid, FVector2D(0.5f, -1.f), FVector2D(2.5f, 1.f), 5.f);
+		FBattleProjectilePool PoolHill;
+		PoolHill.Reserve(VolleySize);
+		FBattleProjectilePool PoolFlat;
+		PoolFlat.Reserve(VolleySize);
+		auto SpawnDown = [VolleySize](FBattleProjectilePool& Pool)
+		{
+			uint32 Gen = 0;
+			const float C30 = FMath::Cos(FMath::DegreesToRadians(30.f));
+			const float S30 = FMath::Sin(FMath::DegreesToRadians(30.f));
+			for (int32 i = 0; i < VolleySize; ++i)
+			{
+				const int32 S = Pool.Acquire(Gen);
+				Pool.PosX[S] = 0.f; Pool.PosY[S] = 0.f; Pool.PosZ[S] = 1.6f;
+				Pool.VelX[S] = 35.f * C30; Pool.VelY[S] = 0.f; Pool.VelZ[S] = -35.f * S30;
+				Pool.TTL[S] = 20.f; Pool.GravityScale[S] = 1.f;
+			}
+		};
+		SpawnDown(PoolHill);
+		SpawnDown(PoolFlat);
+		int32 HillFirstRelease = -1;
+		int32 FlatFirstRelease = -1;
+		for (int32 Tick = 1; Tick <= NumTicks; ++Tick)
+		{
+			FBallisticsMath::StepPool(PoolHill, &HGrid, DT);
+			FBallisticsMath::StepPool(PoolFlat, &Grid, DT);
+			if (HillFirstRelease < 0 && PoolHill.GetLiveCount() < VolleySize) { HillFirstRelease = Tick; }
+			if (FlatFirstRelease < 0 && PoolFlat.GetLiveCount() < VolleySize) { FlatFirstRelease = Tick; }
+			if (HillFirstRelease > 0 && FlatFirstRelease > 0) { break; }
+		}
+		TestEqual(TEXT("hill twin kills on the first tick"), HillFirstRelease, 1);
+		TestTrue(TEXT("flat twin dies later than the hill twin"),
+			FlatFirstRelease > HillFirstRelease && FlatFirstRelease <= 10);
+	}
+
+	// Empty-pool identity: the pass on a reserved-but-empty pool is a no-op
+	// (the seam half of the R-R8 early-out; the shim's flags-off gate sits on
+	// top of this).
+	{
+		FBattleProjectilePool Pool;
+		Pool.Reserve(16);
+		const FBallisticsMath::FPoolStepCounts Counts = FBallisticsMath::StepPool(Pool, &Grid, DT);
+		TestEqual(TEXT("empty pool: no ground hits"), Counts.GroundHits, 0);
+		TestEqual(TEXT("empty pool: no TTL expiries"), Counts.TtlExpired, 0);
+		TestEqual(TEXT("empty pool: still empty"), Pool.GetLiveCount(), 0);
+	}
+
+	return true;
+}
+
+// ---------------------------------------------------------------------------
 // T3.3c: Battle.Unit.Ranged.VolleySelection -- eligibility matrix: rank
 // limits, range window, LOS fire rules (arced frontage vs flat lane, RC2/RC3),
 // friendly-fire holds (A7), reload staggering (RC1).

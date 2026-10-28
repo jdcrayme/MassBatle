@@ -12,6 +12,7 @@
 
 #include "CoreMinimal.h"
 #include "BattleCostGrid.h"
+#include "BattleProjectilePool.h"
 
 /** T3.1-golden-locked placeholder constants (A6). */
 namespace FBallisticsConstants
@@ -78,4 +79,23 @@ namespace FBallisticsMath
 	MASSBATTLE_API bool MarchClear(
 		const FBattleCostGrid& Grid, const FVector2D& FromM, float FromEyeZM,
 		const FVector2D& ToM, float ToZM, float ClearanceM);
+
+	/** Release-cause counts from one StepPool tick (the step pass's stub
+	 *  metrics; the processor records them into BattleMetrics). */
+	struct MASSBATTLE_API FPoolStepCounts
+	{
+		int32 GroundHits = 0;
+		int32 TtlExpired = 0;
+	};
+
+	/** One tick of the pooled-projectile stepping pass (spec §4.9, RC9's
+	 *  stepping half; brief task 3): semi-implicit Euler via StepProjectile on
+	 *  every live slot in INDEX order (deterministic by construction), per-slot
+	 *  gravity = GravityMps2 * the slot's GravityScale, TTL decrement, then
+	 *  release on a ground hit (SampleHeight at the advanced (X,Y); terrain
+	 *  STRICTLY above is not needed -- below-or-equal terrain ends flight) or
+	 *  TTL expiry. Grid may be null: the ground reads 0 (flat-world tests).
+	 *  The processor shim owns the cvar gates + timing; this function is pure
+	 *  and allocation-free (EC9). */
+	MASSBATTLE_API FPoolStepCounts StepPool(FBattleProjectilePool& Pool, const FBattleCostGrid* Grid, float DT);
 }

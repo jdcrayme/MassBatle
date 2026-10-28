@@ -2,6 +2,7 @@
 #include "BattleExternalSubsystemTraits.h"
 #include "BattleFragments.h"
 #include "BattleGarrisonSubsystem.h"
+#include "BattleProjectileSubsystem.h"
 #include "BattleRangedFragments.h"
 #include "BattleRngRegistry.h"
 #include "BattleSave.h"
@@ -858,6 +859,13 @@ void UUnitRegistrySubsystem::ResetBattleState()
 	DirtyStats.Reset();
 	Engagements.Reset();
 	Engagements.Reserve(MaxEngagementRecords);
+	// Phase 3 (spec ranged-stack §3.3, brief task 3): battle-start pool
+	// reserve/clear in one idempotent call -- re-reserving reseeds the free
+	// list at the cvar capacity, so no projectile crosses a battle boundary.
+	if (UBattleProjectileSubsystem* Projectiles = GetWorld() ? GetWorld()->GetSubsystem<UBattleProjectileSubsystem>() : nullptr)
+	{
+		Projectiles->ReserveForBattle();
+	}
 	TallyScratch.Reset();
 	CoverageScratch.Reset();
 	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT ResetBattleState ok"));

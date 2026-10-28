@@ -164,6 +164,50 @@
   neighbor ring; outside the grid reads 0 (GetHeight's bounds rule, asserted by the
   existing fade case). The measured table matches the analytic blend exactly.
 
+## Task 3 -- projectile pool + subsystem + step processor
+
+- [task3.1] Battle-start pool wiring: `UUnitRegistrySubsystem::ResetBattleState` now
+  calls `UBattleProjectileSubsystem::ReserveForBattle()` (one idempotent call = the
+  battle-start reserve at `Battle.Ranged.PoolCapacity` + the clear; no projectile
+  crosses a battle boundary). The state-hash pool block (kickoff) reads this subsystem.
+- [task3.2] Stepping math in the seam (A1): `FBallisticsMath::StepPool(Pool, Grid, DT)`
+  + `FPoolStepCounts{GroundHits, TtlExpired}` in `BattleBallistics` -- index-ordered
+  semi-implicit Euler via the existing `StepProjectile` (per-slot gravity =
+  `FBallisticsConstants::GravityMps2 * GravityScale`), TTL decrement, release on ground
+  hit (`SampleHeight` at the advanced (X,Y); null grid reads 0) or TTL expiry. Pure,
+  allocation-free (EC9). The processor owns the gates + timing only.
+- [task3.3] `UProjectileStepProcessor` (new `ProjectileStepProcessor.h/cpp`): game-thread
+  (ADR-28), PrePhysics, group "Battle", `ExecuteBefore(UnitSyncProcessor)` = FIRST in the
+  group (A4; F11's last-tick-hash contract), AllWorldModes. Gates: `Enable() && Step()`
+  (flags-off identity) then live-count 0 early-out (R-R8). Impact stub: ground/TTL
+  releases are log-only (Verbose aggregate line); resolution lands in Task 5.
+- [task3.4] Engine-API note (recorded per AGENTS §4, no reference change needed): a
+  query-less processor must override `ShouldAllowQueryBasedPruning` -> false; otherwise
+  the dependency solver's archetype sweep logs `has no registered queries while being
+  asked for matching archetypes` (MassProcessor.cpp:274 -- the engine's own
+  misconfiguration notice). Found by the first func run: the warning leaked into every
+  func test's log window and the summarizer re-bucketed all 19 passes as
+  succeededWithWarnings. Override added; counts agree again.
+- [task3.5] Metrics: `BattleMetrics` line gains APPENDED fields (F14 rule -- existing
+  fields never move): `InFlight=%d StepMs=%.3f GroundHits=%d TtlExpired=%d PoolDrops=%d
+  PoolCapacity=%d` (InFlight/Drops/Capacity read from the pool at dump time; StepMs +
+  causes recorded by the processor). `ResetDiagnostics` zeroes the new counters.
+  Evidence (unit tier, verbatim): `EXEC_RESULT BattleMetrics Frame=0 ... DeathsF/F/R=0/0/0
+  InFlight=0 StepMs=0.000 GroundHits=0 TtlExpired=0 PoolDrops=0 PoolCapacity=0`.
+- [task3.6] `Battle.Unit.Ranged.PoolStep` (MassBattleRangedTests.cpp): the brief's
+  synthetic volley -- 64 shots (32 arced TTL-2 s + 32 steep-down TTL-20 s), 600 ticks at
+  1/60: all dead, live count never grows, capacity never changes, zero drops; single-cause
+  controls (arced-only drains at its 2 s TTL within float slack; steep-only records
+  exactly 32 ground hits); two-run per-tick live-count equality (RC8's stepping half at
+  unit tier); hill twin (5 m hill under the lane kills on tick 1 vs the flat twin's
+  tick ~6 -- ground reads the heightfield); empty-pool no-op (the seam half of the
+  early-out).
+- [task3.7] Build -> Succeeded. Unit tier: **passed=77 failed=0 total=77 completed=True
+  exit=0 ok=True** (`Tools/CI/last_run.json`; was 76 -- +1 = PoolStep). Func tier:
+  **passed=19 failed=4 total=23**, counts agree, the exact Task 0/1 baseline (the two
+  by-design skeletons + the two phase-2 melts) -- the new processor in the live Battle
+  group leaves the melee baseline unregressed (R-R8).
+
 ## Open items carried
 
 - S4_ShieldWall / S5_Mob melts: pre-existing, owned by the phase-2 dossier's deferred
