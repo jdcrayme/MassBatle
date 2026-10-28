@@ -87,7 +87,7 @@ void UBattleDebugSubsystem::Tick(float DeltaTime)
 		Lines = MoveTemp(PendingOverlayLines);
 		PendingOverlayLines.Reset();
 	}
-	if (!BattleDebugShowOverlay || Lines.Num() == 0 || !GetWorld())
+	if (!BattleDebugShowOverlay || !GetWorld())
 	{
 		return;
 	}

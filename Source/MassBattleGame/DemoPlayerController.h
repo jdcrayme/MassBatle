@@ -105,6 +105,8 @@ private:
 	// -- selection state --
 	TArray<FUnitHandle> SelectedUnits;
 	bool bMarqueeActive = false;
+	/** F3 edge latch (toggles Battle.Debug.ShowOverlay). */
+	bool bF3Latch = false;
 	FVector2D MarqueeStartScreen = FVector2D::ZeroVector;
 
 	// -- order drag state --

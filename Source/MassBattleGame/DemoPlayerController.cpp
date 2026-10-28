@@ -176,6 +176,21 @@ void ADemoPlayerController::Tick(float DeltaSeconds)
 	UpdateCamera(DeltaSeconds);
 	PruneStaleSelection();
 
+	// F3: toggle the battle debug overlay (slot/attack/corpse graphics).
+	{
+		const bool bF3 = IsInputKeyDown(EKeys::F3);
+		if (bF3 && !bF3Latch)
+		{
+			if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Debug.ShowOverlay")))
+			{
+				const int32 New = C->GetInt() != 0 ? 0 : 1;
+				C->Set(New, ECVF_SetByConsole);
+				UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoDebug overlay=%d (F3)"), New);
+			}
+		}
+		bF3Latch = bF3;
+	}
+
 	// Order-drag tracking: keep the world-space cursor current; flag the
 	// formation gesture once the screen drag clears the threshold.
 	if (bDraggingOrder)

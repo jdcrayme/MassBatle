@@ -120,6 +120,7 @@ void ADemoHUD::DrawControlsHint()
 		TEXT("RMB drag                 - formation: width + facing (drag line = front)"),
 		TEXT("H                        - halt        WASD/arrows - pan"),
 		TEXT("Q/E - rotate             - mouse wheel - zoom"),
+		TEXT("F3                       - toggle debug overlay (slots/attacks/corpses)"),
 	};
 	FVector2D Pos(20.f, 20.f);
 	Canvas->SetDrawColor(216, 216, 216, 204);

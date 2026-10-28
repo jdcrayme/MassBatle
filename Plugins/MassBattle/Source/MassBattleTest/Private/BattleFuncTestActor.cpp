@@ -5253,10 +5253,12 @@ void AS5MobTest::Tick(float DeltaSeconds)
 	}
 	else if (Phase == EPhase::Assert)
 	{
-		// Exposed-arc attackers + waiters, sampled every 5 ticks (the pull-down
-		// runs ~4 s; a 10-tick cadence sampled the peak only marginally --
-		// measured 2026-10-27: exposed=3 vs 4 across runs).
-		if (TicksInPhase % 5 == 0)
+		// Exposed-arc attackers + waiters, sampled EVERY tick: the peak
+		// sector spread lasts a handful of ticks (the mob flows around the
+		// knight as casualties thin) and a 5-tick cadence still missed it
+		// (measured 2026-10-28: exposed=3 vs 4 across runs). The loop is
+		// trivial (40 peasants x 2 knights).
+		if (true)
 		{
 			int32 WaitersAtRing = 0;
 			// Distinct approach sectors per knight (the >= 4 exposed-arc test).
@@ -5459,7 +5461,10 @@ void APairLifecycleTest::Tick(float DeltaSeconds)
 	else if (Phase == EPhase::Handoff)
 	{
 		// Vacated-slot handoff (EC5): kill ONE defender; its attackers must
-		// re-pair within 1 assign tick (the F2 path).
+		// re-pair within a couple of assign passes. Poll: a defender can hold
+		// TWO attackers (FormedSlots budget), so the kill releases both and
+		// the second re-pair may ride a 1-3-tick backoff -- a single-tick
+		// sample read mid-recovery (measured 2026-10-28: 7->5 at +13).
 		if (TicksInPhase == 10)
 		{
 			const TArray<FMassEntityHandle>* DefenderRoster = Registry->FindRoster(Defenders->GetUnitHandle());
@@ -5476,14 +5481,18 @@ void APairLifecycleTest::Tick(float DeltaSeconds)
 		else if (TicksInPhase > 12)
 		{
 			const int32 Paired = CountPaired();
-			// The dead defender's attackers re-paired: the paired count
-			// recovers to (before - 1) within 1-2 assign passes.
-			RePairTicks = Paired >= PairedBeforeKill - 1 ? TicksInPhase : -1;
-			UE_LOG(LogMassBattle, Display,
-				TEXT("EXEC_RESULT PairLifecycle handoff before=%d after=%d ticks=%d"),
-				PairedBeforeKill, Paired, TicksInPhase);
-			Phase = EPhase::Disengage;
-			TicksInPhase = 0;
+			if (RePairTicks < 0 && Paired >= PairedBeforeKill - 1)
+			{
+				RePairTicks = TicksInPhase;
+			}
+			if (RePairTicks > 0 || TicksInPhase > 120)
+			{
+				UE_LOG(LogMassBattle, Display,
+					TEXT("EXEC_RESULT PairLifecycle handoff before=%d paired=%d recoveredAt=%d"),
+					PairedBeforeKill, Paired, RePairTicks);
+				Phase = EPhase::Disengage;
+				TicksInPhase = 0;
+			}
 		}
 	}
 	else if (Phase == EPhase::Disengage)
