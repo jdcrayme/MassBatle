@@ -29,6 +29,25 @@ confirm is listed under "Deferred" and is exactly the implementing run's Task 0.
 | F-K4 | `0016` | PR-6 says "the T3.9 fixture"; the roadmap gate table has no T3.9 (the perf gate is T3.6, which PR-9 itself cites) | T3.9 -> T3.6 |
 | F-K5 | `0016` | PR-7/8/9 header tables malformed (first row `| |---|`) | house shape (`| | |` + separator), matching PR-1..6 |
 | F-K6 | all | The authoring pipeline expanded tabs to 8-space equivalents in every C++ file it touched: 17 modified files became whole-file rewrites (raw series diff +8,168/-5,259 for a real change of ~+2,970/-49) and 5 of 10 new files shipped space-indented, split against 5 tab-indented ones | per-commit diff-driven reconstruction: parent-exact lines for unchanged regions, expansion-inverse (tab-stop-8) re-tabbing for the changed lines, with the byte-exact invariant `expand8(result) == expand8(blob)` asserted per file; main's intentional mixed tab+space alignment lines are preserved untouched |
+| F-K7 | 0014 (fix on main, Task 0) | MSVC C2666: 7 `TestEqual` calls passed LWC-double `FVector` components (`LaunchDir.X`, `Landed.X`, `Size()`) against float literals -- ambiguous between the `(float,float,float)` and `(double,double,double)` overloads. Found by the first real build (the authoring environment never compiled UE code) | double expected/tolerance literals at those 7 sites |
+| F-K8 | 0012/0013/0014 (fixes on main, Task 0 run 2) | Four runtime test defects found by the first run with fresh binaries: (a) inline EDU fixtures in `MassBattleGarrisonTests.cpp` + `BattleFuncTestActor.cpp` lacked `stat_sec` (the re-sign sweep missed two files outside the EDU suite); (b) ballistics `StepFlight` truncated the final partial step -> landings banded by up to v*DT (1 m at bolt speed) vs the 0.35 m golden; (c) the LOS "11 m mid-hill blocks" golden was knife-edge under the march's bilinear + entry-station-per-cell sampling (measured window 8-11 m clear, 12 m blocks); (d) two `VolleySelection` blocks reused a shooter view across sub-cases -- a fired shot arms the reload timer, so later "hold" asserts passed for the wrong reason and the final "fires" assert failed | (a) `stat_sec` added to both fixtures; (b) final partial step simulated; (c) golden moved to 12 m with the measured window in a comment; (d) fresh shooter per sub-case |
+
+## Machine verification (2026-10-28, same day -- the "deferred" list below is EXECUTED)
+
+- Build `MassBattleEditor Win64 Development`: **Succeeded** (after the engine
+  rules-assembly recovery -- a workspace blocker independent of the series, recorded in
+  `Docs/reference/environment.md` §4).
+- Unit tier: **75/75 green** (`Tools/CI/last_run.json`: `passed=75 failed=0 total=75
+  completed=True exit=0 ok=True`) -- all six `Battle.Unit.Ranged.*` suites, the
+  re-signed `Battle.Data.Edu*` goldens (15-key schema, 4 fixture units), SpawnComposition
+  (measured: `archetypes: melee-only=3 with-ranged=4 (growth 1, one ranged composition
+  expected)` -- the F6 alive/dead 6 -> 8 count asserts at scenario/soak level, Tasks
+  6/7), HashTerms (incl. the pool block), SaveRoundTrip.
+- Func tier: 19 pass, 4 fail -- the two fail-by-design skeletons (red via the harness's
+  M17 tick budget; Task 6 replaces them) PLUS the two phase-2 deferred melts
+  (`S4_ShieldWall`, `S5_Mob -- FAIL no pull-down`), which fail identically at base
+  `48f1553` per the phase-2 dossier and are NOT kickoff regressions.
+- Details and the discrepancy log: `Docs/phases/phase-3/progress.md`.
 
 ## Static verification performed (all green)
 

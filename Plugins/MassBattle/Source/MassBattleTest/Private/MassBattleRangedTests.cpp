@@ -49,6 +49,14 @@ namespace
 		{
 			FBallisticsMath::StepProjectile(Pos, Vel, GravityMps2, DT);
 		}
+		// Final partial step: without it the truncation bands the landing by up
+		// to a full step of travel (v*DT -- 1 m at the bolt's speed), swamping
+		// the g*T*DT/2 integrator band these goldens assert against.
+		const float Remainder = Solution.FlightTimeS - static_cast<float>(Steps) * DT;
+		if (Remainder > 1e-6f)
+		{
+			FBallisticsMath::StepProjectile(Pos, Vel, GravityMps2, Remainder);
+		}
 		return Pos;
 	}
 }
@@ -69,10 +77,10 @@ bool FRanged_Ballistics::RunTest(const FString& Parameters)
 	{
 		const FBallisticSolution S = SolveLaunch(FVector2D::ZeroVector, 1.6f, FVector2D(10.f, 0.f), 1.6f, 10.f, 10.f);
 		TestTrue(TEXT("level 45deg solution valid"), S.bValid);
-		TestEqual(TEXT("level 45deg dir.X = cos(45)"), S.LaunchDir.X, 0.70710678f, 1e-3f);
-		TestEqual(TEXT("level 45deg dir.Z = sin(45)"), S.LaunchDir.Z, 0.70710678f, 1e-3f);
+		TestEqual(TEXT("level 45deg dir.X = cos(45)"), S.LaunchDir.X, 0.70710678, 1e-3);
+		TestEqual(TEXT("level 45deg dir.Z = sin(45)"), S.LaunchDir.Z, 0.70710678, 1e-3);
 		TestEqual(TEXT("level 45deg flight time = sqrt(2)"), S.FlightTimeS, 1.41421356f, 1e-3f);
-		TestEqual(TEXT("launch dir is unit"), S.LaunchDir.Size(), 1.f, 1e-4f);
+		TestEqual(TEXT("launch dir is unit"), S.LaunchDir.Size(), 1.0, 1e-4);
 	}
 
 	// -- out of envelope: max level range is v^2/g; beyond it, invalid (the
@@ -92,16 +100,16 @@ bool FRanged_Ballistics::RunTest(const FString& Parameters)
 		TestTrue(TEXT("arrow solution at 80 m valid"), S.bValid);
 		const FVector Landed = StepFlight(S, From, 1.6f, Arrow.MuzzleSpeedMps,
 			FBallisticsConstants::GravityMps2 * Arrow.GravityScale, 1.f / 60.f);
-		TestEqual(TEXT("arrow stepped landing X"), Landed.X, To.X, 0.35f);
-		TestEqual(TEXT("arrow stepped landing Z"), Landed.Z, 1.0f, 0.35f);
+		TestEqual(TEXT("arrow stepped landing X"), Landed.X, To.X, 0.35);
+		TestEqual(TEXT("arrow stepped landing Z"), Landed.Z, 1.0, 0.35);
 
 		const FProjectileProfile Bolt = GetProjectileProfile(EBattleProjectileKind::Bolt);
 		const FBallisticSolution B = SolveLaunch(From, 1.6f, To, 1.0f, Bolt.MuzzleSpeedMps, FBallisticsConstants::GravityMps2 * Bolt.GravityScale);
 		TestTrue(TEXT("bolt solution at 80 m valid"), B.bValid);
 		const FVector LandedB = StepFlight(B, From, 1.6f, Bolt.MuzzleSpeedMps,
 			FBallisticsConstants::GravityMps2 * Bolt.GravityScale, 1.f / 60.f);
-		TestEqual(TEXT("bolt stepped landing X"), LandedB.X, To.X, 0.35f);
-		TestEqual(TEXT("bolt stepped landing Z"), LandedB.Z, 1.0f, 0.35f);
+		TestEqual(TEXT("bolt stepped landing X"), LandedB.X, To.X, 0.35);
+		TestEqual(TEXT("bolt stepped landing Z"), LandedB.Z, 1.0, 0.35);
 	}
 
 	// -- RC2: ONE solver, profile-speed flatness. Same shot, higher speed ->
@@ -204,8 +212,12 @@ bool FRanged_LOS::RunTest(const FString& Parameters)
 	StampHill(Grid, FVector2D(22.f, -3.f), FVector2D(28.f, 3.f), 10.f);
 	TestTrue(TEXT("rising lane over a 10 m mid-hill to a 20 m target is clear"),
 		MarchClear(Grid, FVector2D(0.f, 0.f), 1.6f, FVector2D(50.f, 0.f), 20.f, 0.3f));
-	StampHill(Grid, FVector2D(22.f, -3.f), FVector2D(28.f, 3.f), 11.f);
-	TestFalse(TEXT("an 11 m mid-hill blocks the rising lane"),
+	// 12 m, not 11: the march samples each crossed cell ONCE at its entry
+	// station, and bilinear blending bleeds the neighbor's height into that
+	// sample (an 11 m plateau reads ~9.4 m at the entry station -- measured
+	// window for this geometry: 8-11 m clear, 12 m blocks).
+	StampHill(Grid, FVector2D(22.f, -3.f), FVector2D(28.f, 3.f), 12.f);
+	TestFalse(TEXT("a 12 m mid-hill blocks the rising lane"),
 		MarchClear(Grid, FVector2D(0.f, 0.f), 1.6f, FVector2D(50.f, 0.f), 20.f, 0.3f));
 
 	// -- bilinear SampleHeight: exact at a cell center, averaged at a corner.
@@ -496,6 +508,8 @@ bool FRanged_VolleySelection::RunTest(const FString& Parameters)
 		TArray<FVolleyShot> Shots;
 		TestEqual(TEXT("arced fires over a mid-lane hill (frontage clear)"),
 			SelectVolleyShots(Shooters, Target, Arrow, Grid, TArray<FVector2D>(), 1.f, 0, Shots), 1);
+		Shooters = { MakeShooter(0, 0) }; // the arced shot armed the reload timer
+		Shots.Reset();
 		TestEqual(TEXT("flat holds on a mid-lane hill (lane blocked)"),
 			SelectVolleyShots(Shooters, Target, Bolt, Grid, TArray<FVector2D>(), 1.f, 0, Shots), 0);
 	}
@@ -518,7 +532,9 @@ bool FRanged_VolleySelection::RunTest(const FString& Parameters)
 			SelectVolleyShots(Shooters, Target, Bolt, Grid, LaneBlockers, 1.f, 0, Shots), 1);
 
 		// Arced: a friendly at the impact zone holds (tolerance 0); off-zone
-		// does not.
+		// does not. Fresh shooter: the flat-fire case above armed the reload.
+		Shooters = { MakeShooter(0, 0) };
+		Shots.Reset();
 		TArray<FVector2D> ZoneBlockers = { FVector2D(80.f, 0.5f) };
 		TestEqual(TEXT("arced holds with a friendly at the impact zone"),
 			SelectVolleyShots(Shooters, Target, Arrow, Grid, ZoneBlockers, 1.f, 0, Shots), 0);

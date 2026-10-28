@@ -68,5 +68,8 @@ one UHT compile blocker (`EBattleProjectileKind` needed `UENUM()`, `0011`),
 one fatal pool-test index (`0014`), doc nits (`0016`), and the authoring
 tool's whole-series tab->space expansion restored (raw diff +8,168/-5,259 ->
 +2,970/-49). The `.patch` files here are the corrected-series exports.
-Details and the deferred UE-machine list:
-`Docs/phases/phase-3/kickoff-verification.md` (fixes F-K1..K6).
+Machine verification the same day (Task 0 of the implementing run): build
+green, unit tier 75/75 -- two more defect classes surfaced and were fixed on
+main (F-K7 compile, F-K8 runtime test defects). Full record:
+`Docs/phases/phase-3/kickoff-verification.md` (fixes F-K1..K8) +
+`Docs/phases/phase-3/progress.md`.
