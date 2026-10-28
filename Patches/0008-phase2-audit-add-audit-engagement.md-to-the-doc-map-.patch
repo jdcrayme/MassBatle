@@ -1,0 +1,29 @@
+From 807876bc8372d64b0680d36023368caa6b71a088 Mon Sep 17 00:00:00 2001
+From: Senior Dev Auditor <audit@massbattle.local>
+Date: Wed, 28 Oct 2026 14:00:12 +0000
+Subject: [PATCH 8/9] =?UTF-8?q?phase2-audit:=20add=20audit-engagement.md?=
+ =?UTF-8?q?=20to=20the=20doc=20map=20(AGENTS=20=C2=A77)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ Docs/README.md | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/Docs/README.md b/Docs/README.md
+index 90d65e6..30d30ce 100644
+--- a/Docs/README.md
++++ b/Docs/README.md
+@@ -45,7 +45,7 @@
+ | `Docs/phases/pre-phase-0/` | brief · progress · report (environment scaffold run) | **Archive** |
+ | `Docs/phases/phase-0/` | brief · progress · report · audit (foundation run + post-run audit) | **Archive** (report §7 = Phase 1 entry point) |
+ | `Docs/phases/phase-1/` | brief · progress · report · audit + the rolled-in garrison run (`brief-garrison` · `progress-garrison` · `report-garrison`) | **Archive** (report §4 + report-garrison §4 = Phase 2 entry points) |
+-| `Docs/phases/phase-2/` | Movement-cleanup run: brief · progress · report (**Archive**). Engagement-solver run: `brief-engagement` · `progress-engagement` · `report-engagement` (**Archive**) | |
++| `Docs/phases/phase-2/` | Movement-cleanup run: brief · progress · report (**Archive**). Engagement-solver run: `brief-engagement` · `progress-engagement` · `report-engagement` (**Archive**). Post-run audit: `audit-engagement` (2026-10-28) | |
+ | `Docs/reviews/plan-review-findings.md` | 2026-10-23 plan review: errors E1–E6, risks R1–R13, improvements I1–I7, evidence + citations | **Archive** (referenced by live specs) |
+ 
+ Repo files outside `Docs/` you will be pointed at: `Tools/CI/README.md`, `Tools/CI/JENKINS.md`, `Tools/CI/run_tests.bat` / `nightly.bat` / `compare_baseline.py`, `Baselines/perf/README.md`, `Jenkinsfile`.
+-- 
+2.47.3
+

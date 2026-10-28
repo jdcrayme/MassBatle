@@ -1,0 +1,318 @@
+From d388826b6549e1d38a086034416374cc2a329612 Mon Sep 17 00:00:00 2001
+From: Senior Dev Auditor <audit@massbattle.local>
+Date: Wed, 28 Oct 2026 13:54:02 +0000
+Subject: [PATCH 3/9] phase2-audit: one home for the 40 cm body radius + the
+ contact ring (B-1, B-5)
+
+The body radius was typed by hand in three places, two of which bypassed
+the values the seam already carries:
+- EngagementClustersProcessor dilated OBBs with local constexpr 0.4f/0.7f
+  while the seam's FAssignContext (DefenderRadiusM/AttackerRadiusM +
+  ReachByClassM) defines the same numbers the pairing ring uses -- a cvar
+  edit to the context would silently desync contact detection from pairing
+- AssignPairsProcessor's write-back re-derived the ring as '0.4f + 0.4f +
+  reach', ignoring the seam's RingRadiusFor helper used one screen earlier
+- ServoProcessor re-typed 0.4f at three avoidance/touch sites
+
+Fix:
+- FCombatSolver::Contact::BodyRadiusM named constant in BattleEngagement.h
+- RingRadiusFor(uint8 ReachClass, const FAssignContext&) promoted from the
+  anonymous namespace to the public seam API (same formula, same clamps)
+- all consumers (cluster dilation, assign ring, servo radii) now read the
+  same source; the cluster dilation reads the reach table's Normal entry
+  instead of a re-typed 0.7f
+- FMeleeMathConstants::MinChargeRunUpM names the charge run-up gate that
+  ChargeProcessor compared against the literal 1.f
+
+Same values everywhere (0.4/0.7 preserved); one source. T2.1 golden must
+be re-run on the UE machine as a formality (no seam signature it pins
+changed shape).
+---
+ .../Private/AssignPairsProcessor.cpp          | 26 +++------
+ .../MassBattle/Private/BattleEngagement.cpp   | 58 +++++++++----------
+ .../MassBattle/Private/ChargeProcessor.cpp    |  2 +-
+ .../Private/EngagementClustersProcessor.cpp   | 11 ++--
+ .../MassBattle/Private/ServoProcessor.cpp     |  8 +--
+ .../MassBattle/Public/BattleEngagement.h      | 23 ++++++++
+ .../Source/MassBattle/Public/BattleMelee.h    |  3 +
+ 7 files changed, 74 insertions(+), 57 deletions(-)
+
+diff --git a/Plugins/MassBattle/Source/MassBattle/Private/AssignPairsProcessor.cpp b/Plugins/MassBattle/Source/MassBattle/Private/AssignPairsProcessor.cpp
+index a4aa6d1..092eab7 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Private/AssignPairsProcessor.cpp
++++ b/Plugins/MassBattle/Source/MassBattle/Private/AssignPairsProcessor.cpp
+@@ -477,16 +477,12 @@ void UAssignPairsProcessor::Execute(FMassEntityManager& EntityManager, FMassExec
+ 				// refresh must not restore it).
+ 				if (S.Target.IsValid() && S.Target != PrevTarget)
+ 				{
+-					for (const FCombatSolver::FAssignDefenderState& Def : Defenders)
++					if (const FCombatSolver::FAssignDefenderState* Def = FCombatSolver::FindDefender(Defenders, S.Target))
+ 					{
+-						if (Def.Entity == S.Target)
+-						{
+-							Out.DefenderDefense = Def.Defense;
+-							Out.DefenderShield = Def.Shield;
+-							Out.DefenderArmor = Def.Armor;
+-							Out.DefenderMountRemaining = static_cast<int16>(Def.MountHP);
+-							break;
+-						}
++						Out.DefenderDefense = Def->Defense;
++						Out.DefenderShield = Def->Shield;
++						Out.DefenderArmor = Def->Armor;
++						Out.DefenderMountRemaining = static_cast<int16>(Def->MountHP);
+ 					}
+ 				}
+ 				Out.ContactAngle = S.ContactAngle;
+@@ -501,21 +497,13 @@ void UAssignPairsProcessor::Execute(FMassEntityManager& EntityManager, FMassExec
+ 				// intent defender's ring (press the line, spec §4.6).
+ 				const FVector P = Transforms[i].GetTransform().GetTranslation();
+ 				const FVector2D MyPosM(P.X * 0.01f, P.Y * 0.01f);
+-				const uint8 ClassIdx = FMath::Min<uint8>(S.ReachClass, 7);
+-				const float RingRadiusM = 0.4f + 0.4f + AssignContext.ReachByClassM[ClassIdx];
++				const float RingRadiusM = FCombatSolver::RingRadiusFor(S.ReachClass, AssignContext);
+ 				const FCombatSolver::FAssignDefenderState* RingDef = nullptr;
+ 				float RingAngleDeg = 0.f;
+ 				bool bRing = false;
+ 				if (S.Target.IsValid())
+ 				{
+-					for (const FCombatSolver::FAssignDefenderState& Def : Defenders)
+-					{
+-						if (Def.Entity == S.Target)
+-						{
+-							RingDef = &Def;
+-							break;
+-						}
+-					}
++					RingDef = FCombatSolver::FindDefender(Defenders, S.Target);
+ 					RingAngleDeg = static_cast<float>(S.ContactAngle) * (360.f / 255.f);
+ 					bRing = RingDef != nullptr;
+ 				}
+diff --git a/Plugins/MassBattle/Source/MassBattle/Private/BattleEngagement.cpp b/Plugins/MassBattle/Source/MassBattle/Private/BattleEngagement.cpp
+index c66b559..8cdf9f8 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Private/BattleEngagement.cpp
++++ b/Plugins/MassBattle/Source/MassBattle/Private/BattleEngagement.cpp
+@@ -241,38 +241,38 @@ namespace FCombatSolver
+ 		return DefenderAlive * FCombatCVars::FormedSlots();
+ 	}
+ 
+-	namespace
++	float RingRadiusFor(uint8 ReachClass, const FAssignContext& Context)
+ 	{
+-		/** Binary search over the handle-sorted defender table. */
+-		const FAssignDefenderState* FindDefenderSorted(const TArray<FAssignDefenderState>& Defenders, FMassEntityHandle Entity)
++		const uint8 ClassIdx = FMath::Min<uint8>(ReachClass, 7);
++		return Context.DefenderRadiusM + Context.AttackerRadiusM + Context.ReachByClassM[ClassIdx];
++	}
++
++	const FAssignDefenderState* FindDefender(const TArray<FAssignDefenderState>& Defenders, FMassEntityHandle Entity)
++	{
++		int32 Lo = 0;
++		int32 Hi = Defenders.Num() - 1;
++		while (Lo <= Hi)
+ 		{
+-			int32 Lo = 0;
+-			int32 Hi = Defenders.Num() - 1;
+-			while (Lo <= Hi)
++			const int32 Mid = (Lo + Hi) / 2;
++			if (Defenders[Mid].Entity == Entity)
+ 			{
+-				const int32 Mid = (Lo + Hi) / 2;
+-				if (Defenders[Mid].Entity == Entity)
+-				{
+-					return &Defenders[Mid];
+-				}
+-				if (Defenders[Mid].Entity.Index < Entity.Index ||
+-					(Defenders[Mid].Entity.Index == Entity.Index && Defenders[Mid].Entity.SerialNumber < Entity.SerialNumber))
+-				{
+-					Lo = Mid + 1;
+-				}
+-				else
+-				{
+-					Hi = Mid - 1;
+-				}
++				return &Defenders[Mid];
++			}
++			if (Defenders[Mid].Entity.Index < Entity.Index ||
++				(Defenders[Mid].Entity.Index == Entity.Index && Defenders[Mid].Entity.SerialNumber < Entity.SerialNumber))
++			{
++				Lo = Mid + 1;
++			}
++			else
++			{
++				Hi = Mid - 1;
+ 			}
+-			return nullptr;
+ 		}
++		return nullptr;
++	}
+ 
+-		float RingRadiusFor(const FAssignSeekerState& Seeker, const FAssignContext& Context)
+-		{
+-			const uint8 ClassIdx = FMath::Min<uint8>(Seeker.ReachClass, 7);
+-			return Context.DefenderRadiusM + Context.AttackerRadiusM + Context.ReachByClassM[ClassIdx];
+-		}
++	namespace
++	{
+ 
+ 		/** Per-defender sector scratch view (Defenders.Num() x 16). */
+ 		int32* SectorRow(TArray<int32>* Scratch, int32 DefenderIndex)
+@@ -418,7 +418,7 @@ namespace FCombatSolver
+ 			// the same pass see vacated slots -- the <= 1 tick handoff, EC5). --
+ 			if (S.Target.IsValid())
+ 			{
+-				const FAssignDefenderState* D = FindDefenderSorted(Defenders, S.Target);
++				const FAssignDefenderState* D = FindDefender(Defenders, S.Target);
+ 				if (!D || D->bValidTarget == 0)
+ 				{
+ 					// Target died / stale handle / invalid -> release.
+@@ -436,8 +436,8 @@ namespace FCombatSolver
+ 			}
+ 			if (S.Target.IsValid())
+ 			{
+-				const FAssignDefenderState* D = FindDefenderSorted(Defenders, S.Target);
+-				const float Ring = RingRadiusFor(S, Context);
++				const FAssignDefenderState* D = FindDefender(Defenders, S.Target);
++				const float Ring = RingRadiusFor(S.ReachClass, Context);
+ 				const float BreakRadius = Ring * Context.BreakRadiusFactor;
+ 				const float Dist = D ? FVector2D::Distance(S.PosM, D->PosM) : 0.f;
+ 				if (Dist > BreakRadius && S.PairAge > Hysteresis)
+diff --git a/Plugins/MassBattle/Source/MassBattle/Private/ChargeProcessor.cpp b/Plugins/MassBattle/Source/MassBattle/Private/ChargeProcessor.cpp
+index 2032399..44645c6 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Private/ChargeProcessor.cpp
++++ b/Plugins/MassBattle/Source/MassBattle/Private/ChargeProcessor.cpp
+@@ -102,7 +102,7 @@ void UChargeProcessor::Execute(FMassEntityManager& EntityManager, FMassExecution
+ 			// run-up means the contact is not fresh -- the distance gate
+ 			// covers it, since a standing melee never accumulates).
+ 			if (Pair.Target.IsValid() && Charge.bConnected == 0
+-				&& Charge.DistanceTraveled > 1.f && SpeedM >= Threshold)
++				&& Charge.DistanceTraveled > FMeleeMathConstants::MinChargeRunUpM && SpeedM >= Threshold)
+ 			{
+ 				Charge.bConnected = 1;
+ 				Charge.ImpactSpeed = SpeedM;
+diff --git a/Plugins/MassBattle/Source/MassBattle/Private/EngagementClustersProcessor.cpp b/Plugins/MassBattle/Source/MassBattle/Private/EngagementClustersProcessor.cpp
+index 6d56e59..04134b6 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Private/EngagementClustersProcessor.cpp
++++ b/Plugins/MassBattle/Source/MassBattle/Private/EngagementClustersProcessor.cpp
+@@ -1,6 +1,7 @@
+ // EngagementClustersProcessor.cpp -- the 4 Hz record machine (task 5; spec §4.2).
+ #include "EngagementClustersProcessor.h"
+ #include "BattleEngagement.h"
++#include "BattleTypes.h"
+ #include "BattleFragments.h"
+ #include "BattleDebugSubsystem.h"
+ #include "BattleRegistry.h"
+@@ -85,10 +86,12 @@ void UEngagementClustersProcessor::Execute(FMassEntityManager& EntityManager, FM
+ 	});
+ 
+ 	// -- Contact pairs: OBBs dilated by the engage distance (radius sum +
+-	// reach, one scalar; each OBB inflated by half so the sum matches). --
+-	constexpr float BodyRadiusM = 0.4f;    // fact 1.9
+-	constexpr float MaxReachM = 0.7f;      // normal melee reach (spear handled per-pair later)
+-	const float Dilation = (2.f * BodyRadiusM + MaxReachM) * 0.5f;
++	// reach, one scalar; each OBB inflated by half so the sum matches).
++	// B-1: the body radius + normal-reach literals live in the seam now --
++	// contact detection and pairing must read the SAME numbers.
++	static const FCombatSolver::FAssignContext ContactContext; // default reach table
++	const float Dilation = (FCombatSolver::Contact::BodyRadiusM * 2.f
++		+ ContactContext.ReachByClassM[static_cast<int32>(EBattleWeaponReach::Normal)]) * 0.5f;
+ 	TArray<FIntPoint> ContactPairs;
+ 	for (int32 A = 0; A < Nodes.Num(); ++A)
+ 	{
+diff --git a/Plugins/MassBattle/Source/MassBattle/Private/ServoProcessor.cpp b/Plugins/MassBattle/Source/MassBattle/Private/ServoProcessor.cpp
+index c560a78..84f1738 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Private/ServoProcessor.cpp
++++ b/Plugins/MassBattle/Source/MassBattle/Private/ServoProcessor.cpp
+@@ -212,7 +212,7 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
+ 			Entry.Vel = FVector2D(Velocities[i].Value.X, Velocities[i].Value.Y) * 0.01f;
+ 			Entry.Owner = Owners[i].Owner;
+ 			Entry.HandleIndex = Context.GetEntity(i).Index;
+-			Entry.RadiusM = 0.4f; // FAgentRadiusFragment 40 cm (fact 1.9); cavalry widens in Task 9
++			Entry.RadiusM = FCombatSolver::Contact::BodyRadiusM; // fact 1.9; cavalry widens in Task 9
+ 			Snapshot.Add(Entry);
+ 		}
+ 	});
+@@ -583,7 +583,7 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
+ 				}
+ 				const float WeightMul = FUnstuckLadder::AvoidanceWeightMultiplier(ServoStates[i].LadderLevel);
+ 				FVector2D Deflection = FUnitServo::ComputeAvoidanceDeflection(
+-					PosM, DesiredVel, 0.4f, MyHandle, Neighbors, Weight * WeightMul);
++					PosM, DesiredVel, FCombatSolver::Contact::BodyRadiusM, MyHandle, Neighbors, Weight * WeightMul);
+ 				// Audit M4: the accumulated push is unbounded by construction
+ 				// (full Combined per overlapping neighbor); clamp it so the
+ 				// blended velocity can never ratchet past the §8.2 unit limit.
+@@ -624,7 +624,7 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
+ 						}
+ 						const FVector2D Rel = Entry.Pos - PosM;
+ 						const float Dist = Rel.Size();
+-						constexpr float CombinedRadius = 0.8f; // 40 cm + 40 cm (fact 1.9)
++						constexpr float CombinedRadius = 2.f * FCombatSolver::Contact::BodyRadiusM; // fact 1.9
+ 						if (Dist > CombinedRadius + 2.2f)
+ 						{
+ 							continue;
+@@ -795,7 +795,7 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
+ 				bool bTouchingTeammate = false;
+ 				if (State == EBattleMovementState::ManeuverToSlot || State == EBattleMovementState::HoldSlot)
+ 				{
+-					const float TouchSq = FMath::Square(2.f * 0.4f); // sum of 40 cm body radii (fact 1.9)
++					const float TouchSq = FMath::Square(2.f * FCombatSolver::Contact::BodyRadiusM); // fact 1.9
+ 					for (const FSnapshotEntry& Entry : Snapshot)
+ 					{
+ 						if (Entry.HandleIndex == MyHandle || Entry.Owner != MyOwner)
+diff --git a/Plugins/MassBattle/Source/MassBattle/Public/BattleEngagement.h b/Plugins/MassBattle/Source/MassBattle/Public/BattleEngagement.h
+index c0ca872..481d244 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Public/BattleEngagement.h
++++ b/Plugins/MassBattle/Source/MassBattle/Public/BattleEngagement.h
+@@ -80,6 +80,18 @@ struct FCombatAttackerView
+ 
+ namespace FCombatSolver
+ {
++	// -- Body geometry (ONE home for the 40 cm soldier body radius, fact 1.9) --
++	//
++	// Consumers: the cluster pass's OBB dilation, the assign pass's contact
++	// ring, and the servo's avoidance/touch radii all re-derive the same
++	// body size. Keep it HERE (beside FAssignContext, which carries it into
++	// the seam) -- a per-file retyped 0.4f drifts silently (B-1).
++	namespace Contact
++	{
++		/** Soldier body radius, meters (fact 1.9: FAgentRadiusFragment 40 cm). */
++		constexpr float BodyRadiusM = 0.4f;
++	}
++
+ 	// -- ContactAngle conventions (ONE value, TWO consumers, spec §4.5) --
+ 	//
+ 	// ContactAngle is stored 0-255 (full circle around the defender). Angle 0
+@@ -204,6 +216,17 @@ namespace FCombatSolver
+ 		float ReachByClassM[8] = { 0.5f, 0.7f, 1.6f, 2.2f, 2.8f, 0.7f, 0.7f, 0.7f };
+ 	};
+ 
++	/** Ring distance for a seeker's reach class about a defender:
++	 *  DefenderRadius + AttackerRadius + reach (the seam's ONE ring
++	 *  formula -- the write-back's ring points and the pass's break
++	 *  radius must not re-derive it, B-1). Reach clamped to the table. */
++	MASSBATTLE_API float RingRadiusFor(uint8 ReachClass, const FAssignContext& Context);
++
++	/** Binary search over the handle-sorted defender table (the seam
++	 *  sorts it; callers MUST sort handle-wise before searching). Exposed
++	 *  so processors can stop linear-scanning the mirror (A-4). */
++	MASSBATTLE_API const FAssignDefenderState* FindDefender(const TArray<FAssignDefenderState>& Defenders, FMassEntityHandle Entity);
++
+ 	// -- Cluster pass pure math (task 5; spec §4.2). The processors are thin
+ 	//    shims: gather unit bodies + contact pairs, call these, write records. --
+ 
+diff --git a/Plugins/MassBattle/Source/MassBattle/Public/BattleMelee.h b/Plugins/MassBattle/Source/MassBattle/Public/BattleMelee.h
+index 0923fbb..558c2d8 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Public/BattleMelee.h
++++ b/Plugins/MassBattle/Source/MassBattle/Public/BattleMelee.h
+@@ -38,6 +38,9 @@ namespace FMeleeMathConstants
+ 	// bounded (deterministic; no knockdown RNG v1, spec §4.9).
+ 	constexpr float KnockbackPerSpeed = 0.6f;  // (m/s)/(m/s above threshold)
+ 	constexpr float KnockbackMaxMps = 2.5f;
++	// Charge: minimum accumulated run-up (m) before a fast contact counts
++	// as a charge impact (a standing nudge at speed is not a charge, EC7).
++	constexpr float MinChargeRunUpM = 1.f;
+ 	// Composite HP: landed hits drain the mount pool first, then the rider
+ 	// (documented simplification: the ORDER does not affect the total; no
+ 	// riderless mounts v1, spec §10).
+-- 
+2.47.3
+

@@ -1,0 +1,341 @@
+From 6bbc8318bef17cdfba84cab89c0292e3035896a4 Mon Sep 17 00:00:00 2001
+From: Senior Dev Auditor <audit@massbattle.local>
+Date: Wed, 28 Oct 2026 13:45:16 +0000
+Subject: [PATCH 1/9] phase2-audit: remove bring-up scaffolding from shipped
+ paths (C1/C2/C4/C5)
+
+- EngagementClustersProcessor: delete the ClusterDbg LogTemp dump (3 lines
+  per process at Display) and the dead AttackerNode/DefenderNode scan in the
+  overlay path ((void) casts -- leftovers of a removed overlay variant)
+- Servo/UnitLocomotion/Integrate/FormationSlotResolve: delete the four
+  'MovementSpine ... first-execute' EXEC_RESULT trace blocks (phase-1
+  scaffolding; the FINAL lines and metrics are the evidence channels now)
+- AssignPairsProcessor: drop the dead BestDistSq local from the auto-engage
+  resolution ((void) cast immediately after; the rank comparison is the
+  actual decision)
+- ChargeProcessor: drop the unused FBaseStatsFragment query requirement +
+  fragment view + (void)Stats (the pass reads no stats)
+
+No behavior change; deletions only. Audit: Docs/phases/phase-2/audit-engagement.md
+---
+ Docs/phases/phase-2/audit-engagement.md       | 141 ++++++++++++++++++
+ .../Private/AssignPairsProcessor.cpp          |   2 -
+ .../MassBattle/Private/ChargeProcessor.cpp    |   3 -
+ .../Private/EngagementClustersProcessor.cpp   |  22 ---
+ .../Private/FormationSlotResolveProcessor.cpp |   7 -
+ .../MassBattle/Private/IntegrateProcessor.cpp |   7 -
+ .../MassBattle/Private/ServoProcessor.cpp     |   7 -
+ .../Private/UnitLocomotionProcessor.cpp       |   7 -
+ 8 files changed, 141 insertions(+), 55 deletions(-)
+ create mode 100644 Docs/phases/phase-2/audit-engagement.md
+
+diff --git a/Docs/phases/phase-2/audit-engagement.md b/Docs/phases/phase-2/audit-engagement.md
+new file mode 100644
+index 0000000..f2385ef
+--- /dev/null
++++ b/Docs/phases/phase-2/audit-engagement.md
+@@ -0,0 +1,141 @@
++# Phase 2 Audit -- Engagement Solver & Melee (+ demo session-on fixes)
++
++| | |
++|---|---|
++| **Date** | 2026-10-28 |
++| **Auditor** | Senior-dev audit pass (independent of the implementation run) |
++| **Subject** | HEAD `5e46a1b` ("Formation fix") -- the phase-2 engagement-solver run, the movement-cleanup run's landed code, and the demo-fix commits that followed |
++| **Method** | Full read of the combat pipeline (`BattleEngagement` / `BattleMelee` / the six combat processors / registry combat state), the demo module, and the test tier. Static review only: no engine build available in this environment; compile-sanity by symbol/reference check, behavior-safety argued per change. |
++| **Deliverables** | (a) this findings register; (b) one commit per fix group on branch `audit/phase2-engagement` + `.patch` files under `Patches/`; (c) PR writeups in `Patches/PRs/` for everything that needs UE/MCP access. |
++
++---
++
++## 0. Verdict
++
++The architecture held: one system produces formed clashes and mobs, the seams are pure, constants are
++golden-locked, and the flags-off identity discipline is real -- including the worker-thread cvar
++contract, which was verified correct at every call site (see the retracted A-1). The rot is at the
++edges, and it is the kind that compounds: **debug leftovers shipped in the combat path**, **magic numbers re-typed instead
++of shared** (including ones that silently disagree with their neighbors), **fixture data (unit
++composition, keybinds, threshold geometry) hard-coded in C++**, and **unbounded function-local state
++in the locomotion hot path**.
++
++Nothing here requires redesign. Every fix is a deletion, a named constant, or moving data to where
++data lives. The test tier is largely exemplary; the redundancy found is at skeleton level (a
++permanently-failing placeholder that was superseded by a shipped gate) rather than duplication of
++coverage.
++
++---
++
++## 1. Findings register
++
++Severity: **A** = correctness (fix now) · **B** = maintainability/data-drift (fix now, cheap) ·
++**C** = cleanliness (fix now, trivial) · **D** = deferred (needs owner/MCP/engine, PR writeup filed).
++
++### A-tier (correctness)
++
++| ID | Sev | File(s) | Finding |
++|---|---|---|---|
++| **A-1** | ~~High~~ **RETRACTED** | ChargeProcessor / CombatResolutionProcessor | **Retracted during verification.** The first audit pass misread a grep listing and recorded the two worker processors as reading their gates via `GetValueOnGameThread()`. Verified against HEAD: both use `GetValueOnAnyThread()` (`ChargeProcessor.cpp:53`, `CombatResolutionProcessor.cpp:47`), and the `FGarrisonCVars` accessors are correctly partitioned too (the two worker-called ones, `MaxSlotDisplacement`/`MaxZRate`, use AnyThread; the game-thread-only ones use game-thread reads). Kept in this register as a verification record so the next reader doesn't re-chase it. |
++| **A-2** | Med | `UnitLocomotionProcessor.cpp:958`, `:1043` | **Function-local `static TMap` accumulates forever**: `ProbeTicks` (contact-probe tick counters) and `PaceThrottled` (throttle-state latches) are per-process maps keyed by `FUnitHandle`. Stale handles (slot reuse bumps serial, but the map keeps every generation ever seen) grow unbounded across a long session/soak, and state from a dead unit can leak into a new tenant's first probe window ("first 3 ticks" logic reads a warm counter). The handles are unique per generation, so there is no aliasing bug -- only unbounded growth and cross-scenario leakage in the same process. Minimal in-place fix (patched): cull entries whose handle is no longer registered, on a cheap cadence. The clean home (registry state, reset by `ResetBattleState`) is PR-4. |
++| **A-3** | Med | `BattleMelee.cpp:93-99` vs `CombatResolutionProcessor.cpp:124-147` | **Dead seam function `DrainCompositePool`** -- the resolution processor implements the mount-first drain inline (`if (DefenderMountRemaining > 0) --...else AddTag<FDeadTag>`) and never calls the seam's `FMeleeMath::DrainCompositePool`. The golden test `FHitChanceGolden` dutifully locks the seam's behavior, so the project carries a tested function that no runtime path uses. Either the processor should call the seam (behavior change -- needs the golden reviewed) or the seam function + its golden block + its doc-comment should be deleted. This audit deletes the dead code: the inline path is what T2.6/ChargeMechanics verified end-to-end, and the seam's float-based signature (`RiderHP`, `Damage`) doesn't even match the shipped integer-hit model. |
++| **A-4** | Low | `AssignPairsProcessor.cpp:480/511/538` | **O(n) linear scans where the seam already has O(log n)**: the write-back re-finds the pair target / ring defender / stat mirror by scanning the whole `Defenders` array per seeker (three separate scans). The seam sorts `Defenders` handle-wise precisely so `FindDefenderSorted` can binary-search (`BattleEngagement.cpp:247`) -- the processor just doesn't use it (it's file-local to `BattleEngagement.cpp`). At the 2x2400 target this is the difference between 2400*log(n) and ~3*2400*n per tick on the game thread. Fix: expose `FindDefenderSorted` as `FCombatSolver::FindDefender` and use it in the write-back. Non-functional (identical results), so safe without a re-run of the golden tier. |
++
++### B-tier (magic numbers / data-in-code / duplication)
++
++| ID | Sev | File(s) | Finding |
++|---|---|---|---|
++| **B-1** | High | `EngagementClustersProcessor.cpp:89-91` vs `BattleEngagement.h:200-201` vs `AssignPairsProcessor.cpp:507` | **The 40 cm body radius is typed by hand in three places, and two of them disagree with the context they sit in.** (1) `EngagementClustersProcessor` declares local `constexpr BodyRadiusM = 0.4f` and `MaxReachM = 0.7f`, then dilates OBBs by `(2*0.4 + 0.7) * 0.5`; (2) the seam's `FAssignContext` already carries `DefenderRadiusM`/`AttackerRadiusM = 0.4f` plus a reach table where `Normal = 0.7f` -- but the cluster pass never reads it; (3) the assign write-back re-derives the ring radius as the literal `0.4f + 0.4f` instead of `Context.DefenderRadiusM + Context.AttackerRadiusM`, bypassing the `RingRadiusFor` helper the seam itself uses one screen earlier. Fix: give `FCombatSolver` one named constant (`Contact::BodyRadiusM`) + one `RingRadiusFor(reach, context)`; all three sites consume it. The cluster dilation then reads the same values the pairing ring uses -- today a cvar edit to the context defaults would silently desync contact detection from pairing. |
++| **B-2** | Med | `CombatResolutionProcessor.cpp:107-109` vs `BattleMelee.cpp:64-71` | **Knuth multiplicative hash constants duplicated across the seam boundary**: `2654435761u` (golden ratio) appears in both the resolution processor's inline roll hash and the seam's `StaggeredPhaseOffset`, with a second multiplier (`40503u`, `2685821657u`) living only in the processor. Neither site names the other; a future edit to one silently breaks determinism docs (T2.8's "seed-derived" argument) while the golden still passes, because the golden only pins the seam. Fix: move the roll hash into `FMeleeMath` (`CombatRollHash(Entity, RollCount)`) beside the stagger hash; the processor calls it. Pure refactor -- same bits out. |
++| **B-3** | Med | `BattleExecCommands.cpp:770-798` (`SpawnClash`) | **Game data hard-coded in the fixture command**: unit composition (EDU row *indices* 0/1, counts 40/12/8, positions `(0,0)`, `(-24,0)`, `(0,-3)`..., facings 180/0, ranks 3) lives as typed literals in C++. Row indices are the worst part: `SpawnClashUnitExec(World, 1, ...)` means "Sergeant Spearmen" only while the golden EDU keeps its current row order -- the file's own header says values are placeholders pending the Phase-6 audit. Anyone re-ordering the EDU silently turns the knights-vs-peasants mob into peasants-vs-peasants. Fix (patched): drive the variants from a small `static const` table keyed by EDU `dictionary` name via the existing `FindRowByDictionary`-style lookup, so the fixture survives EDU re-ordering; the layout numbers stay in the table (they ARE the scenario, and scenario shape is legitimate fixture data). |
++| **B-4** | Med | `DemoPlayerController.cpp:60-110` | **Keybinds and input geometry hard-coded in C++**: the IMC mappings (LMB/RMB/H/W/A/S/D/Q/E + arrows), click/drag/pick thresholds (5/12/250 px) and the drag segment gap are typed literals in the controller. Per AGENTS §3 (2026-10-25 owner decision) the demo module exists for editor-authored demo UX -- this is exactly the data that belongs in an `UInputMappingContext` asset / `UDataAsset` the editor can own, and it's the same class of issue as B-3. The pure-C++ programmatic-IMC approach was a legitimate workaround for editor-asset bootstrapping, but it has served its purpose: PR-2 proposes moving the mapping table to an editor asset (needs MCP), while this audit extracts the tunable px constants to named `constexpr` with doc-comments (mechanical, safe). |
++| **B-5** | Low | `ServoProcessor.cpp:592-593`, `:805` | **Avoidance self-radius and teammate-touch radius re-type the 40 cm body radius** (`0.4f` passed as a raw argument; `FMath::Square(2.f * 0.4f)`). Same fix family as B-1: one named constant. Also `ChargeProcessor.cpp:107`'s `DistanceTraveled > 1.f` (charge minimum run-up, meters) is an unnamed behavior threshold -- name it (`MinChargeRunUpM`) beside the other charge constants in `FMeleeMathConstants`. |
++| **B-6** | Low | `ServoProcessor.cpp:241-243` | **`FindConsoleVariable` called per Execute for `Battle.Movement.ProgressiveFallIn`** (twice per call!) while every other cvar in the same function uses a module-scope `TAutoConsoleVariable` or a cached pointer -- including the `WalkSpeedCvar` cached-pointer pattern three lines above. Convert to the same cached-pointer pattern (the file already establishes it). |
++| **B-7** | Low | `DemoPlayerController.cpp:617, 694` + header | **`ClampToGrid` lambda duplicated as a member function**: `OnRMBReleased` defines a local `ClampToGrid` lambda with the magic `12500.f` while `ClampToGridHelper` (added later for the attack path) duplicates it exactly. Delete the lambda; call the member (it's one line). The `12500.f` limit itself is the movement tile half-width minus margin -- belongs beside the plugin's grid constants (deferred to PR-3; the grid extent lives in `BattleCostGrid`, plugin-side, and the demo shouldn't re-derive it). |
++| **B-8** | Low | `DemoPlayerController.cpp:363, 457` vs `DemoHUD` | **Body-center projection height `100.f` (cm) typed at each call site** for screen-projected picking/marquee. One named constant (`BodyLabelHeightCm`) in `DemoTypes.h` next to `FDemoUnitBodyInfo` -- the value is a render hack, and it should be findable when someone tunes the camera. |
++
++### C-tier (cleanliness / dead code / leftovers)
++
++| ID | Sev | File(s) | Finding |
++|---|---|---|---|
++| **C-1** | High | `EngagementClustersProcessor.cpp:202-213` | **Leftover diagnostic `ClusterDbg` logging in the shipped combat path**: a `static int32 DbgRuns` counter emitting 3 `LogTemp` Display lines per process with a full node dump -- development scaffolding from the cluster bring-up, using the wrong log category, spamming the first three combat frames of every session. Delete (the Verbose `EngagementClusters` line below it is the proper diagnostic). |
++| **C-2** | High | `EngagementClustersProcessor.cpp:237-245` | **Dead code in the overlay path**: `AttackerNode`/`DefenderNode` are found by linear scan and then immediately discarded (`(void)` casts) -- leftovers of a removed overlay variant. `EnqueueEngagementLine` doesn't take positions. Delete the scan. |
++| **C-3** | Med | `MassBattleFuncTestHarness.cpp:715-741` | **`FDeterminismTwoRun` registered OUTSIDE the `WITH_DEV_AUTOMATION_TESTS` guard**: the `#endif` sits at line 715 and the T2.8 test declaration follows it. In a Test build the guard's absence is benign only because this file is only compiled by the `MassBattleTest` developer module (where the macro is on); but the file's own convention (every other test inside) exists so shipping-config compilations of the test module don't see `IMPLEMENT_CUSTOM_*` macros referencing editor-only types. Move the test above the `#endif`. |
++| **C-4** | Med | `ChargeProcessor.cpp:129`, `:75`, `:42-46` | **Dead includes/params**: `(void)Stats;` -- the `FBaseStatsFragment` requirement + fragment view + include exist only to be voided; the query requirement forces entities to carry stats but the pass reads none. Delete the requirement, the view, the lambda capture, and the include. Same family: `AssignPairsProcessor.cpp:196` declares `BestDistSq` then immediately `(void)BestDistSq;` -- dead variable from the "nearest by rank" decision. |
++| **C-5** | Med | `ServoProcessor.cpp:166-170`, `UnitLocomotionProcessor.cpp:167-171`, `IntegrateProcessor.cpp:95-99`, `FormationSlotResolveProcessor.cpp:188-192` | **Four "first-execute" `EXEC_RESULT` trace lines** -- bring-up scaffolding proving the processor graph ran, now permanent noise at Display verbosity in every session. They served their evidence purpose in phase 1. Delete (or drop to Verbose). This audit deletes them; the soak/CI evidence channels are the FINAL lines and the metrics, which are untouched. |
++| **C-6** | Low | `MassBattleCombatTests.cpp:1067-1078` | **`FPerfGate2Skeleton` is a shipped permanently-RED placeholder**: `RunTest` unconditionally `AddError("skeleton: perf gate lands with task 9")` and `return false`. Task 9 shipped its gate as a fixture + measured metrics (0.452 ms evidence in the report), but the skeleton was never deleted -- it now fails any test run that matches the `Battle.Perf` filter, forever, by design of nothing. It's excluded from both CI tier filter strings, which is why nobody noticed. Delete the test; the T2.9 gate is the measured fixture + baseline JSON comparison, not this stub. |
++| **C-7** | Low | `TallyProcessor.cpp` `PairQuery` | `PairQuery` requires only `FCombatPairFragment` but the pass reads `Target` -- fine -- yet the requirement omits the `FDeadTag None` guard that every other combat query carries (corpses excluded elsewhere by M8 pattern). Harmless today (corpses are removed from live queries before tally runs, per the death flush contract), but the pattern-consistency guard is free. Added in the patch. |
++
++### D-tier (deferred -- UE build / MCP / owner decisions; PRs filed)
++
++| ID | Sev | Target | Finding |
++|---|---|---|---|
++| **D-1** | High | `Plugins/MassBattle/Source/MassBattleTest/` | **The engagement run's report claims "func tier 21/21" but the harness carries 22 registered `Battle.Func.*` tests** (15 pre-existing + CombatSmoke/ChargeMechanics/S4_ShieldWall/S5_Mob/PairLifecycle/DeterminismTwoRun = 21, plus `FPerfGate2Skeleton` in the unit file = the 22nd lives under `Battle.Perf`). The counts reconcile only via the filter strings; the report's "21/21" is honest under the tier definition, but a reader auditing "is everything green?" must know the red skeleton exists. Resolved in-tree by C-6 (delete the stub); no PR needed. |
++| **D-2** | High | `Content/`, Demo maps | **Level geometry + demo scenario composition live only in C++/uasset binary**: the M3 mob sample and the wall/charge fixtures are code (B-3) and the demo map's placed units are an unmergable `.uasset`. Any change to scenario placement requires MCP/editor access. PR-1 proposes a data-driven scenario layer: a `DataTable`/JSON of spawn specs consumed by `DemoGameMode` (the level-driven authoring path already exists via `ADemoUnitActor` properties -- the gap is only the fixtures' composition). |
++| **D-3** | Med | Config | **Session-on cvar flips are duplicated in two places** (`DemoGameMode::BeginPlay` and `BattleExec::CombatSpawnClash` both flip the same four `Battle.Combat.*` flags with the same literal list). One shared helper in the plugin (`BattleExec::EnableDemoCombatPipeline()`) kills the duplication; folding it requires touching the plugin's public exec surface, which is fine without an editor, but the *fold-in checklist* (D3 in the movement report) explicitly reserves default flips for the owner's nightly -- so the helper ships in this patch (mechanical dedup), while any default-value change stays owner-gated. |
++| **D-4** | Med | Plugin architecture | **`AssignPairsProcessor` at ~640 lines and `UnitLocomotionProcessor` at ~1470 lines are the two "god files"** the movement brief already logged as F-10 (locomotion). The assign processor now mixes six responsibilities: defender mirror, record mirror, intent resolution (ordered + auto-engage + demo-fix3 defensive), disengage fan-out, the seam call, and a write-back that also owns ring geometry, overlay lines, and charge knockback. The knockback block in particular (game-thread, transforms of OTHER entities) is charge's business living in assign's file. PR-4 proposes the extraction seams (record-mirror/intent-resolution into `BattleEngagement`-adjacent helpers; knockback into `ChargeProcessor`'s orbit or a small `UBattleKnockback` step). Deferred because extraction changes enough surface that it should ride a UE-built test cycle, not a static-only audit. |
++| **D-5** | Low | `Tools/agent/` | **15 one-shot development patch scripts committed at repo root tools** (`patch_*.py`, `append_*.py`) -- they were session-local file-rewrite helpers (paths hard-coded to `E:\Unreal Projects\...`, some even target files that no longer exist at those paths, e.g. `Docs/agent/api-audit-5.8.md` -> moved to `Docs/reference/`). They are dead weight, mislead readers about the current doc layout, and belong in git history, not the tree. Recommendation (owner call -- deletion is a judgment call on repo policy): `git rm` the directory; the history preserves them. Not executed in this audit's patch set (deleting others' workflow tooling without the owner's nod is out of audit scope); listed here with the recommendation. |
++| **D-6** | Low | `BattleRegistry.cpp` `RestoreBattleState` | **`PendingAfterEgress`/`CurrentOrder` restore trusts schema-1 payload ordering** -- the round-trip test covers capture/restore equality, but `RestoreBattleState` rebuilds `Units` by `Add` in file order while `CaptureBattleState` sorts handles; a save captured from a map iteration order differing from sorted order would restore `FreeIndices` positions consistently, but `NextGenerationByIndex` reconstruction via the flat pair array assumes exactly the captured pairs. Verified safe as-written (both sides are the same code); noted only because the A8 skeleton's own report marks schema evolution "grows with the schema". No change. |
++
++### Explicitly checked and found healthy (no action)
++
++- **Golden discipline**: `FMeleeMathConstants` + the T2.1 golden naming every literal is exactly how
++  placeholders should be locked; the arc-band mid-bucket errata (bucket-START -> MID-BUCKET) is
++  correctly implemented in `SectorCenterDeg` and pinned by the round-trip assertions.
++- **Determinism posture**: seed-derived worker rolls (no wall-clock, per-pair `RollCount` input),
++  sorted-key iteration everywhere, `GetSortedEngagementKeys` with full tie-breaks -- consistent.
++- **Redundant-test scan**: no duplicated coverage found across the 11 unit test files
++  (RecordLifecycle/OrderAttack/SaveRoundTrip/HashTerms/HitChanceGolden/BudgetCoverage/TallyAssign/
++  SpatialHash/ClusterRecords are disjoint; the garrison suite doesn't re-test combat). The only
++  redundancy was the superseded perf stub (C-6) and the dead seam golden (A-3).
++- **Flags-off identity**: every combat gate reads game-thread-only at top-of-Execute and returns
++  before touching state; the demo session-on flips are confined to the demo map's game mode.
++- **`RingRadiusFor` reach-class clamp** (`FMath::Min<uint8>(Seeker.ReachClass, 7)`) is repeated
++  consistently at each of the three reach-table consumers -- the table is 8 wide and the enum has 5
++  values, so the clamp is the correct guard; B-1's shared helper keeps it in one place.
++
++---
++
++## 2. Fixes applied in this audit (branch `audit/phase2-engagement`)
++
++Each fix group is one commit; `.patch` files exported per commit under `Patches/`.
++
++| Commit | Groups | Risk | What it touches |
++|---|---|---|---|
++| 1 | C-1, C-2, C-5, C-4(assign part) | None (deletions of dead lines) | EngagementClusters, ServoProcessor, UnitLocomotion, Integrate, FormationSlotResolve, AssignPairs dead var, ChargeProcessor dead Stats |
++| 2 | A-2 (minimal cull) | None (leak-only) | UnitLocomotion static maps culled of dead handles |
++| 3 | B-1, B-5 | None (same values, one source) | Contact/ring radius unification + MinChargeRunUpM |
++| 4 | B-2, A-4 | None (identical bits/results) | Roll-hash move to FMeleeMath; `FCombatSolver::FindDefender` exposed + write-back binary-search |
++| 5 | C-6, C-3, C-7 | None | Perf stub deleted; determinism test inside guard; tally dead-tag guard |
++| 6 | A-3 | Behavior-neutral (dead code) | `DrainCompositePool` + golden block removed (inline path is the shipped behavior; the seam's float API never matched the integer-hit model) |
++| 7 | B-3, D-3, B-7, B-8, B-4(constant part), B-6 | None (same values/data) | SpawnClash dictionary-keyed fixture table; session-on helper dedup; demo constants named; servo cvar cache |
++
++Commits are ordered so that any prefix compiles. The whole set is **value-neutral**: no shipped
++behavior changes; A-2's cull only bounds memory growth.
++
++## 3. What needs UE/MCP/engine access (PR writeups, `Patches/PRs/`)
++
++| PR | Title | Why it can't land from here |
++|---|---|---|
++| **PR-1** | Data-driven demo scenario composition (D-2) | Needs editor assets (DataTable/uasset) + a PIE verification cycle on the reference machine |
++| **PR-2** | Move demo input mapping to an editor-owned IMC asset (B-4) | Asset authoring via MCP; PIE keybind verification |
++| **PR-3** | Share the movement-tile extent with the demo clamp (B-7 root) | The grid extent lives plugin-side; exposing it is an API change the owner should ride through a UE-built test cycle |
++| **PR-4** | Registry-home the locomotion static maps + extract assign-pass seams (A-2 root, D-4) | Registry state + processor surface refactor; must ride the full unit+func+nightly tier on the UE box |
++| **PR-5** | Delete `Tools/agent/` one-shot patch scripts (D-5) | Owner repo-policy call; trivial to execute once approved |
++
++Every PR file carries: motivation, exact files, the change sketch, the test evidence to gather on the
++UE machine, and the roll-back story.
++
++## 4. Evidence conventions
++
++- All file:line references are against HEAD `5e46a1b`.
++- "Identical results" claims for A-4/B-1/B-2 are structural: the substituted expressions produce the
++  same values from the same inputs (constants and helper functions reproduced exactly).
++- **Retraction protocol followed**: A-1 was re-verified against HEAD before committing and found
++  already-correct in the codebase; it is recorded as RETRACTED above rather than patched. Any future
++  reader re-auditing cvar reads should not re-derive it.
++- The golden tier (T2.1) must be re-run on the UE machine after commit 6 touches `BattleMelee`
++  (seam function deleted -- the golden file is updated in the same commit, so the expected result is
++  green with the removed assertions).
++- Per AGENTS §2: no behavior claim above is made from static review alone; commit 6 carries a
++  "must re-run unit+func tier" note in its commit message.
+diff --git a/Plugins/MassBattle/Source/MassBattle/Private/AssignPairsProcessor.cpp b/Plugins/MassBattle/Source/MassBattle/Private/AssignPairsProcessor.cpp
+index c5d9329..a4aa6d1 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Private/AssignPairsProcessor.cpp
++++ b/Plugins/MassBattle/Source/MassBattle/Private/AssignPairsProcessor.cpp
+@@ -198,7 +198,6 @@ void UAssignPairsProcessor::Execute(FMassEntityManager& EntityManager, FMassExec
+ 		Intent.bAutoEngage = 1;
+ 		Intent.bHasIntent = true;
+ 		FUnitHandle Best;
+-		float BestDistSq = TNumericLimits<float>::Max();
+ 		for (const TPair<FEngagementKey, int32>& Rec : RecordIndexMap)
+ 		{
+ 			const FUnitHandle Enemy = Rec.Key.Attacker == OrderPair.Key ? Rec.Key.Defender
+@@ -215,7 +214,6 @@ void UAssignPairsProcessor::Execute(FMassEntityManager& EntityManager, FMassExec
+ 			{
+ 				Best = Enemy;
+ 			}
+-			(void)BestDistSq;
+ 		}
+ 		Intent.TargetUnit = Best;
+ 		UnitIntents.Add(OrderPair.Key, Intent);
+diff --git a/Plugins/MassBattle/Source/MassBattle/Private/ChargeProcessor.cpp b/Plugins/MassBattle/Source/MassBattle/Private/ChargeProcessor.cpp
+index af3308b..2032399 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Private/ChargeProcessor.cpp
++++ b/Plugins/MassBattle/Source/MassBattle/Private/ChargeProcessor.cpp
+@@ -43,7 +43,6 @@ void UChargeProcessor::ConfigureQueries(const TSharedRef<FMassEntityManager>& En
+ 	ChargeQuery.AddRequirement<FCombatIntentFragment>(EMassFragmentAccess::ReadOnly);
+ 	ChargeQuery.AddRequirement<FTransformFragment>(EMassFragmentAccess::ReadOnly);
+ 	ChargeQuery.AddRequirement<FMassVelocityFragment>(EMassFragmentAccess::ReadOnly);
+-	ChargeQuery.AddRequirement<FBaseStatsFragment>(EMassFragmentAccess::ReadOnly);
+ 	ChargeQuery.AddTagRequirement<FDeadTag>(EMassFragmentPresence::None);
+ 	ChargeQuery.RegisterWithProcessor(*this);
+ }
+@@ -66,7 +65,6 @@ void UChargeProcessor::Execute(FMassEntityManager& EntityManager, FMassExecution
+ 		const auto Intents = Context.GetFragmentView<FCombatIntentFragment>();
+ 		const auto Transforms = Context.GetFragmentView<FTransformFragment>();
+ 		const auto Velocities = Context.GetFragmentView<FMassVelocityFragment>();
+-		const auto Stats = Context.GetFragmentView<FBaseStatsFragment>();
+ 
+ 		for (int32 i = 0; i < Context.GetNumEntities(); ++i)
+ 		{
+@@ -126,7 +124,6 @@ void UChargeProcessor::Execute(FMassEntityManager& EntityManager, FMassExecution
+ 				Pair.ChargeBonusRemaining = FMath::Max(0.f,
+ 					Pair.ChargeBonusRemaining - FMeleeMath::BaseChargeBonus() * DT / FMath::Max(0.01f, FCombatCVars::ChargeDecayWindow()));
+ 			}
+-			(void)Stats;
+ 		}
+ 	});
+ }
+diff --git a/Plugins/MassBattle/Source/MassBattle/Private/EngagementClustersProcessor.cpp b/Plugins/MassBattle/Source/MassBattle/Private/EngagementClustersProcessor.cpp
+index f7db8bf..6d56e59 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Private/EngagementClustersProcessor.cpp
++++ b/Plugins/MassBattle/Source/MassBattle/Private/EngagementClustersProcessor.cpp
+@@ -199,19 +199,6 @@ void UEngagementClustersProcessor::Execute(FMassEntityManager& EntityManager, FM
+ 		Registry->SetEngagedCount(Node.Unit, EngagedCount.FindOrAdd(Node.Unit));
+ 	}
+ 
+-	static int32 DbgRuns = 0;
+-	if (DbgRuns < 3)
+-	{
+-		++DbgRuns;
+-		FString NodeDump;
+-		for (const FCombatSolver::FUnitClusterNode& Node : Nodes)
+-		{
+-			NodeDump += FString::Printf(TEXT("[%u:%u (%.1f,%.1f) w%.1fxh%.1f] "),
+-				Node.Unit.Index, Node.Unit.Serial, Node.AnchorM.X, Node.AnchorM.Y, Node.HalfAlongM, Node.HalfAcrossM);
+-		}
+-		UE_LOG(LogTemp, Display, TEXT("ClusterDbg runs=%d nodes=%d contacts=%d %s"),
+-			DbgRuns, Nodes.Num(), ContactPairs.Num(), *NodeDump);
+-	}
+ 	int32 ClusterCount = 0;
+ 	for (int32 i = 0; i < ClusterIds.Num(); ++i)
+ 	{
+@@ -234,15 +221,6 @@ void UEngagementClustersProcessor::Execute(FMassEntityManager& EntityManager, FM
+ 			{
+ 				continue;
+ 			}
+-			const FUnitHandle* AttackerNode = nullptr;
+-			const FUnitHandle* DefenderNode = nullptr;
+-			for (const FCombatSolver::FUnitClusterNode& Node : Nodes)
+-			{
+-				if (Node.Unit == Key.Attacker) { AttackerNode = &Node.Unit; }
+-				if (Node.Unit == Key.Defender) { DefenderNode = &Node.Unit; }
+-			}
+-			(void)AttackerNode;
+-			(void)DefenderNode;
+ 			Debug->EnqueueEngagementLine(Key.Attacker, Key.Defender,
+ 				static_cast<int32>(Record->Mode), Record->DesiredPressure, Record->AssignedAttackers);
+ 		}
+diff --git a/Plugins/MassBattle/Source/MassBattle/Private/FormationSlotResolveProcessor.cpp b/Plugins/MassBattle/Source/MassBattle/Private/FormationSlotResolveProcessor.cpp
+index 0819df4..2c8bc82 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Private/FormationSlotResolveProcessor.cpp
++++ b/Plugins/MassBattle/Source/MassBattle/Private/FormationSlotResolveProcessor.cpp
+@@ -185,13 +185,6 @@ void UFormationSlotResolveProcessor::ConfigureQueries(const TSharedRef<FMassEnti
+ 
+ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionContext& Context)
+ {
+-	static bool bTracedOnce = false;
+-	if (!bTracedOnce)
+-	{
+-		bTracedOnce = true;
+-		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT MovementSpine FormationSlotResolve first-execute"));
+-	}
+-
+ 	if (GBattleMovementSlotResolve.GetValueOnAnyThread() == 0)
+ 	{
+ 		return;
+diff --git a/Plugins/MassBattle/Source/MassBattle/Private/IntegrateProcessor.cpp b/Plugins/MassBattle/Source/MassBattle/Private/IntegrateProcessor.cpp
+index 53b3c1c..743c77b 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Private/IntegrateProcessor.cpp
++++ b/Plugins/MassBattle/Source/MassBattle/Private/IntegrateProcessor.cpp
+@@ -92,13 +92,6 @@ void UIntegrateProcessor::ConfigureQueries(const TSharedRef<FMassEntityManager>&
+ 
+ void UIntegrateProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionContext& Context)
+ {
+-	static bool bTracedOnce = false;
+-	if (!bTracedOnce)
+-	{
+-		bTracedOnce = true;
+-		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT MovementSpine Integrate first-execute"));
+-	}
+-
+ 	if (GBattleMovementIntegrate.GetValueOnAnyThread() == 0)
+ 	{
+ 		return;
+diff --git a/Plugins/MassBattle/Source/MassBattle/Private/ServoProcessor.cpp b/Plugins/MassBattle/Source/MassBattle/Private/ServoProcessor.cpp
+index 4b5d878..c560a78 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Private/ServoProcessor.cpp
++++ b/Plugins/MassBattle/Source/MassBattle/Private/ServoProcessor.cpp
+@@ -163,13 +163,6 @@ void UServoProcessor::ConfigureQueries(const TSharedRef<FMassEntityManager>& Ent
+ 
+ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionContext& Context)
+ {
+-	static bool bTracedOnce = false;
+-	if (!bTracedOnce)
+-	{
+-		bTracedOnce = true;
+-		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT MovementSpine Servo first-execute"));
+-	}
+-
+ 	if (GBattleMovementServo.GetValueOnAnyThread() == 0)
+ 	{
+ 		// Audit M6: a gated-out servo must still zero planar velocity, or the
+diff --git a/Plugins/MassBattle/Source/MassBattle/Private/UnitLocomotionProcessor.cpp b/Plugins/MassBattle/Source/MassBattle/Private/UnitLocomotionProcessor.cpp
+index 6475d79..c8306dc 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Private/UnitLocomotionProcessor.cpp
++++ b/Plugins/MassBattle/Source/MassBattle/Private/UnitLocomotionProcessor.cpp
+@@ -164,13 +164,6 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
+ {
+ 	// One-time pipeline-ordering trace (phase-1 Task 2 verify; Display so the
+ 	// func-tier boot log carries it without log-level changes -- not hot path).
+-	static bool bTracedOnce = false;
+-	if (!bTracedOnce)
+-	{
+-		bTracedOnce = true;
+-		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT MovementSpine UnitLocomotion first-execute"));
+-	}
+-
+ 	if (GBattleMovementLocomotion.GetValueOnGameThread() == 0)
+ 	{
+ 		return;
+-- 
+2.47.3
+

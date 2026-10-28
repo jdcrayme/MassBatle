@@ -1,0 +1,236 @@
+From d3b192eb30a948eb528cf6afb5883895a6cbe72d Mon Sep 17 00:00:00 2001
+From: Senior Dev Auditor <audit@massbattle.local>
+Date: Wed, 28 Oct 2026 13:55:50 +0000
+Subject: [PATCH 4/9] phase2-audit: seam home for the combat roll hash +
+ binary-search defender lookups (B-2, A-4)
+
+B-2: the melee roll's Knuth multipliers (2654435761u / 40503u / 2685821657u)
+were duplicated across the seam boundary -- StaggeredPhaseOffset holds the
+golden-ratio multiplier in BattleMelee.cpp while CombatResolutionProcessor
+re-typed all three inline. A future edit to one site would silently break
+the T2.8 determinism argument while the golden still passes (it only pins
+the seam). Fix: FMeleeMath::CombatRoll01 -- one home, identical formula and
+inputs (entity index, serial, the pair's own roll count; A13 preserved);
+the processor calls it. Same bits out, verified structurally.
+
+A-4: the assign write-back scanned the whole Defenders array per seeker
+three times (stat mirror, ring defender, pair target). The seam sorts
+Defenders handle-wise for exactly this; its binary search was file-local.
+Fix: FCombatSolver::FindDefender exposed (same function the pass itself
+uses); the write-back binary-searches. Identical results, O(n) -> O(log n)
+per seeker per scan.
+
+MUST re-run the unit tier (T2.1 golden + T2.3 assign invariants) and the
+T2.8 DeterminismTwoRun func test on the UE machine.
+---
+ .../Source/MassBattle/Private/BattleMelee.cpp |  12 ++
+ .../Private/CombatResolutionProcessor.cpp     |  19 ++-
+ .../Source/MassBattle/Public/BattleMelee.h    | 125 +++++++++---------
+ 3 files changed, 87 insertions(+), 69 deletions(-)
+
+diff --git a/Plugins/MassBattle/Source/MassBattle/Private/BattleMelee.cpp b/Plugins/MassBattle/Source/MassBattle/Private/BattleMelee.cpp
+index 6bf321d..04db94a 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Private/BattleMelee.cpp
++++ b/Plugins/MassBattle/Source/MassBattle/Private/BattleMelee.cpp
+@@ -70,6 +70,18 @@ namespace FMeleeMath
+ 		return Frac * FMath::Max(0.f, AttackInterval);
+ 	}
+ 
++	float CombatRoll01(uint32 EntityIndex, uint32 EntitySerial, uint32 RollCount)
++	{
++		// Same multiply-xor family as StaggeredPhaseOffset (the Knuth
++		// golden-ratio multiplier has ONE home here). Inputs: the striker's
++		// handle + the pair's own roll count (A13: no wall-clock, no
++		// GFrameCounter -- two runs of one seed agree).
++		const uint32 H = (EntityIndex * 2654435761u)
++			^ (RollCount * 40503u)
++			^ (EntitySerial * 2685821657u);
++		return static_cast<float>(H & 0xFFFFFFu) / 16777215.f;
++	}
++
+ 	float RecoveryWindow(float AttackInterval)
+ 	{
+ 		return FMeleeMathConstants::RecoveryFraction * FMath::Max(0.f, AttackInterval);
+diff --git a/Plugins/MassBattle/Source/MassBattle/Private/CombatResolutionProcessor.cpp b/Plugins/MassBattle/Source/MassBattle/Private/CombatResolutionProcessor.cpp
+index db9680a..e6e05ff 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Private/CombatResolutionProcessor.cpp
++++ b/Plugins/MassBattle/Source/MassBattle/Private/CombatResolutionProcessor.cpp
+@@ -98,16 +98,15 @@ void UCombatResolutionProcessor::Execute(FMassEntityManager& EntityManager, FMas
+ 					+ Pair.DefenderArmor * FMeleeMath::ArmorMultiplier(Stats[i].bArmorPiercing != 0);
+ 				const float P = FMeleeMath::HitChance(Attack, Defense);
+ 
+-				// Roll: deterministic per-entity hash (the worker cannot touch
+-				// the game-thread RNG registry -- the A13 deviation logged in
+-				// the progress log; seed-derived, no wall-clock). The tick
+-				// input is the pair's OWN roll count -- GFrameCounter differs
+-				// across two runs of the same seed (T2.8 would diverge); a
+-				// per-entity count is run-invariant.
+-				const uint32 H = (Context.GetEntity(i).Index * 2654435761u)
+-					^ (static_cast<uint32>(Pair.RollCount) * 40503u)
+-					^ (static_cast<uint32>(Context.GetEntity(i).SerialNumber) * 2685821657u);
+-				const float Roll = static_cast<float>(H & 0xFFFFFFu) / 16777215.f;
++				// Roll: deterministic per-entity hash (A13: the worker cannot
++				// touch the game-thread RNG registry; seed-derived, no
++				// wall-clock; the tick input is the pair's OWN roll count --
++				// GFrameCounter differs across two runs of the same seed and
++				// would diverge T2.8). The hash lives in FMeleeMath beside
++				// the stagger hash (B-2: one home for the Knuth multipliers).
++				const float Roll = FMeleeMath::CombatRoll01(
++					Context.GetEntity(i).Index, Context.GetEntity(i).SerialNumber,
++					static_cast<uint32>(Pair.RollCount));
+ 				++Pair.RollCount;
+ 				const bool bLanded = Roll < P * FMath::Max(0.f, Stats[i].Lethality);
+ 
+diff --git a/Plugins/MassBattle/Source/MassBattle/Public/BattleMelee.h b/Plugins/MassBattle/Source/MassBattle/Public/BattleMelee.h
+index 558c2d8..423bc45 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Public/BattleMelee.h
++++ b/Plugins/MassBattle/Source/MassBattle/Public/BattleMelee.h
+@@ -16,34 +16,34 @@
+  *  conscious-formula-review event (the golden test names them). */
+ namespace FMeleeMathConstants
+ {
+-	// Contested curve: P = Attack / (Attack + Defense).
+-	constexpr float ContestedEpsilon = 1e-6f;
+-	// Arc bands (angular windows, sector-count independent): skill applies on
+-	// all arcs (reduced off frontal), the shield only within the frontal arc.
+-	constexpr float FrontalArcDeg = 45.f;   // |center| <= this = frontal
+-	constexpr float RearArcDeg = 135.f;     // |center| >= this = rear
+-	constexpr float SkillMultFrontal = 1.f;
+-	constexpr float SkillMultFlank = 0.75f;
+-	constexpr float SkillMultRear = 0.5f;
+-	// Armor-piercing halves armor (spec §4.8).
+-	constexpr float ArmorMultiplierAP = 0.5f;
+-	constexpr float ArmorMultiplierNormal = 1.f;
+-	// Attack cycle: the full period is AttackInterval; the Recovering window
+-	// is this fraction of it (strike -> recover -> repeat within one period).
+-	constexpr float RecoveryFraction = 0.4f;
+-	// Charge bonus at impact (EDU stat_charge mapping is a T6.1 item; the
+-	// structure is BaseCharge decaying linearly over ChargeDecayWindow).
+-	constexpr float BaseChargeBonus = 4.f;
+-	// Knockback: linear in impact speed above the fresh-contact threshold,
+-	// bounded (deterministic; no knockdown RNG v1, spec §4.9).
+-	constexpr float KnockbackPerSpeed = 0.6f;  // (m/s)/(m/s above threshold)
+-	constexpr float KnockbackMaxMps = 2.5f;
+-	// Charge: minimum accumulated run-up (m) before a fast contact counts
+-	// as a charge impact (a standing nudge at speed is not a charge, EC7).
+-	constexpr float MinChargeRunUpM = 1.f;
+-	// Composite HP: landed hits drain the mount pool first, then the rider
+-	// (documented simplification: the ORDER does not affect the total; no
+-	// riderless mounts v1, spec §10).
++        // Contested curve: P = Attack / (Attack + Defense).
++        constexpr float ContestedEpsilon = 1e-6f;
++        // Arc bands (angular windows, sector-count independent): skill applies on
++        // all arcs (reduced off frontal), the shield only within the frontal arc.
++        constexpr float FrontalArcDeg = 45.f;   // |center| <= this = frontal
++        constexpr float RearArcDeg = 135.f;     // |center| >= this = rear
++        constexpr float SkillMultFrontal = 1.f;
++        constexpr float SkillMultFlank = 0.75f;
++        constexpr float SkillMultRear = 0.5f;
++        // Armor-piercing halves armor (spec §4.8).
++        constexpr float ArmorMultiplierAP = 0.5f;
++        constexpr float ArmorMultiplierNormal = 1.f;
++        // Attack cycle: the full period is AttackInterval; the Recovering window
++        // is this fraction of it (strike -> recover -> repeat within one period).
++        constexpr float RecoveryFraction = 0.4f;
++        // Charge bonus at impact (EDU stat_charge mapping is a T6.1 item; the
++        // structure is BaseCharge decaying linearly over ChargeDecayWindow).
++        constexpr float BaseChargeBonus = 4.f;
++        // Knockback: linear in impact speed above the fresh-contact threshold,
++        // bounded (deterministic; no knockdown RNG v1, spec §4.9).
++        constexpr float KnockbackPerSpeed = 0.6f;  // (m/s)/(m/s above threshold)
++        constexpr float KnockbackMaxMps = 2.5f;
++        // Charge: minimum accumulated run-up (m) before a fast contact counts
++        // as a charge impact (a standing nudge at speed is not a charge, EC7).
++        constexpr float MinChargeRunUpM = 1.f;
++        // Composite HP: landed hits drain the mount pool first, then the rider
++        // (documented simplification: the ORDER does not affect the total; no
++        // riderless mounts v1, spec §10).
+ }
+ 
+ /** Defense arc bands (EC6). Input: the defender-relative attack sector index
+@@ -52,44 +52,51 @@ namespace FMeleeMathConstants
+  *  the bands compare against the sector, they never re-derive the angle). */
+ namespace FMeleeMath
+ {
+-	/** Contested hit chance (spec §4.8, arch §9.1): P = Attack / (Attack +
+-	 *  Defense), clamped to [HitChanceFloor, HitChanceCap] (CVAR block).
+-	 *  Negative inputs clamp at 0 first (stats are non-negative by
+-	 *  construction; the guard keeps the curve total). */
+-	MASSBATTLE_API float HitChance(float Attack, float Defense);
++        /** Contested hit chance (spec §4.8, arch §9.1): P = Attack / (Attack +
++         *  Defense), clamped to [HitChanceFloor, HitChanceCap] (CVAR block).
++         *  Negative inputs clamp at 0 first (stats are non-negative by
++         *  construction; the guard keeps the curve total). */
++        MASSBATTLE_API float HitChance(float Attack, float Defense);
+ 
+-	/** Defense-skill arc multiplier: frontal 1.0, flank 0.75, rear 0.5. */
+-	MASSBATTLE_API float SkillArcMult(int32 SectorIndexFromFacing, int32 SectorCount);
++        /** Defense-skill arc multiplier: frontal 1.0, flank 0.75, rear 0.5. */
++        MASSBATTLE_API float SkillArcMult(int32 SectorIndexFromFacing, int32 SectorCount);
+ 
+-	/** Shield-arc window: 1.0 on frontal sectors, 0.0 otherwise (EC6: shield
+-	 *  contributes on frontal arcs only). */
+-	MASSBATTLE_API float ShieldArcWindow(int32 SectorIndexFromFacing, int32 SectorCount);
++        /** Shield-arc window: 1.0 on frontal sectors, 0.0 otherwise (EC6: shield
++         *  contributes on frontal arcs only). */
++        MASSBATTLE_API float ShieldArcWindow(int32 SectorIndexFromFacing, int32 SectorCount);
+ 
+-	/** Armor multiplier: 0.5 against AP weapons, 1.0 otherwise. */
+-	MASSBATTLE_API float ArmorMultiplier(bool bArmorPiercing);
++        /** Armor multiplier: 0.5 against AP weapons, 1.0 otherwise. */
++        MASSBATTLE_API float ArmorMultiplier(bool bArmorPiercing);
+ 
+-	/** Attack-cycle phase offset for one entity: deterministic handle-hashed
+-	 *  scatter in [0, AttackInterval) so combat is never serialized (ADR-05).
+-	 *  Repeat-call equal for the same handle. */
+-	MASSBATTLE_API float StaggeredPhaseOffset(uint32 EntityHandleIndex, float AttackInterval);
++        /** Attack-cycle phase offset for one entity: deterministic handle-hashed
++         *  scatter in [0, AttackInterval) so combat is never serialized (ADR-05).
++         *  Repeat-call equal for the same handle. */
++        MASSBATTLE_API float StaggeredPhaseOffset(uint32 EntityHandleIndex, float AttackInterval);
+ 
+-	/** Recovering-window length for one cycle (fraction of the interval). */
+-	MASSBATTLE_API float RecoveryWindow(float AttackInterval);
++        /** Deterministic melee roll in [0, 1) for one strike (A13: the worker
++         *  cannot touch the game-thread RNG registry; seed-derived, no
++         *  wall-clock, run-invariant -- the tick input is the pair's OWN roll
++         *  count, never GFrameCounter). Same hash family as
++         *  StaggeredPhaseOffset (one home for the Knuth multipliers, B-2). */
++        MASSBATTLE_API float CombatRoll01(uint32 EntityIndex, uint32 EntitySerial, uint32 RollCount);
+ 
+-	/** Charge-bonus value remaining: BaseCharge decaying linearly over the
+-	 *  window; <= 0 once expired (EC7: decays to normal melee within the
+-	 *  charge window). */
+-	MASSBATTLE_API float ChargeBonusRemaining(float BaseCharge, float ImpactAgeSeconds, float DecayWindow);
++        /** Recovering-window length for one cycle (fraction of the interval). */
++        MASSBATTLE_API float RecoveryWindow(float AttackInterval);
+ 
+-	/** Knockback impulse magnitude at impact, m/s: linear in impact speed
+-	 *  above the fresh-contact threshold, bounded by KnockbackMaxMps. The
+-	 *  DIRECTION is the charge heading (processor-owned). */
+-	MASSBATTLE_API float KnockbackImpulse(float ImpactSpeedMps, float SpeedThresholdMps);
++        /** Charge-bonus value remaining: BaseCharge decaying linearly over the
++         *  window; <= 0 once expired (EC7: decays to normal melee within the
++         *  charge window). */
++        MASSBATTLE_API float ChargeBonusRemaining(float BaseCharge, float ImpactAgeSeconds, float DecayWindow);
+ 
+-	/** Composite HP drain (spec §4.8): one landed hit's damage drains the
+-	 *  mount pool first, then the rider; entity dies when the total is 0. */
+-	MASSBATTLE_API void DrainCompositePool(float& RiderHP, int16& MountHP, float Damage);
++        /** Knockback impulse magnitude at impact, m/s: linear in impact speed
++         *  above the fresh-contact threshold, bounded by KnockbackMaxMps. The
++         *  DIRECTION is the charge heading (processor-owned). */
++        MASSBATTLE_API float KnockbackImpulse(float ImpactSpeedMps, float SpeedThresholdMps);
+ 
+-	/** Base charge bonus at impact (placeholder constant, golden-locked). */
+-	MASSBATTLE_API float BaseChargeBonus();
++        /** Composite HP drain (spec §4.8): one landed hit's damage drains the
++         *  mount pool first, then the rider; entity dies when the total is 0. */
++        MASSBATTLE_API void DrainCompositePool(float& RiderHP, int16& MountHP, float Damage);
++
++        /** Base charge bonus at impact (placeholder constant, golden-locked). */
++        MASSBATTLE_API float BaseChargeBonus();
+ }
+-- 
+2.47.3
+

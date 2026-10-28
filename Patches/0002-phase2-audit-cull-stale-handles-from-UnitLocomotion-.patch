@@ -1,0 +1,73 @@
+From 456a537b208493d9c9aa472aa7f54b2eabcf5d6c Mon Sep 17 00:00:00 2001
+From: Senior Dev Auditor <audit@massbattle.local>
+Date: Wed, 28 Oct 2026 13:51:50 +0000
+Subject: [PATCH 2/9] phase2-audit: cull stale handles from UnitLocomotion's
+ static probe/latch maps (A-2)
+
+ProbeTicks (PassThroughProbe counters) and PaceThrottled (straggler-throttle
+latches) are function-local static TMaps keyed by FUnitHandle. Handles are
+unique per generation, so there is no aliasing bug -- but the maps
+accumulate every generation ever seen for the process lifetime (unbounded
+growth across a long soak/session), and a dead unit's entry leaks into
+a new tenant of the same index's first probe window.
+
+Fix: amortized cull (1-in-16 gate on map size, power-of-two cheap) that
+drops entries whose handle is no longer registered. The registry is already
+in scope at both sites. Behavior of live entries is untouched.
+
+The clean long-term home is registry state reset by ResetBattleState -- filed
+as PR-4; this is the minimal in-place containment.
+---
+ .../Private/UnitLocomotionProcessor.cpp       | 27 +++++++++++++++++--
+ 1 file changed, 25 insertions(+), 2 deletions(-)
+
+diff --git a/Plugins/MassBattle/Source/MassBattle/Private/UnitLocomotionProcessor.cpp b/Plugins/MassBattle/Source/MassBattle/Private/UnitLocomotionProcessor.cpp
+index c8306dc..38777a7 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Private/UnitLocomotionProcessor.cpp
++++ b/Plugins/MassBattle/Source/MassBattle/Private/UnitLocomotionProcessor.cpp
+@@ -954,8 +954,20 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
+ 					}
+ 					// Contact probe (audit H3 wiring evidence): first 3 ticks per
+ 					// unit, then every 240th, with the resolved policy and the
+-					// post-Min3 limit.
++					// post-Min3 limit. Audit A-2: culled of stale handles on a
++					// cheap cadence -- the map must not accumulate every handle
++					// generation ever seen across a session.
+ 					static TMap<FUnitHandle, int32> ProbeTicks;
++					if ((ProbeTicks.Num() & 15) == 0) // amortized: 1 in 16 inserts
++					{
++						for (auto It = ProbeTicks.CreateIterator(); It; ++It)
++						{
++							if (!Registry->IsHandleValid(It.Key()))
++							{
++								It.RemoveCurrent();
++							}
++						}
++					}
+ 					int32& TickCount = ProbeTicks.FindOrAdd(Unit);
+ 					++TickCount;
+ 					if (TickCount <= 3 || TickCount % 240 == 0)
+@@ -1039,8 +1051,19 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
+ 					GBattleMovementPaceGain.GetValueOnGameThread());
+ 				CurrentLimit *= PaceFactor;
+ 			// Phase 2 D2 observability: one line per throttle engagement and
+-			// per recovery (event rate, game thread).
++			// per recovery (event rate, game thread). Audit A-2: culled of
++			// stale handles on a cheap cadence (same discipline as ProbeTicks).
+ 			static TMap<FUnitHandle, bool> PaceThrottled;
++			if ((PaceThrottled.Num() & 15) == 0)
++			{
++				for (auto It = PaceThrottled.CreateIterator(); It; ++It)
++				{
++					if (!Registry->IsHandleValid(It.Key()))
++					{
++						It.RemoveCurrent();
++					}
++				}
++			}
+ 			const bool bWas = PaceThrottled.FindOrAdd(Unit) == true;
+ 			if (PaceFactor < 1.f && !bWas)
+ 			{
+-- 
+2.47.3
+

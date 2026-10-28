@@ -1,0 +1,381 @@
+From 32a9769a75f425414868e9bf08e3d2692072ca0e Mon Sep 17 00:00:00 2001
+From: Senior Dev Auditor <audit@massbattle.local>
+Date: Wed, 28 Oct 2026 14:01:46 +0000
+Subject: [PATCH 9/9] phase2-audit: PR writeups for UE/MCP-gated changes
+ (PR-1..PR-5) + patch series README
+
+---
+ .../PR-1-data-driven-scenario-composition.md  | 54 +++++++++++++++
+ .../PRs/PR-2-editor-owned-input-mapping.md    | 59 ++++++++++++++++
+ .../PRs/PR-3-share-tile-extent-with-demo.md   | 47 +++++++++++++
+ .../PR-4-assign-seams-and-registry-state.md   | 69 +++++++++++++++++++
+ .../PRs/PR-5-remove-agent-patch-scripts.md    | 58 ++++++++++++++++
+ Patches/README.md                             | 34 +++++++++
+ 6 files changed, 321 insertions(+)
+ create mode 100644 Patches/PRs/PR-1-data-driven-scenario-composition.md
+ create mode 100644 Patches/PRs/PR-2-editor-owned-input-mapping.md
+ create mode 100644 Patches/PRs/PR-3-share-tile-extent-with-demo.md
+ create mode 100644 Patches/PRs/PR-4-assign-seams-and-registry-state.md
+ create mode 100644 Patches/PRs/PR-5-remove-agent-patch-scripts.md
+ create mode 100644 Patches/README.md
+
+diff --git a/Patches/PRs/PR-1-data-driven-scenario-composition.md b/Patches/PRs/PR-1-data-driven-scenario-composition.md
+new file mode 100644
+index 0000000..f072a8d
+--- /dev/null
++++ b/Patches/PRs/PR-1-data-driven-scenario-composition.md
+@@ -0,0 +1,54 @@
++# PR-1: Data-driven demo scenario composition
++
++| | |
++|---|---|
++| **Finds** | Audit D-2 (root of B-3): demo scenario composition lives only in C++ and binary uassets |
++| **Blocks on** | Editor asset authoring (MCP), PIE verification cycle on the reference machine |
++| **Owner** | Owner decision on the scenario-data format (DataTable vs JSON vs data asset) |
++
++## Motivation
++
++The demo has THREE parallel scenario-authoring channels, each with a different blast radius:
++
++1. `ADemoUnitActor` props placed on the map (binary `.uasset` -- cannot be code-reviewed, merged
++   visually, or diffed)
++2. `Battle.Combat.SpawnClash` fixture tables (now data-shaped in C++ after the audit's B-3 fix,
++   but still a recompile to retune)
++3. The M3 mob sample wired from `DemoGameMode` when the map is empty
++
++A scenario is game data. Editing a spawn position or swapping a unit type should be a data
++change: reviewable in a diff, hot-reloadable where possible, and authorable by someone who is
++not in the C++ module. This PR unifies the three channels behind one data format.
++
++## Proposed change
++
++1. New `UDataTable` row type `FDemoScenarioSpawn { Dictionary (FName), Count, Pos, Yaw, Team }`
++   in the plugin's public types (the demo module consumes it; the plugin already owns the
++   registry/spec surface).
++2. `DemoGameMode` reads a `UDemoScenarioAsset` (`UDataAsset` holding an array of spawn rows +
++   optional per-side order script) assigned in the map. Empty-asset maps keep today's M3 sample
++   fallback.
++3. `SpawnClash` fixtures become three checked-in scenario assets next to the golden EDU
++   (`Content/MassBattle/Data/Scenarios/`), selected by name; the C++ table added by the audit
++   becomes the fallback if the asset is missing (backwards-compat for CI).
++4. The map-placed `ADemoUnitActor` path stays (level-driven authoring is legitimate); the gap
++   this PR closes is only that fixtures and the M3 sample stop being C++.
++
++## Files
++
++- New: `Plugins/MassBattle/Source/MassBattle/Public/BattleScenarioAsset.h` (row struct + asset)
++- New: `Source/MassBattleGame/DemoScenarioConsumer` wiring in `DemoGameMode`
++- Edit: `BattleExecCommands.cpp` (SpawnClash asset lookup before the C++ fallback table)
++- New assets: `Content/MassBattle/Data/Scenarios/{DA_Mob,DA_Wall,DA_Charge}.uasset` (author via MCP)
++
++## Evidence to gather on the UE machine
++
++- PIE on the demo map: identical behavior to the pre-PR session (mob sample still spawns,
++  SpawnClash wall/mob/charge unchanged from the C++ tables -- handle logs compared)
++- Func tier: S5_Mob, CombatSmoke green (they exercise the mob composition)
++- An editor-side retune (move a spawn 5 m) requires NO recompile
++
++## Rollback
++
++The C++ fallback tables are retained; reverting the asset assignment restores the exact prior
++behavior. The PR is additive at every step.
+diff --git a/Patches/PRs/PR-2-editor-owned-input-mapping.md b/Patches/PRs/PR-2-editor-owned-input-mapping.md
+new file mode 100644
+index 0000000..b8f53e3
+--- /dev/null
++++ b/Patches/PRs/PR-2-editor-owned-input-mapping.md
+@@ -0,0 +1,59 @@
++# PR-2: Move the demo input mapping to an editor-owned IMC asset
++
++| | |
++|---|---|
++| **Finds** | Audit B-4: keybinds and input geometry hard-coded in `ADemoPlayerController::SetupEnhancedInput` |
++| **Blocks on** | Editor asset authoring (MCP: create `UInputAction`/`UInputMappingContext` assets), PIE keybind verification |
++| **Owner** | Owner call on where the assets live (demo module content root) |
++
++## Motivation
++
++The programmatic-IMC approach in `SetupEnhancedInput()` was a bootstrap workaround (UE 5.8
++deleted the legacy `BindKey` path; the run needed input without authoring assets). It has served
++its purpose. What remains is ~50 lines of C++ that are pure DATA:
++
++```
++IA_PanFwd    <- W, Up
++IA_PanBack  <- S, Down
++IA_PanLeft  <- A, Left
++IA_PanRight <- D, Right
++IA_RotLeft  <- Q        IA_RotRight <- E
++IA_Select   <- LMB      IA_Order <- RMB      IA_Halt <- H
++IA_ZoomIn   <- WheelUp  IA_ZoomOut <- WheelDown
++```
++
++Retuning a keybind should not be a C++ commit. Per AGENTS §3 (owner decision 2026-10-25), the
++demo module exists precisely for editor-authored UX.
++
++## Proposed change
++
++1. Author `IMC_Demo` + the 11 `IA_Demo*` actions as assets under `Content/MassBattle/Demo/Input/`
++   (actions stay boolean-valued; the trigger semantics -- implicit Down for holds -- are what the
++   C++ bindings already assume, so the assets reproduce current behavior exactly).
++2. `ADemoPlayerController`: drop `MakeBoolAction`/`AddMapping`/`OwnedActions` and load the IMC
++   asset by soft reference; keep the `UEnhancedInputComponent` bindings (they are behavior, not
++   data) but resolve the actions by name from the loaded context.
++3. The px thresholds (Click 5, DragGesture 12, PickRadius 250, SegmentGap 200 cm) stay as named
++   `constexpr` for now -- they are tuning, not layout; promote them to a `UDemoInputTuning`
++   data asset only if the owner asks (the audit already named them; B-8's `BodyLabelZCm` shows
++   the pattern).
++
++## Files
++
++- New assets: `Content/MassBattle/Demo/Input/{IMC_Demo, IA_Demo_*}.uasset` (MCP authoring)
++- Edit: `Source/MassBattleGame/DemoPlayerController.{h,cpp}` (delete ~70 lines of programmatic
++  construction; add asset load + by-name action lookup)
++- Edit: `DemoHUD.cpp` controls-hint block unchanged (the keybind display stays truthful either way)
++
++## Evidence to gather on the UE machine
++
++- PIE: every binding in the table above works exactly as the programmatic version did
++  (pan/rotate-hold semantics, marquee, formation drag, halt, zoom)
++- `Automation RunTests Battle.Func.OrderSmoke` green (order path exercises select + RMB)
++- A keybind retune in the editor (e.g. pan-left A -> Z) takes effect with no recompile
++
++## Rollback
++
++Keep the programmatic path behind a one-release fallback: if `IMC_Demo` fails to load, log a
++warning and fall back to the (temporarily retained) construction code; delete the fallback in
++the following phase once PIE evidence is in.
+diff --git a/Patches/PRs/PR-3-share-tile-extent-with-demo.md b/Patches/PRs/PR-3-share-tile-extent-with-demo.md
+new file mode 100644
+index 0000000..4d9cdb9
+--- /dev/null
++++ b/Patches/PRs/PR-3-share-tile-extent-with-demo.md
+@@ -0,0 +1,47 @@
++# PR-3: Expose the movement-tile extent to the demo clamp
++
++| | |
++|---|---|
++| **Finds** | Audit B-7 (root): the demo re-derives the cost-grid tile extent as a local literal |
++| **Blocks on** | Plugin public-API change + a UE-built test cycle (the plugin's func tier asserts order behavior) |
++| **Owner** | Owner call on the API shape (accessor on `UBattleCostGridSubsystem` vs a constant in `BattleCostGrid.h`) |
++
++## Motivation
++
++`ADemoPlayerController::ClampToGridHelper` (after the audit's dedup, the demo's ONE clamp) carries
++decomposed local constants `TileHalfExtentCm = 12800` / `EdgeMarginCm = 300`. Those numbers are a
++copy of the plugin's grid geometry: the cost grid is a 256 m flat tile at the origin
++(`BattleCostGrid`, referenced across the movement planners). If the owner ever resizes the tile
++(or a later phase introduces multi-tile maps), the demo silently clamps orders into the wrong
++box while the plugin plans paths in the right one -- orders would dead-end at an invisible wall
++of the demo's own invention.
++
++Data the plugin owns must not be re-typed by its consumer. This is the smallest instance of the
++audit's B-3/B-7 family, and the only one whose fix touches a plugin public header (hence a UE
++test cycle rather than a static-audit patch).
++
++## Proposed change
++
++1. `BattleCostGrid.h`: export the tile half-extent as a named constexpr beside the grid data
++   (e.g. `namespace BattleGridGeo { constexpr float TileHalfExtentCm = 12800.f; }`) -- it is
++   already implicit in the grid's dimensions; this only names it.
++2. Optional accessor `UBattleCostGridSubsystem::GetTileHalfExtentCm()` if the owner prefers
++   instance-level (future multi-tile) rather than module-level truth.
++3. Demo: `ClampToGridHelper` reads the constant (or accessor); the local decomposition keeps only
++   the genuinely demo-owned `EdgeMarginCm` (the 3 m order-inside-tile margin is a UX decision).
++
++## Files
++
++- Edit: `Plugins/MassBattle/Source/MassBattle/Public/BattleCostGrid.h` (+ `.cpp` if accessor)
++- Edit: `Source/MassBattleGame/DemoPlayerController.cpp` (`ClampToGridHelper` body)
++
++## Evidence to gather on the UE machine
++
++- Unit tier green (the planner/cost-grid tests pin the grid geometry)
++- Func tier: OrderSmoke + S1 green (orders clamped to the tile edge still plan correctly)
++- PIE demo: click at the far map corner issues a Move clamped inside the tile (order logged
++  inside 125 m), unchanged from today
++
++## Rollback
++
++Two-line revert; no schema or data impact.
+diff --git a/Patches/PRs/PR-4-assign-seams-and-registry-state.md b/Patches/PRs/PR-4-assign-seams-and-registry-state.md
+new file mode 100644
+index 0000000..fe3e771
+--- /dev/null
++++ b/Patches/PRs/PR-4-assign-seams-and-registry-state.md
+@@ -0,0 +1,69 @@
++# PR-4: Registry-home the locomotion static maps; extract the assign-pass seams
++
++| | |
++|---|---|
++| **Finds** | Audit A-2 (root) + D-4: function-local static state in the locomotion hot path; AssignPairsProcessor carries six responsibilities |
++| **Blocks on** | Processor-surface refactor -> full unit + func + nightly tier on the UE box; also the owner's preference on processor split ownership (movement brief F-10 deferred the locomotion god-file) |
++| **Owner** | Owner decision: do this as its own mini-phase or fold into the Phase-3 tail |
++
++## Motivation
++
++**A-2 root.** The audit shipped the minimal containment: amortized culls of the two function-local
++`static TMap`s (`ProbeTicks`, `PaceThrottled`) in `UnitLocomotionProcessor`. The clean fix is for
++that state to live on `UUnitRegistrySubsystem` per-unit runtime state (or the formation shared
++fragment), where `ResetBattleState` clears it with everything else and the maps are per-world
++instead of per-process. The function-local statics are also invisible to the docs' state-ownership
++rules (arch §3: registry owns unit-scope state).
++
++**D-4.** `AssignPairsProcessor` (640 lines) currently mixes:
++- defender mirror construction
++- record mirror construction
++- intent resolution (ordered / auto-engage / demo-fix3 defensive reaction)
++- disengage fan-out
++- the seam call
++- a write-back that owns ring geometry, overlay lines, AND charge knockback (the knockback block
++  mutates OTHER entities' transforms from the assign pass -- it is charge's business living in
++  assign's file; the only reason it is there is game-thread timing, which a
++  `ExecuteBefore`-ordered dedicated step would satisfy equally)
++
++The movement brief already logged the locomotion god-file as F-10 (explicitly out of scope then).
++The assign file is the combat-side sibling of that finding.
++
++## Proposed change (seams, not a rewrite)
++
++1. **Knockback extraction**: a `UBattleKnockbackProcessor` (game thread, ordered after
++   AssignPairs, before the worker phase) owning the one-shot displacement from
++   `FChargeFragment {bConnected, bKnockbackApplied, ImpactSpeed}`. AssignPairs' write-back shrinks
++   by the whole knockback block. Flag discipline unchanged (gated by the same
++   `Battle.Combat.Assign`/`Battle.Combat.Charge` pair).
++2. **Intent resolution helper**: `FCombatSolver` gains a pure
++   `ResolveUnitIntents(Orders, Records, OutIntents)` covering the ordered/auto-engage/defensive
++   table build (the demo-fix3 block), so the processor reads intents instead of computing them.
++   Unit-testable on the seam, which today's inline block is not.
++3. **Registry homes**: `ProbeTicks`/`PaceThrottled` move to `FUnitRuntimeState` (or a small
++   side-map on the registry cleared by `ResetBattleState`); the audit's culls are then deleted.
++4. Optional (owner call): the write-back's ring-point computation moves to the seam
++   (`FCombatSolver::RingPointFor(...)`), making the processor a pure fragment-mirror bridge.
++
++## Files
++
++- `Plugins/MassBattle/Source/MassBattle/Private/{AssignPairsProcessor, ChargeProcessor, UnitLocomotionProcessor, BattleEngagement}.cpp`
++- `Plugins/MassBattle/Source/MassBattle/Public/{BattleEngagement.h, BattleRegistry.h}`
++- New: `Plugins/MassBattle/Source/MassBattle/{Public,Private}/KnockbackProcessor.h/.cpp` (+ the
++  processors list in `MassBattleModule.cpp`)
++- Tests: extend `MassBattleCombatTests` for `ResolveUnitIntents`; the func tier's
++  ChargeMechanics/PairLifecycle pins the extracted knockback
++
++## Evidence to gather on the UE machine
++
++- Unit tier 66+ green (TallyAssign unchanged; new intent tests green)
++- Func tier 21/21 green including ChargeMechanics (knockbacks=12, bounded impulse EXEC lines
++  identical to the phase-2 evidence), PairLifecycle handoff/disengage counts unchanged
++- DeterminismTwoRun: two-run hash identity preserved (the extraction must not move any
++  game-thread write across a worker boundary)
++- Nightly soak: escalation count still 0; AssignMs/TallyMs within baseline noise
++
++## Rollback
++
++Each seam (1-3) is independently revertible; land them as separate commits behind existing cvar
++gates where meaningful (the knockback step rides the same flags).
+diff --git a/Patches/PRs/PR-5-remove-agent-patch-scripts.md b/Patches/PRs/PR-5-remove-agent-patch-scripts.md
+new file mode 100644
+index 0000000..87bb683
+--- /dev/null
++++ b/Patches/PRs/PR-5-remove-agent-patch-scripts.md
+@@ -0,0 +1,58 @@
++# PR-5: Delete the one-shot agent patch scripts under Tools/agent/
++
++| | |
++|---|---|
++| **Finds** | Audit D-5: 15 development-session scripts committed at the repo's tools root |
++| **Blocks on** | Owner repo-policy call only (deleting others' workflow tooling is out of audit scope) |
++| **Execution** | Trivial: `git rm -r Tools/agent/` once approved |
++
++## Motivation
++
++`Tools/agent/` holds 15 Python scripts (`patch_audit*.py`, `patch_roadmap*.py`,
++`patch_deathpath.py`, `append_death_tests.py`, ...) from past agent sessions. Their shape:
++
++```python
++p = r"E:\Unreal Projects\MassBattle\Docs\agent\api-audit-5.8.md"
++s = io.open(p, encoding="utf-8").read()
++... s.replace(old, new) with assert anchors ...
++io.open(p, "w", ...).write(s)
++```
++
++They are:
++
++- **One-shot**: string-replace patches against files as they existed at a moment in time; some
++  target paths that no longer exist (`Docs/agent/api-audit-5.8.md` moved to
++  `Docs/reference/engine-api-5.8.md` long ago)
++- **Non-portable**: absolute `E:\` paths, Windows-only
++- **Misleading**: a reader auditing "what touches the docs" greps into scripts that LOOK like a
++  pipeline but are dead session residue; the git history preserves them perfectly
++- **Redundant**: every durable fact they patched is already in the owning reference files
++  (AGENTS §4 flow), which is why nothing breaks if they vanish
++
++Git history is the right archive for one-shot patches: `git log -- Tools/agent/` retrieves any
++of them verbatim.
++
++## Proposed change
++
++```
++git rm -r Tools/agent/
++```
++
++plus a one-line note in `Tools/CI/README.md` (or wherever the owner wants the tools-map) that
++session-local patch scripts are not committed; the repo's patch channel for reviewed change is
++git itself.
++
++## Files
++
++- Delete: `Tools/agent/` (15 files, ~1.6k lines total; no build system references them -- the
++  CI batch/python tooling under `Tools/CI/` is separate and untouched)
++
++## Evidence to gather
++
++- `Tools/CI/run_tests.bat` tiers unaffected (nothing in `Tools/CI/` references `Tools/agent/`)
++- Jenkins `massbattle-gate` green on the deletion commit (verified by inspection: the Jenkinsfile
++  drives `Tools/CI/` only)
++
++## Rollback
++
++`git revert` restores the directory byte-for-byte.
+diff --git a/Patches/README.md b/Patches/README.md
+new file mode 100644
+index 0000000..43c936d
+--- /dev/null
++++ b/Patches/README.md
+@@ -0,0 +1,34 @@
++# Audit patches (phase-2 engagement audit, 2026-10-28)
++
++Branch: `audit/phase2-engagement` (from `main` @ `5e46a1b`).
++Findings register: `Docs/phases/phase-2/audit-engagement.md`.
++
++## Committed patch series (releases without UE access)
++
++Each `.patch` file is one commit; apply in order with `git am`:
++
++| # | Patch | Groups | Must re-run on the UE machine |
++|---|---|---|---|
++| 1 | `0001-...scaffolding.patch` | C-1 C-2 C-4 C-5 | full unit + func tier (deletions only) |
++| 2 | `0002-...cull-static-maps.patch` | A-2 | func tier (soak/escalation metrics unchanged) |
++| 3 | `0003-...body-radius-home.patch` | B-1 B-5 | T2.1 golden (formality) |
++| 4 | `0004-...roll-hash-and-finddefender.patch` | B-2 A-4 | T2.1 golden + T2.3 + T2.8 DeterminismTwoRun |
++| 5 | `0005-...t29-stub-and-guard.patch` | C-6 C-3 | unit tier (one test removed, expected) |
++| 6 | `0006-...draincompositepool.patch` | A-3 | T2.1 golden (block removed, expected green) |
++| 7 | `0007-...fixture-data.patch` | B-3 D-3 B-7 B-8 B-6 | S5_Mob + CombatSmoke (fixture path touched) |
++| 8 | `0008-...doc-map.patch` | docs | none |
++
++## PR writeups (require UE / MCP / owner decisions -- NOT in the patch series)
++
++- `PRs/PR-1-data-driven-scenario-composition.md` (editor assets + PIE cycle)
++- `PRs/PR-2-editor-owned-input-mapping.md` (IMC asset authoring + PIE verification)
++- `PRs/PR-3-share-tile-extent-with-demo.md` (plugin API + UE test cycle)
++- `PRs/PR-4-assign-seams-and-registry-state.md` (processor refactor + full tier)
++- `PRs/PR-5-remove-agent-patch-scripts.md` (owner repo-policy call)
++
++## Verification status
++
++Static audit: all patches are brace-balanced, include-complete, and value-neutral by
++construction (identical constants, same formulas, deletions of dead code). No UE build was
++available in the audit environment; each commit message carries its "MUST re-run" note per
++AGENTS §2 (evidence before claim).
+-- 
+2.47.3
+

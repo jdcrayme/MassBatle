@@ -1,0 +1,465 @@
+From 972316baa45a35c4c5a206341542ce30151c65b7 Mon Sep 17 00:00:00 2001
+From: Senior Dev Auditor <audit@massbattle.local>
+Date: Wed, 28 Oct 2026 13:59:58 +0000
+Subject: [PATCH 7/9] phase2-audit: fixture data as tables, named demo
+ constants, dedup session-on flips (B-3, D-3, B-7, B-8, B-4 note, B-6)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+B-3: SpawnClash's wall/mob/charge compositions were typed literals in
+call arguments -- unit type by EDU ROW INDEX (0=peasant, 1=spearman),
+which breaks silently when the golden EDU re-orders (its own header says
+values are placeholders pending the Phase-6 audit). The fixtures now
+carry a per-variant table of FClashUnitSpec {Dictionary, Count, Pos, Yaw}
+and rows resolve by EDU 'dictionary' name (case-insensitive), with a loud
+FAIL on unknown dictionary. Scenario layout numbers stay in the table --
+they ARE the scenario. Spawned handles + orders follow the same
+conventions as before (verified identical: same rows selected, same
+orders issued).
+
+D-3: the four-cvar session-on flip list was duplicated in three places
+(DemoGameMode::BeginPlay, CombatSpawnClash, CombatPerfStress) with the
+same literal names. One BattleExec::EnableDemoCombatPipeline() helper;
+all three call it. DemoGameMode now consumes the plugin's public exec
+surface (AGENTS §3 division preserved).
+
+B-7: OnRMBReleased's local ClampToGrid lambda duplicated
+ClampToGridHelper member-for-member; deleted, both call sites now use the
+member. The tile-extent literal (12500 cm) is decomposed into named
+constants (TileHalfExtentCm - EdgeMarginCm) with a pointer to PR-3 (the
+plugin should expose the grid extent).
+
+B-8: the 100 cm body-label projection height was typed at each call site;
+now DemoUi::BodyLabelZCm in DemoTypes.h (single home beside the body-info
+struct it projects).
+
+B-4 (constants part): keybind table stays code until PR-2 moves it to an
+editor-owned IMC asset; the tunable px thresholds were already named
+constexpr -- a doc note marks the PR.
+
+B-6: ServoProcessor called FindConsoleVariable twice per Execute for
+Battle.Movement.ProgressiveFallIn while the same function's WalkSpeed
+read uses the cached-pointer pattern 4 lines above; converted to the same
+pattern (FallInCvar member).
+
+MUST re-run the func tier's M3/SpawnClash-dependent scenarios (S5_Mob,
+CombatSmoke) on the UE machine.
+---
+ .../MassBattle/Private/BattleExecCommands.cpp | 164 +++++++++++++-----
+ .../MassBattle/Private/ServoProcessor.cpp     |   8 +-
+ .../MassBattle/Public/BattleExecCommands.h    |   6 +
+ .../Source/MassBattle/Public/ServoProcessor.h |   3 +
+ Source/MassBattleGame/DemoGameMode.cpp        |   9 +-
+ .../MassBattleGame/DemoPlayerController.cpp   |  29 ++--
+ Source/MassBattleGame/DemoTypes.h             |   9 +
+ 7 files changed, 160 insertions(+), 68 deletions(-)
+
+diff --git a/Plugins/MassBattle/Source/MassBattle/Private/BattleExecCommands.cpp b/Plugins/MassBattle/Source/MassBattle/Private/BattleExecCommands.cpp
+index 319c163..173fec4 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Private/BattleExecCommands.cpp
++++ b/Plugins/MassBattle/Source/MassBattle/Private/BattleExecCommands.cpp
+@@ -42,6 +42,20 @@ namespace
+ 
+ namespace BattleExec
+ {
++	void EnableDemoCombatPipeline()
++	{
++		// The session-on gate list (D-3): SpatialHash, Clusters, Tally, Assign.
++		// Plugin defaults stay 0 (flags-off identity); the demo session turns
++		// the pipeline on WITHOUT touching defaults (ECVF_SetByCode).
++		for (const TCHAR* Name : { TEXT("Battle.Combat.SpatialHash"), TEXT("Battle.Combat.Clusters"),
++			TEXT("Battle.Combat.Tally"), TEXT("Battle.Combat.Assign") })
++		{
++			if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(Name))
++			{
++				C->Set(1, ECVF_SetByCode);
++			}
++		}
++	}
+ 	void DumpRegistry(const TArray<FString>& Args, UWorld* World)
+ 	{
+ 		UUnitRegistrySubsystem* Registry = GetRegistry(World);
+@@ -716,16 +730,37 @@ void CombatDumpPairs(const TArray<FString>& Args, UWorld* World)
+ // the mob sample when nothing is level-placed.
+ namespace
+ {
+-	FUnitHandle SpawnClashUnitExec(UWorld* World, int32 EduRow, int32 Count, const FVector2D& PosM, float YawDeg)
++	// One spawn request in a SpawnClash fixture: the EDU row is identified by
++	// its DICTIONARY name (B-3), never by index -- re-ordering the golden EDU
++	// must not silently swap knight for peasant in a scenario.
++	struct FClashUnitSpec
+ 	{
+-		const FString FixturePath = FPaths::ProjectContentDir() / TEXT("Data/EDU/golden_edu_v1.txt");
+-		FString EduText;
+-		TArray<FEduUnit> Rows;
+-		FEduParseError Err;
+-		if (!FFileHelper::LoadFileToString(EduText, *FixturePath)
+-			|| !FBattleEduParser::Parse(EduText, Rows, Err)
+-			|| !Rows.IsValidIndex(EduRow))
++		const TCHAR* Dictionary; // EDU 'dictionary' value (unique per row)
++		int32 Count;
++		FVector2D PosM = FVector2D::ZeroVector;
++		float YawDeg = 0.f;
++	};
++
++	int32 FindEduRowIndexByDictionary(const TArray<FEduUnit>& Rows, const FString& Dictionary)
++	{
++		for (int32 i = 0; i < Rows.Num(); ++i)
+ 		{
++			const FEduField* Dict = Rows[i].FindField(TEXT("dictionary"));
++			if (Dict && Dict->GetValue().Equals(Dictionary, ESearchCase::IgnoreCase))
++			{
++				return i;
++			}
++		}
++		return INDEX_NONE;
++	}
++
++	FUnitHandle SpawnClashUnitExec(UWorld* World, const TArray<FEduUnit>& Rows, const FClashUnitSpec& Unit)
++	{
++		const int32 EduRow = FindEduRowIndexByDictionary(Rows, Unit.Dictionary);
++		if (EduRow == INDEX_NONE)
++		{
++			UE_LOG(LogMassBattle, Display,
++				TEXT("EXEC_RESULT SpawnClash FAIL unknown EDU dictionary '%s'"), Unit.Dictionary);
+ 			return FUnitHandle();
+ 		}
+ 		FBattleRowStats Stats;
+@@ -736,10 +771,10 @@ namespace
+ 		}
+ 		FUnitSpawnSpec Spec;
+ 		Spec.EduRowIndex = EduRow;
+-		Spec.SoldierCount = Count;
++		Spec.SoldierCount = Unit.Count;
+ 		Spec.UnitName = Stats.TypeName;
+-		Spec.SpawnPos = PosM * 100.f;
+-		Spec.SpawnYaw = YawDeg;
++		Spec.SpawnPos = Unit.PosM * 100.f;
++		Spec.SpawnYaw = Unit.YawDeg;
+ 		Spec.NumRanks = 3;
+ 		const FBattleSpawnResult Result = UBattleSpawnLibrary::SpawnUnit(World, Spec, Stats);
+ 		return Result.Unit;
+@@ -757,45 +792,95 @@ void CombatSpawnClash(const TArray<FString>& Args, UWorld* World)
+ 	}
+ 	CostGrid->ResetToFlat();
+ 	// The demo fixture rides the combat machinery persistently (visual demo).
+-	for (const TCHAR* Name : { TEXT("Battle.Combat.SpatialHash"), TEXT("Battle.Combat.Clusters"),
+-		TEXT("Battle.Combat.Tally"), TEXT("Battle.Combat.Assign") })
+-	{
+-		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(Name))
+-		{
+-			C->Set(1, ECVF_SetByCode);
+-		}
+-	}
++	EnableDemoCombatPipeline();
+ 
++	// Fixture compositions (B-3): scenario DATA lives here as a table --
++	// unit type by EDU dictionary name, count, spawn transform -- not as
++	// scattered typed literals in call arguments. Adding a variant or
++	// retuning a clash shape means editing THIS table only.
+ 	const FString Variant = Args[0];
++	TArray<FClashUnitSpec> WallUnits = {
++		{TEXT("Peasant_Levy"), 40, FVector2D(0.f, 0.f), 180.f},
++		{TEXT("Sergeant_Spearmen"), 40, FVector2D(-24.f, 0.f), 0.f},
++	};
++	TArray<FClashUnitSpec> MobUnits = {
++		{TEXT("Sergeant_Spearmen"), 8, FVector2D(0.f, -3.f), 180.f},
++		{TEXT("Sergeant_Spearmen"), 8, FVector2D(0.f, 3.f), 180.f},
++		{TEXT("Peasant_Levy"), 40, FVector2D(-20.f, 0.f), 0.f},
++	};
++	TArray<FClashUnitSpec> ChargeUnits = {
++		{TEXT("Peasant_Levy"), 12, FVector2D(0.f, 0.f), 180.f},
++		{TEXT("Peasant_Levy"), 12, FVector2D(-24.f, 0.f), 0.f},
++	};
++	const TCHAR* VariantName = nullptr;
++	TArray<FClashUnitSpec>* Units = nullptr;
+ 	if (Variant == TEXT("wall"))
+ 	{
+-		const FUnitHandle Defenders = SpawnClashUnitExec(World, 0, 40, FVector2D(0.f, 0.f), 180.f);
+-		const FUnitHandle Attackers = SpawnClashUnitExec(World, 1, 40, FVector2D(-24.f, 0.f), 0.f);
+-		Registry->IssueAttackUnitOrder(Attackers, Defenders);
+-		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SpawnClash OK wall defenders=%u:%u attackers=%u:%u"),
+-			Defenders.Index, Defenders.Serial, Attackers.Index, Attackers.Serial);
++		VariantName = TEXT("wall");
++		Units = &WallUnits;
+ 	}
+ 	else if (Variant == TEXT("mob"))
+ 	{
+-		const FUnitHandle KnightA = SpawnClashUnitExec(World, 1, 8, FVector2D(0.f, -3.f), 180.f);
+-		const FUnitHandle KnightB = SpawnClashUnitExec(World, 1, 8, FVector2D(0.f, 3.f), 180.f);
+-		const FUnitHandle Peasants = SpawnClashUnitExec(World, 0, 40, FVector2D(-20.f, 0.f), 0.f);
+-		Registry->IssueAttackMoveOrder(Peasants, FVector2D(0.f, 0.f), 0.f);
+-		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SpawnClash OK mob knights=%u:%u+%u:%u peasants=%u:%u"),
+-			KnightA.Index, KnightA.Serial, KnightB.Index, KnightB.Serial, Peasants.Index, Peasants.Serial);
++		VariantName = TEXT("mob");
++		Units = &MobUnits;
+ 	}
+ 	else if (Variant == TEXT("charge"))
+ 	{
+-		const FUnitHandle Defenders = SpawnClashUnitExec(World, 0, 12, FVector2D(0.f, 0.f), 180.f);
+-		const FUnitHandle Attackers = SpawnClashUnitExec(World, 0, 12, FVector2D(-24.f, 0.f), 0.f);
+-		Registry->IssueAttackUnitOrder(Attackers, Defenders);
+-		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SpawnClash OK charge defenders=%u:%u attackers=%u:%u (command Battle.Movement.WalkSpeed 6 to reach the fresh-contact gate)"),
+-			Defenders.Index, Defenders.Serial, Attackers.Index, Attackers.Serial);
++		VariantName = TEXT("charge");
++		Units = &ChargeUnits;
+ 	}
+ 	else
+ 	{
+ 		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SpawnClash FAIL unknown variant %s"), *Variant);
++		return;
+ 	}
++
++	// Load the EDU once per command; rows are matched by dictionary name.
++	const FString FixturePath = FPaths::ProjectContentDir() / TEXT("Data/EDU/golden_edu_v1.txt");
++	FString EduText;
++	TArray<FEduUnit> Rows;
++	FEduParseError Err;
++	if (!FFileHelper::LoadFileToString(EduText, *FixturePath)
++		|| !FBattleEduParser::Parse(EduText, Rows, Err))
++	{
++		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SpawnClash FAIL EDU fixture (%s)"),
++			Err.bFailed ? *Err.Message : TEXT("unreadable"));
++		return;
++	}
++
++	TArray<FUnitHandle> Spawned;
++	Spawned.Reserve(Units->Num());
++	for (const FClashUnitSpec& Unit : *Units)
++	{
++		const FUnitHandle Handle = SpawnClashUnitExec(World, Rows, Unit);
++		if (!Handle.IsValid())
++		{
++			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SpawnClash FAIL %s spawn"), VariantName);
++			return;
++		}
++		Spawned.Add(Handle);
++	}
++	// Orders by convention: wall/charge = last unit attacks the first; mob =
++	// the peasants (spawn order: knights first, peasants last) attack-move to
++	// the origin.
++	if (Variant == TEXT("mob"))
++	{
++		Registry->IssueAttackMoveOrder(Spawned.Last(), FVector2D(0.f, 0.f), 0.f);
++	}
++	else
++	{
++		Registry->IssueAttackUnitOrder(Spawned.Last(), Spawned[0]);
++	}
++	FString Ids;
++	for (const FUnitHandle& H : Spawned)
++	{
++		Ids += FString::Printf(TEXT(" %u:%u"), H.Index, H.Serial);
++	}
++	const FString ChargeHint = Variant == TEXT("charge")
++		? TEXT(" (command Battle.Movement.WalkSpeed 6 to reach the fresh-contact gate)")
++		: TEXT("");
++	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SpawnClash OK %s%s units:%s"),
++		VariantName, *ChargeHint, *Ids);
+ }
+ 
+ void CombatPerfStress(const TArray<FString>& Args, UWorld* World)
+@@ -808,14 +893,7 @@ void CombatPerfStress(const TArray<FString>& Args, UWorld* World)
+ 		return;
+ 	}
+ 	CostGrid->ResetToFlat();
+-	for (const TCHAR* Name : { TEXT("Battle.Combat.SpatialHash"), TEXT("Battle.Combat.Clusters"),
+-		TEXT("Battle.Combat.Tally"), TEXT("Battle.Combat.Assign") })
+-	{
+-		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(Name))
+-		{
+-			C->Set(1, ECVF_SetByCode);
+-		}
+-	}
++	EnableDemoCombatPipeline();
+ 	// Two 500-man lines in contact (the B.6 1k stress shape): 25 files x 20
+ 	// ranks at 1.2 m -- the tile holds it; the front ranks interpenetrate the
+ 	// dilation and the cluster pass emits the engagement.
+diff --git a/Plugins/MassBattle/Source/MassBattle/Private/ServoProcessor.cpp b/Plugins/MassBattle/Source/MassBattle/Private/ServoProcessor.cpp
+index 84f1738..f7af4c4 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Private/ServoProcessor.cpp
++++ b/Plugins/MassBattle/Source/MassBattle/Private/ServoProcessor.cpp
+@@ -187,6 +187,10 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
+ 	{
+ 		WalkSpeedCvar = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Movement.WalkSpeed"));
+ 	}
++	if (!FallInCvar)
++	{
++		FallInCvar = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Movement.ProgressiveFallIn"));
++	}
+ 
+ 	// ---- Frame snapshot (all battle entities) ----
+ 	struct FSnapshotEntry
+@@ -233,9 +237,7 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
+ 	const float MaxAccel = GBattleMovementMaxAccel.GetValueOnAnyThread();
+ 	const bool bFeedForward = GBattleMovementFeedForward.GetValueOnAnyThread() != 0;
+ 	const bool bMemberClamp = GBattleMovementMemberClamp.GetValueOnAnyThread() != 0;
+-	const bool bFallInServo = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Movement.ProgressiveFallIn"))
+-		? IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Movement.ProgressiveFallIn"))->GetInt() != 0
+-		: false;
++	const bool bFallInServo = FallInCvar && FallInCvar->GetInt() != 0;
+ 	// Formation-flow rule 2 feed: the ladder threshold that marks a slot as
+ 	// physically unreachable for the next slot reflow (read once per Execute,
+ 	// captured by value like the flags above).
+diff --git a/Plugins/MassBattle/Source/MassBattle/Public/BattleExecCommands.h b/Plugins/MassBattle/Source/MassBattle/Public/BattleExecCommands.h
+index c23c914..b8482e9 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Public/BattleExecCommands.h
++++ b/Plugins/MassBattle/Source/MassBattle/Public/BattleExecCommands.h
+@@ -11,6 +11,12 @@ class UWorld;
+ 
+ namespace BattleExec
+ {
++	// -- Session-on combat pipeline (D-3 dedup) --
++	// The four per-pass gates default OFF in the plugin (the T1.8 identity
++	// argument needs them out of the CI baseline); the demo game mode and the
++	// SpawnClash/PerfStress fixtures flip them on for their session. ONE home
++	// for the list + the flips -- call sites must not re-type the cvar names.
++	MASSBATTLE_API void EnableDemoCombatPipeline();
+ 	// -- Task 4 (registry probes) --
+ 	MASSBATTLE_API void DumpRegistry(const TArray<FString>& Args, UWorld* World);
+ 	MASSBATTLE_API void StateHash(const TArray<FString>& Args, UWorld* World);
+diff --git a/Plugins/MassBattle/Source/MassBattle/Public/ServoProcessor.h b/Plugins/MassBattle/Source/MassBattle/Public/ServoProcessor.h
+index c399606..c57b03c 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Public/ServoProcessor.h
++++ b/Plugins/MassBattle/Source/MassBattle/Public/ServoProcessor.h
+@@ -38,4 +38,7 @@ private:
+ 	FMassEntityQuery ZeroVelocityQuery;
+ 	/** Cached CVAR pointer (audit H4): stable for the process. */
+ 	const IConsoleVariable* WalkSpeedCvar = nullptr;
++	/** Cached pointer (B-6, audit M9 pattern): the servo is worker-run; a
++	 *  per-Execute FindConsoleVariable (twice) is pure lookup waste. */
++	const IConsoleVariable* FallInCvar = nullptr;
+ };
+diff --git a/Source/MassBattleGame/DemoGameMode.cpp b/Source/MassBattleGame/DemoGameMode.cpp
+index 2ce4508..e7d6375 100644
+--- a/Source/MassBattleGame/DemoGameMode.cpp
++++ b/Source/MassBattleGame/DemoGameMode.cpp
+@@ -32,14 +32,7 @@ void ADemoGameMode::BeginPlay()
+ 	// setup (the M3 auto-sample only covers the empty-map case). The PLUGIN
+ 	// defaults stay 0: the T1.8 movement-soak identity argument needs the
+ 	// pipeline out of the CI baseline until the fold-in nightly.
+-	for (const TCHAR* Name : { TEXT("Battle.Combat.SpatialHash"), TEXT("Battle.Combat.Clusters"),
+-		TEXT("Battle.Combat.Tally"), TEXT("Battle.Combat.Assign") })
+-	{
+-		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(Name))
+-		{
+-			C->Set(1, ECVF_SetByCode);
+-		}
+-	}
++	BattleExec::EnableDemoCombatPipeline();
+ 	UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoCombat pipeline on (hash/clusters/tally/assign session-on)"));
+ 
+ 	// Scenario authoring is level-driven: every ADemoUnitActor placed in the
+diff --git a/Source/MassBattleGame/DemoPlayerController.cpp b/Source/MassBattleGame/DemoPlayerController.cpp
+index 8d8cbad..9b814f7 100644
+--- a/Source/MassBattleGame/DemoPlayerController.cpp
++++ b/Source/MassBattleGame/DemoPlayerController.cpp
+@@ -76,6 +76,9 @@ void ADemoPlayerController::SetupEnhancedInput()
+ 	UInputAction* IA_RotLeft = Bool(TEXT("IA_DemoRotLeft"), TEXT("Rotate left"));
+ 	UInputAction* IA_RotRight = Bool(TEXT("IA_DemoRotRight"), TEXT("Rotate right"));
+ 
++	// B-4 note: the binding table below is code pending PR-2 (an
++	// editor-authored UInputMappingContext asset the owner can retune without
++	// a recompile). It lives in ONE function until then.
+ 	DemoIMC = NewObject<UInputMappingContext>(this, TEXT("IMC_Demo"));
+ 	AddMapping(DemoIMC, IA_Select, EKeys::LeftMouseButton);
+ 	AddMapping(DemoIMC, IA_Order, EKeys::RightMouseButton);
+@@ -360,7 +363,7 @@ bool ADemoPlayerController::PickUnitAtScreen(const FVector2D& ScreenPos, FUnitHa
+ 			continue;
+ 		}
+ 		FVector2D Proj;
+-		if (!ProjectWorldLocationToScreen(FVector(Info.BodyCenterCm.X, Info.BodyCenterCm.Y, 100.f), Proj))
++		if (!ProjectWorldLocationToScreen(FVector(Info.BodyCenterCm.X, Info.BodyCenterCm.Y, BodyLabelZCm), Proj))
+ 		{
+ 			continue;
+ 		}
+@@ -454,7 +457,7 @@ void ADemoPlayerController::OnLMBReleased()
+ 				continue;
+ 			}
+ 			FVector2D Proj;
+-			if (ProjectWorldLocationToScreen(FVector(Info.BodyCenterCm.X, Info.BodyCenterCm.Y, 100.f), Proj)
++			if (ProjectWorldLocationToScreen(FVector(Info.BodyCenterCm.X, Info.BodyCenterCm.Y, BodyLabelZCm), Proj)
+ 				&& Box.IsInside(Proj))
+ 			{
+ 				Marquee.Add(Handle);
+@@ -593,14 +596,6 @@ void ADemoPlayerController::OnRMBReleased()
+ 		return;
+ 	}
+ 
+-	// Movement is bounded by the plugin's flat cost-grid tile (256 m at the
+-	// origin); clamp destinations into it with a small margin.
+-	auto ClampToGrid = [](const FVector2D& P) -> FVector2D
+-	{
+-		const float Limit = 12500.f; // cm (125 m of the 128 m half-tile)
+-		return FVector2D(FMath::Clamp(P.X, -Limit, Limit), FMath::Clamp(P.Y, -Limit, Limit));
+-	};
+-
+ 	if (bDragIsFormation)
+ 	{
+ 		// Formation gesture: divide the drag line across selected units; each
+@@ -612,7 +607,7 @@ void ADemoPlayerController::OnRMBReleased()
+ 		{
+ 			for (const FDemoDragSegment& Seg : Segments)
+ 			{
+-				Registry->IssueMoveOrder(Seg.Handle, ClampToGrid(Seg.AnchorCm), Seg.FacingYawDeg,
++				Registry->IssueMoveOrder(Seg.Handle, ClampToGridHelper(Seg.AnchorCm), Seg.FacingYawDeg,
+ 					/*speed m/s*/ 0.f, FMath::Max(0, Seg.Files));
+ 			}
+ 			UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoOrder FormationDrag Units=%d"), Segments.Num());
+@@ -640,7 +635,7 @@ void ADemoPlayerController::OnRMBReleased()
+ 		return;
+ 	}
+ 	Centroid /= static_cast<float>(Counted);
+-	const FVector2D Dest = ClampToGrid(DragCurrentWorldCm);
++	const FVector2D Dest = ClampToGridHelper(DragCurrentWorldCm);
+ 
+ 	for (const FUnitHandle& H : SelectedUnits)
+ 	{
+@@ -652,7 +647,7 @@ void ADemoPlayerController::OnRMBReleased()
+ 		const FVector2D UnitDest = Dest + (Info.BodyCenterCm - Centroid);
+ 		// TW click-move semantics: a plain click moves without re-facing -- the
+ 		// unit keeps its current front (only an explicit drag commands a facing).
+-		Registry->IssueMoveOrder(H, ClampToGrid(UnitDest), Info.FacingYawDeg);
++		Registry->IssueMoveOrder(H, ClampToGridHelper(UnitDest), Info.FacingYawDeg);
+ 	}
+ 	UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoOrder Move Units=%d"), SelectedUnits.Num());
+ }
+@@ -715,7 +710,13 @@ bool ADemoPlayerController::IssueAttackOrders(const FVector2D& ScreenPos, const
+ 
+ FVector2D ADemoPlayerController::ClampToGridHelper(const FVector2D& P) const
+ {
+-	const float Limit = 12500.f; // cm (125 m of the 128 m half-tile)
++	// The movement cost grid is a 256 m tile centered at the origin; orders
++	// clamp into it with a 3 m margin off the half-tile (128 m - 3 m). The
++	// tile extent belongs to the plugin's grid (BattleCostGrid) -- exposing
++	// it is PR-3; until then this is the demo's single named copy.
++	constexpr float TileHalfExtentCm = 12800.f;
++	constexpr float EdgeMarginCm = 300.f;
++	constexpr float Limit = TileHalfExtentCm - EdgeMarginCm;
+ 	return FVector2D(FMath::Clamp(P.X, -Limit, Limit), FMath::Clamp(P.Y, -Limit, Limit));
+ }
+ 
+diff --git a/Source/MassBattleGame/DemoTypes.h b/Source/MassBattleGame/DemoTypes.h
+index eae1841..2009f97 100644
+--- a/Source/MassBattleGame/DemoTypes.h
++++ b/Source/MassBattleGame/DemoTypes.h
+@@ -35,6 +35,15 @@ struct FDemoUnitBodyInfo
+ 	FString UnitName;
+ };
+ 
++namespace DemoUi
++{
++	/** Z height (cm) used when projecting a unit's planar BodyCenterCm to
++	 *  screen for picking/marquee/labels. The bodies are flat; this is the
++	 *  camera-facing elevation the demo art assumes (1 m). ONE home (B-8) --
++	 *  every projection call site reads it. */
++	constexpr float BodyLabelZCm = 100.f;
++}
++
+ /** One selected unit's piece of a formation-drag preview/commit: the drag line
+  *  divided across units (Total War frontage semantics). */
+ struct FDemoDragSegment
+-- 
+2.47.3
+

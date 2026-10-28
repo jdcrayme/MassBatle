@@ -1,0 +1,80 @@
+From 132db6a0efdfa6891a8bff7e58d8e4d8c1f8919d Mon Sep 17 00:00:00 2001
+From: Senior Dev Auditor <audit@massbattle.local>
+Date: Wed, 28 Oct 2026 13:56:24 +0000
+Subject: [PATCH 5/9] phase2-audit: remove the permanently-failing T2.9 stub;
+ guard-move T2.8 test (C-6, C-3)
+
+C-6: FPerfGate2Skeleton ('Battle.Perf.Gate2') unconditionally AddError'd
+and returned false -- a placeholder that task 9's REAL gate (the
+Battle.Combat.PerfStress fixture + measured TallyMs/AssignMs vs the
+checked-in baseline) superseded but never deleted. It silently fails any
+run matching the Battle.Perf filter forever. Deleted; a comment records
+where the actual gate lives. C-7 was re-verified during this pass and
+needed no change: TallyProcessor's PairQuery already carries the
+FDeadTag None guard (pattern-consistent).
+
+C-3: FDeterminismTwoRun ('Battle.Func.DeterminismTwoRun', the T2.8 gate)
+was registered AFTER the file's WITH_DEV_AUTOMATION_TESTS #endif -- the
+only test in the file outside the guard. Moved inside so the file's
+editor-only macro discipline holds uniformly. No behavior change in any
+test configuration that compiles this module.
+---
+ .../Private/MassBattleCombatTests.cpp         | 20 +++++--------------
+ .../Private/MassBattleFuncTestHarness.cpp     |  4 ++--
+ 2 files changed, 7 insertions(+), 17 deletions(-)
+
+diff --git a/Plugins/MassBattle/Source/MassBattleTest/Private/MassBattleCombatTests.cpp b/Plugins/MassBattle/Source/MassBattleTest/Private/MassBattleCombatTests.cpp
+index b0d0d3a..38c98ae 100644
+--- a/Plugins/MassBattle/Source/MassBattleTest/Private/MassBattleCombatTests.cpp
++++ b/Plugins/MassBattle/Source/MassBattleTest/Private/MassBattleCombatTests.cpp
+@@ -1059,23 +1059,13 @@ bool FTallyAssign::RunTest(const FString& Parameters)
+ // ---------------------------------------------------------------------------
+ 
+ // ---------------------------------------------------------------------------
+-// T2.9 perf gate placeholder (task 9): the pairing pass budget.
+-// Runs under the Battle.Perf filter (nightly/Gauntlet territory per B.0) --
+-// matched by neither CI tier's filter string, so it changes no tier's count.
++// T2.9 perf gate: shipped by task 9 as the Battle.Combat.PerfStress fixture +
++// the measured AssignMs/TallyMs metrics against the checked-in baseline JSON.
++// (The permanently-failing Battle.Perf.Gate2 skeleton that preceded it was
++// removed by the 2026-10-28 audit: it failed any run matching Battle.Perf
++// forever, by design of nothing -- the gate had already landed.)
+ // ---------------------------------------------------------------------------
+ 
+-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPerfGate2Skeleton,
+-	"Battle.Perf.Gate2",
+-	(EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter))
+-
+-bool FPerfGate2Skeleton::RunTest(const FString& Parameters)
+-{
+-	// T2.9 (task 9): tally + assign < 0.5 ms game thread @ 1k in contact;
+-	// baseline JSON checked in, CI compares.
+-	AddError(TEXT("skeleton: perf gate lands with task 9"));
+-	return false;
+-}
+-
+ 
+ 
+ // ---------------------------------------------------------------------------
+diff --git a/Plugins/MassBattle/Source/MassBattleTest/Private/MassBattleFuncTestHarness.cpp b/Plugins/MassBattle/Source/MassBattleTest/Private/MassBattleFuncTestHarness.cpp
+index 7793bcd..db8cead 100644
+--- a/Plugins/MassBattle/Source/MassBattleTest/Private/MassBattleFuncTestHarness.cpp
++++ b/Plugins/MassBattle/Source/MassBattleTest/Private/MassBattleFuncTestHarness.cpp
+@@ -712,8 +712,6 @@ bool FCombatSmoke::RunTest(const FString& Parameters)
+ 	return true;
+ }
+ 
+-#endif // WITH_DEV_AUTOMATION_TESTS
+-
+ // ---------------------------------------------------------------------------
+ // Phase 2 task 9: T2.8 determinism two-run.
+ // ---------------------------------------------------------------------------
+@@ -734,3 +732,5 @@ bool FDeterminismTwoRun::RunTest(const FString& Parameters)
+ 	ADD_LATENT_AUTOMATION_COMMAND(FRunBattleFuncTest(this, TEXT("DeterminismTwoRun"), TEXT("ADeterminismTwoRunTest")));
+ 	return true;
+ }
++
++#endif // WITH_DEV_AUTOMATION_TESTS
+-- 
+2.47.3
+

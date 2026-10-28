@@ -1,0 +1,115 @@
+From 7e13ec44cd3f504eec4406a47a29ea4a7649d4f8 Mon Sep 17 00:00:00 2001
+From: Senior Dev Auditor <audit@massbattle.local>
+Date: Wed, 28 Oct 2026 13:56:50 +0000
+Subject: [PATCH 6/9] phase2-audit: delete the dead DrainCompositePool seam
+ (A-3)
+
+FMeleeMath::DrainCompositePool was never called by any runtime path: the
+resolution processor implements the mount-first drain INLINE (integer-hit
+model: DefenderMountRemaining-- then the existing FDeadTag path when the
+rider is exposed), which is the path T2.6/ChargeMechanics verified
+end-to-end. The seam's float-damage signature (RiderHP, Damage) never
+matched the shipped integer-hit model -- so wiring it in would have been
+a behavior change, not a refactor. A tested function no runtime uses is
+a trap for the next maintainer (it looks like the place to change
+combat drain; it isn't).
+
+Deleted: the seam function, its header declaration, its golden block in
+FHitChanceGolden (the assertion set was duplicated coverage of dead code
+-- the real drain behavior is covered by ChargeMechanics), and the stale
+composite-HP constant comment. A replacement comment in the golden test
+records where the real drain lives.
+
+MUST re-run the unit tier on the UE machine (T2.1 golden shrinks by one
+block; expected green).
+---
+ .../Source/MassBattle/Private/BattleMelee.cpp |  8 -------
+ .../Source/MassBattle/Public/BattleMelee.h    |  8 +------
+ .../Private/MassBattleCombatTests.cpp         | 24 ++++++-------------
+ 3 files changed, 8 insertions(+), 32 deletions(-)
+
+diff --git a/Plugins/MassBattle/Source/MassBattle/Private/BattleMelee.cpp b/Plugins/MassBattle/Source/MassBattle/Private/BattleMelee.cpp
+index 04db94a..21cef2f 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Private/BattleMelee.cpp
++++ b/Plugins/MassBattle/Source/MassBattle/Private/BattleMelee.cpp
+@@ -102,14 +102,6 @@ namespace FMeleeMath
+ 		return FMath::Min(Above * FMeleeMathConstants::KnockbackPerSpeed, FMeleeMathConstants::KnockbackMaxMps);
+ 	}
+ 
+-	void DrainCompositePool(float& RiderHP, int16& MountHP, float Damage)
+-	{
+-		const float In = FMath::Max(0.f, Damage);
+-		const float MountDamage = FMath::Min(static_cast<float>(MountHP), In);
+-		MountHP = static_cast<int16>(static_cast<float>(MountHP) - MountDamage);
+-		RiderHP = FMath::Max(0.f, RiderHP - (In - MountDamage));
+-	}
+-
+ 	float BaseChargeBonus()
+ 	{
+ 		return FMeleeMathConstants::BaseChargeBonus;
+diff --git a/Plugins/MassBattle/Source/MassBattle/Public/BattleMelee.h b/Plugins/MassBattle/Source/MassBattle/Public/BattleMelee.h
+index 423bc45..2a43940 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Public/BattleMelee.h
++++ b/Plugins/MassBattle/Source/MassBattle/Public/BattleMelee.h
+@@ -41,11 +41,9 @@ namespace FMeleeMathConstants
+         // Charge: minimum accumulated run-up (m) before a fast contact counts
+         // as a charge impact (a standing nudge at speed is not a charge, EC7).
+         constexpr float MinChargeRunUpM = 1.f;
+-        // Composite HP: landed hits drain the mount pool first, then the rider
+-        // (documented simplification: the ORDER does not affect the total; no
+-        // riderless mounts v1, spec §10).
+ }
+ 
++
+ /** Defense arc bands (EC6). Input: the defender-relative attack sector index
+  *  (0 = dead ahead, from the quantized ContactAngle via
+  *  FCombatSolver::SectorIndexFromAngle -- ONE value, TWO consumers, §4.5:
+@@ -93,10 +91,6 @@ namespace FMeleeMath
+          *  DIRECTION is the charge heading (processor-owned). */
+         MASSBATTLE_API float KnockbackImpulse(float ImpactSpeedMps, float SpeedThresholdMps);
+ 
+-        /** Composite HP drain (spec §4.8): one landed hit's damage drains the
+-         *  mount pool first, then the rider; entity dies when the total is 0. */
+-        MASSBATTLE_API void DrainCompositePool(float& RiderHP, int16& MountHP, float Damage);
+-
+         /** Base charge bonus at impact (placeholder constant, golden-locked). */
+         MASSBATTLE_API float BaseChargeBonus();
+ }
+diff --git a/Plugins/MassBattle/Source/MassBattleTest/Private/MassBattleCombatTests.cpp b/Plugins/MassBattle/Source/MassBattleTest/Private/MassBattleCombatTests.cpp
+index 38c98ae..57b1f33 100644
+--- a/Plugins/MassBattle/Source/MassBattleTest/Private/MassBattleCombatTests.cpp
++++ b/Plugins/MassBattle/Source/MassBattleTest/Private/MassBattleCombatTests.cpp
+@@ -657,23 +657,13 @@ bool FHitChanceGolden::RunTest(const FString& Parameters)
+ 	TestEqual(TEXT("golden knockback at 6 m/s"), FMeleeMath::KnockbackImpulse(6.f, 4.f), 1.2f);
+ 	TestEqual(TEXT("knockback clamped"), FMeleeMath::KnockbackImpulse(10.f, 4.f), 2.5f);
+ 
+-	// -- Composite HP: mount drains first, then the rider.
+-	{
+-		float Rider = 1.f;
+-		int16 Mount = 0;
+-		FMeleeMath::DrainCompositePool(Rider, Mount, 1.f);
+-		TestEqual(TEXT("foot: hit kills"), Rider, 0.f);
+-		Rider = 1.f; Mount = 1;
+-		FMeleeMath::DrainCompositePool(Rider, Mount, 1.f);
+-		TestEqual(TEXT("cavalry: first hit takes the mount"), Mount, static_cast<int16>(0));
+-		TestEqual(TEXT("cavalry: rider survives first hit"), Rider, 1.f);
+-		FMeleeMath::DrainCompositePool(Rider, Mount, 1.f);
+-		TestEqual(TEXT("cavalry: second hit kills"), Rider, 0.f);
+-		Rider = 1.f; Mount = 2;
+-		FMeleeMath::DrainCompositePool(Rider, Mount, 2.f);
+-		TestEqual(TEXT("cavalry: 2-damage hit drains both pools"), Rider, 1.f);
+-	}
+-
++	// Composite HP note (2026-10-28 audit): the float-damage seam
++	// DrainCompositePool was dead code -- the resolution processor drains the
++	// mount mirror inline (integer hits, DefenderMountRemaining-- then the
++	// existing death tag path) and no runtime path ever called it. The seam
++	// function, its golden block here, and the T2.6 charge/kill func tests
++	// (which exercise the REAL inline path end-to-end) agree on the same
++	// mount-first order.
+ 	return true;
+ }
+ 
+-- 
+2.47.3
+
