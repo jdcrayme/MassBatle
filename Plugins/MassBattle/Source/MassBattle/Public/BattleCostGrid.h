@@ -39,6 +39,14 @@ struct MASSBATTLE_API FBattleCostGrid
 	FVector2D CellCenter(int32 X, int32 Y) const;
 	void WorldToCell(const FVector2D& WorldPos, int32& OutX, int32& OutY) const;
 
+	/** Phase 3 (spec ranged-stack §4.3): bilinear terrain height at a
+	 *  WORLD position, meters -- the ballistic/LOS sampling read. The four
+	 *  surrounding cell heights are blended (flat grids read exactly 0, so
+	 *  the flags-off baseline is untouched); outside the grid reads 0
+	 *  (GetHeight's bounds rule). Net-new API, disclosed in the spec
+	 *  touch-point table: the ONLY BattleCostGrid change this phase. */
+	float SampleHeight(const FVector2D& WorldPosM) const;
+
 	/** A5 stamp override: mark all cells overlapping the world-space box
 	 *  [Min,Max] (m, inclusive) impassable. Idempotent. Returns cells stamped. */
 	int32 StampImpassable(const FVector2D& BoxMin, const FVector2D& BoxMax);
