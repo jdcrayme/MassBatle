@@ -4,6 +4,7 @@
 #include "BattleGarrison.h"
 #include "BattleGarrisonSubsystem.h"
 #include "BattleRegistry.h"
+#include "BattleEngagement.h" // demo-fix3: engaged attack-march halt inputs
 #include "BattleCostGridSubsystem.h"
 #include "BattlePathPlanner.h"
 #include "BattlePathFrameLayout.h"
@@ -249,7 +250,14 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 		// per tick (a moving target re-plans naturally on arrival-replan
 		// paths); the combat press ring takes over once records form.
 		FUnitOrder AttackAsMoveStorage;
-		if (Order->Type == FUnitOrder::EType::AttackUnit || Order->Type == FUnitOrder::EType::AttackMove)
+		// demo-fix3 (owner report 2026-10-28): capture the order facts BEFORE the
+		// synthesis rewrites the view -- after it an attack order reads as a
+		// plain Move and the engaged-line halt below could not tell an attack
+		// march from a movement order.
+		const bool bAttackMarch = Order->Type == FUnitOrder::EType::AttackUnit
+			|| Order->Type == FUnitOrder::EType::AttackMove;
+		const FUnitHandle AttackMarchTarget = Order->TargetUnit;
+		if (bAttackMarch)
 		{
 			AttackAsMoveStorage = *Order;
 			AttackAsMoveStorage.Type = FUnitOrder::EType::Move;
@@ -859,6 +867,41 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 		else if (Order->Type == FUnitOrder::EType::Move)
 		{
 			CommandedSpeedM = Order->CommandedSpeed > 0.f ? Order->CommandedSpeed : WalkSpeed;
+			// demo-fix3 (owner report 2026-10-28): an ENGAGED attack march holds
+			// its line. Records form when the two unit bodies touch, which is
+			// where the fight line belongs -- letting the anchor keep marching
+			// to the target's ANCHOR instead interpenetrates the formations: slot
+			// targets drag unpaired waiters through the enemy while the paired
+			// front rank grinds on press rings, and the section 8.2 no-facing-
+			// change-while-interpenetrating rule freezes the arrival refont.
+			// SPEED GATE: a unit currently moving at charge speed rides THROUGH
+			// contact (the section 4.9 charge mechanic -- connect, knockback,
+			// pass-through; the ChargeMechanics fixture commands a 6 m/s
+			// approach through Battle.Movement.WalkSpeed), so only sub-charge
+			// paces halt. SCOPE: AttackUnit halts only on the ORDERED pair's
+			// record (an unrelated interloper contact must not deadlock the
+			// ordered approach); AttackMove auto-engage halts on any live
+			// record (its target is record-resolved). When the record dies
+			// (target broke or died) the march resumes along the planned path
+			// and the arrival refont lands normally.
+			if (bAttackMarch)
+			{
+				bool bEngagedNow = false;
+				if (AttackMarchTarget.IsValid())
+				{
+					const FEngagementRecord* RecA = Registry->FindEngagement(Unit, AttackMarchTarget);
+					const FEngagementRecord* RecB = Registry->FindEngagement(AttackMarchTarget, Unit);
+					bEngagedNow = (RecA && RecA->bDead == 0) || (RecB && RecB->bDead == 0);
+				}
+				else
+				{
+					bEngagedNow = Registry->GetEngagedCount(Unit) > 0;
+				}
+				if (bEngagedNow && Formation.SpeedLimit < FCombatCVars::ChargeSpeedThreshold() * 100.f)
+				{
+					CommandedSpeedM = 0.f;
+				}
+			}
 		}
 
 		// Formation body extents (meters) -- shared by the §8.6 contact scan,

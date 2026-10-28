@@ -60,8 +60,12 @@ public:
 
 	/** Phase 2 task 10: attack orders (A4 surface on the demo input):
 	 *  RMB on an enemy unit = AttackUnit for the whole selection;
-	 *  Ctrl+RMB on ground = AttackMove to the point (auto-engage en route). */
-	void IssueAttackOrders(const FVector2D& ScreenPos, const FVector2D& GroundCm);
+	 *  Ctrl+RMB on ground = AttackMove to the point (auto-engage en route).
+	 *  Returns true when the click was CONSUMED (an attack order was
+	 *  issued) -- the caller must stop: the plain-move paths that follow
+	 *  would otherwise overwrite the attack order with a Move to the same
+	 *  point (the registry holds ONE current order per unit). */
+	bool IssueAttackOrders(const FVector2D& ScreenPos, const FVector2D& GroundCm);
 
 	/** The flat-tile destination clamp (shared by the move + attack-move
 	 *  order paths). */

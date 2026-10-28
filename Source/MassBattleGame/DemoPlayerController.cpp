@@ -579,10 +579,18 @@ void ADemoPlayerController::OnRMBReleased()
 	// Attack orders (phase 2 task 10, A4 on the demo input): RMB on an ENEMY
 	// unit = AttackUnit for the whole selection; Ctrl+RMB on ground =
 	// AttackMove to the point (march + auto-engage en route). The garrison
-	// intercept above keeps ETW structure semantics.
-	if (bHasMouse)
+	// intercept above keeps ETW structure semantics. A CONSUMED click (any
+	// attack order issued) must STOP the handler here: the move paths below
+	// call IssueMoveOrder on the same click point, and the registry holds ONE
+	// current order per unit -- the Move would REPLACE the attack order, the
+	// unit would march but never want combat, no engagement records would
+	// form, and the assign pass would run its disengage branch every tick
+	// (measured 2026-10-28: 'AttackUnit Issued=1 of 1' then 'DemoOrder Move
+	// Units=1' on one click -- the attacker walked to the defender, squished
+	// at the Block policy, and nothing fought).
+	if (bHasMouse && IssueAttackOrders(FVector2D(MouseX, MouseY), DragCurrentWorldCm))
 	{
-		IssueAttackOrders(FVector2D(MouseX, MouseY), DragCurrentWorldCm);
+		return;
 	}
 
 	// Movement is bounded by the plugin's flat cost-grid tile (256 m at the
@@ -649,13 +657,13 @@ void ADemoPlayerController::OnRMBReleased()
 	UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoOrder Move Units=%d"), SelectedUnits.Num());
 }
 
-void ADemoPlayerController::IssueAttackOrders(const FVector2D& ScreenPos, const FVector2D& GroundCm)
+bool ADemoPlayerController::IssueAttackOrders(const FVector2D& ScreenPos, const FVector2D& GroundCm)
 {
 	UDemoUnitVisualSubsystem* Visuals = VisualSubsystem();
 	UUnitRegistrySubsystem* Registry = GetWorld() ? GetWorld()->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
 	if (!Visuals || !Registry || SelectedUnits.Num() == 0)
 	{
-		return;
+		return false;
 	}
 	const EDemoTeam MyTeam = GetSelectionTeam();
 
@@ -676,7 +684,7 @@ void ADemoPlayerController::IssueAttackOrders(const FVector2D& ScreenPos, const 
 		UE_LOG(LogDemoBattle, Display,
 			TEXT("EXEC_RESULT DemoOrder AttackUnit Issued=%d of %d Target=%u:%u"),
 			Issued, SelectedUnits.Num(), Enemy.Index, Enemy.Serial);
-		return;
+		return true;
 	}
 
 	// Ctrl+RMB on ground: AttackMove to the point (march + auto-engage en
@@ -697,11 +705,12 @@ void ADemoPlayerController::IssueAttackOrders(const FVector2D& ScreenPos, const 
 		UE_LOG(LogDemoBattle, Display,
 			TEXT("EXEC_RESULT DemoOrder AttackMove Issued=%d of %d At=(%.1f,%.1f)m"),
 			Issued, SelectedUnits.Num(), Dest.X * 0.01f, Dest.Y * 0.01f);
-		return;
+		return true;
 	}
 
 	// Plain RMB (no enemy, no Ctrl): fall through to the move/formation
 	// handling in OnRMBReleased.
+	return false;
 }
 
 FVector2D ADemoPlayerController::ClampToGridHelper(const FVector2D& P) const

@@ -221,6 +221,45 @@ void UAssignPairsProcessor::Execute(FMassEntityManager& EntityManager, FMassExec
 		UnitIntents.Add(OrderPair.Key, Intent);
 	}
 
+	// demo-fix3 (owner report 2026-10-28): DEFENSIVE REACTION. An idle unit
+	// (order None / no order) that is under attack fights back: the cluster
+	// pass emits a record for BOTH directions of a contacted pair once either
+	// side wants combat, so the (defender -> aggressor) record already exists
+	// and the seam treats the defender's entities as ordinary seekers against
+	// the aggressor's line. This revises the ADR-05 attacker-authoritative
+	// posture for UNORDERED units: the owner's demo expectation is that an
+	// attacked unit defends itself (its front rank pairs, presses, and rolls
+	// -- return casualties on the attacker and visible defender movement).
+	// Deterministic with multiple aggressors: defend against the lowest
+	// (index, serial); the other aggressors still pair INTO this unit through
+	// their own orders. Re-tasked units (Move/Stop) keep the disengage
+	// semantics -- their orders resolve below and never reach this table.
+	for (const TPair<FEngagementKey, int32>& Rec : RecordIndexMap)
+	{
+		const FUnitHandle& UnderFire = Rec.Key.Defender;
+		const FUnitHandle& Aggressor = Rec.Key.Attacker;
+		if (!Aggressor.IsValid())
+		{
+			continue;
+		}
+		const FUnitOrder* UnderFireOrder = Orders.Find(UnderFire);
+		if (UnderFireOrder && UnderFireOrder->Type != FUnitOrder::EType::None)
+		{
+			continue; // ordered: attack intents resolved above; Move/Stop disengage
+		}
+		FUnitIntent& Defense = UnitIntents.FindOrAdd(UnderFire);
+		const uint32 Rank = (Aggressor.Index << 16) | Aggressor.Serial;
+		const uint32 CurrentRank = Defense.TargetUnit.IsValid()
+			? (Defense.TargetUnit.Index << 16) | Defense.TargetUnit.Serial
+			: MAX_uint32;
+		if (!Defense.bHasIntent || Rank < CurrentRank)
+		{
+			Defense.TargetUnit = Aggressor;
+			Defense.bAutoEngage = 0;
+			Defense.bHasIntent = true;
+		}
+	}
+
 	// ---- Seeker mirrors, per chunk (both query walks visit chunks in the
 	// same deterministic order, so write-back consumes BridgesByChunk
 	// sequentially). ----
@@ -265,7 +304,18 @@ void UAssignPairsProcessor::Execute(FMassEntityManager& EntityManager, FMassExec
 				}
 			}
 		}
-		else if (Order && Order->Type != FUnitOrder::EType::None)
+		else if (!Order || Order->Type == FUnitOrder::EType::None)
+		{
+			// demo-fix3 (owner report 2026-10-28): idle unit under attack -- read
+			// the defensive intent resolved above; the entities pair through the
+			// (defender -> aggressor) record exactly like an ordered attacker's.
+			if (const FUnitIntent* Resolved = UnitIntents.Find(OwnerUnit))
+			{
+				OrderTarget = Resolved->TargetUnit;
+				bAutoEngage = Resolved->bAutoEngage;
+			}
+		}
+		else
 		{
 			// Disengage (spec §4.7): re-tasking with Move/Stop while engaged
 			// flags the unit's engagement records dead AND clears the unit's
@@ -285,17 +335,35 @@ void UAssignPairsProcessor::Execute(FMassEntityManager& EntityManager, FMassExec
 				}
 			}
 		}
+		// demo-fix3: combat intent = a live attack order OR the defensive
+		// resolution (an idle unit under attack).
+		const bool bUnitHasIntent = bUnitHasOrder || OrderTarget.IsValid();
 
 		TArray<FCombatSolver::FAssignSeekerState>& ChunkBridges = BridgesByChunk.AddDefaulted_GetRef();
 		TArray<int32>& ChunkRows = ChunkIndices.AddDefaulted_GetRef();
 
 		for (int32 i = 0; i < Context.GetNumEntities(); ++i)
 		{
-			// Stamp the intent fragments from the order surface (A4).
-			Intents[i].TargetUnit = bUnitHasOrder ? OrderTarget : FUnitHandle();
-			Intents[i].bAutoEngage = bUnitHasOrder ? bAutoEngage : 0;
-			if (!bUnitHasOrder)
+			// Stamp the intent fragments from the order surface (A4) or the
+			// demo-fix3 defensive resolution (idle unit under attack).
+			Intents[i].TargetUnit = bUnitHasIntent ? OrderTarget : FUnitHandle();
+			Intents[i].bAutoEngage = bUnitHasIntent ? bAutoEngage : 0;
+			if (!bUnitHasIntent)
 			{
+				// demo-fix3: intent GONE (defensive records died -- the attacker
+				// disengaged or died) must release the stale pair HERE: a no-intent
+				// entity never reaches the seam's release path, and the resolution
+				// pass rolls across whatever pair fragment survives -- without this
+				// a disengaged-from defender would keep killing the retreating
+				// attacker forever (the disengage branch above covers re-tasked
+				// orders; this covers the intent loss of a NEVER-ordered unit).
+				if (Pairs[i].Target.IsValid())
+				{
+					Pairs[i].Target = FMassEntityHandle();
+					Pairs[i].State = ECombatPairState::Seeking;
+					Pairs[i].bRingValid = 0;
+					Pairs[i].BackoffTicks = 0;
+				}
 				continue; // no combat intent: not a seeker this tick
 			}
 			FCombatSolver::FAssignSeekerState S;
@@ -453,8 +521,21 @@ void UAssignPairsProcessor::Execute(FMassEntityManager& EntityManager, FMassExec
 					RingAngleDeg = static_cast<float>(S.ContactAngle) * (360.f / 255.f);
 					bRing = RingDef != nullptr;
 				}
-				else
+				else if (S.RecordIndex != INDEX_NONE)
 				{
+					// demo-fix3 (owner report 2026-10-28): waiters press the ring
+					// ONLY while their unit's engagement record is live. Records
+					// form when the unit bodies touch (dilated-OBB contact, 4 Hz);
+					// before that the entities must march WITH their slots.
+					// Ungated, the whole unit sprinted the field to the enemy line
+					// the instant the order was issued, pressed against the wall,
+					// and then WAITED for the anchor's contact to unlock pairing
+					// -- the owner's reported delay (the straggler throttle
+					// slowed the anchor further the wider the entities ran).
+					// Gated, the press is the short final rush from the march
+					// formation, and the pairs -- which need the same record --
+					// form in the same pass, so attacking starts at contact,
+					// not at anchor arrival.
 					float BestDistSq = TNumericLimits<float>::Max();
 					for (const FCombatSolver::FAssignDefenderState& Def : Defenders)
 					{

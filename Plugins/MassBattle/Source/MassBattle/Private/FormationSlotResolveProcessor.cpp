@@ -95,6 +95,20 @@ namespace
 		0.7f,
 		TEXT("Per-soldier early handoff distance to the final slot, m (phase 2 C3)."),
 		ECVF_Default);
+
+	// Phase 2 C5 (F-8) ERRATA home (IntegrateProcessor's per-tick lookup
+	// documents this spot): the per-man settle-facing rate, rad/s. The
+	// shared FacingDeltaRate (0.35 rad/s) is the BLOCK refront cap -- a man
+	// turning 180 deg needs 9 s at 20 deg/s and the settle window times
+	// out (S7 measured offYaw 27/40 at 5 s); ~1 s per pivot is the
+	// measured fit. The registration was missing through the 2026-10-28
+	// demo session (486 failed FindConsoleObject warnings; the console
+	// could not set the rate and the lookup silently took the fallback).
+	TAutoConsoleVariable<float> GBattleMovementSettleYawRate(
+		TEXT("Battle.Movement.SettleYawRate"),
+		2.f,
+		TEXT("Rest-facing turn rate for field entities, rad/s (phase 2 C5; the 0.35 block refront rate is not a man turn)."),
+		ECVF_Default);
 }
 
 UFormationSlotResolveProcessor::UFormationSlotResolveProcessor(const FObjectInitializer& ObjectInitializer)
