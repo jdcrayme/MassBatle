@@ -295,6 +295,14 @@ public:
 	void UpdateCachedAttributes(FUnitHandle Handle, const FBattleAttributeSnapshot& Snapshot);
 	const FBattleAttributeSnapshot* FindCachedAttributes(FUnitHandle Handle) const;
 
+	// -- Phase 3 fire-control toggles (spec ranged-stack §3.2) --
+
+	/** Spawn-time skirmish default (A8): class-missile rows call this with
+	 *  true right after registration. The full toggle surface
+	 *  (SetUnitFireToggles) lands with the Phase 3 data-spine task on the UE
+	 *  machine; the spawn default is what the save round-trip captures. */
+	void SetUnitSkirmishDefault(FUnitHandle Handle, bool bInSkirmish);
+
 	/** Idempotent: marking twice in one frame leaves one dirty entry. */
 	void MarkStatsDirty(FUnitHandle Handle);
 	void ClearStatsDirty(FUnitHandle Handle);

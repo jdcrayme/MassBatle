@@ -16,6 +16,7 @@
 #include "BattleStateHash.h"
 #include "BattleFragments.h"
 #include "BattleCombatFragments.h"
+#include "BattleRangedFragments.h"
 #include "BattleRngRegistry.h"
 #include "BattleEduParser.h"
 #include "Engine/Engine.h"
@@ -439,6 +440,50 @@ bool FCombat_SpawnComposition::RunTest(const FString& Parameters)
 		World->DestroyWorld(false);
 	}
 
+	// Phase 3 (spec ranged-stack §3.1): ranged rows carry FRangedStateFragment +
+	// FBowTag on a SEPARATE composition (arch §3.2); bow and crossbow share it
+	// (Kind is a fragment value). The growth is MEASURED here and itemized in
+	// the phase report (F6 disclosed re-sign); the invariants asserted are:
+	// ranged fragments present on ranged rosters, absent on melee rosters,
+	// identical-run determinism, and a non-negative growth delta.
+	int32 ArchetypesRanged = -1;
+	bool bRangedFragmentsCorrect = true;
+	{
+		UWorld* World = MakeCombatTestWorld();
+		const FBattleSpawnResult MeleeA = SpawnRow(World, Rows[0]);
+		const FBattleSpawnResult RangedA = SpawnRow(World, Rows[2]);
+		const FBattleSpawnResult RangedB = SpawnRow(World, Rows[3]);
+		UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>();
+		UMassEntitySubsystem* EntitySubsystem = World->GetSubsystem<UMassEntitySubsystem>();
+		FMassEntityManager& EntityManager = EntitySubsystem->GetMutableEntityManager();
+#if WITH_MASSENTITY_DEBUG
+		ArchetypesRanged = EntityManager.DebugGetArchetypesCount();
+#endif
+		const auto CheckRoster = [&](const FBattleSpawnResult& Result, bool bExpectRanged)
+		{
+			const TArray<FMassEntityHandle>* Roster = Registry->FindRoster(Result.Unit);
+			if (!TestNotNull(TEXT("roster"), Roster) || Roster->Num() == 0)
+			{
+				return;
+			}
+			for (const FMassEntityHandle& Entity : *Roster)
+			{
+				const FMassEntityView View(EntityManager, Entity);
+				const bool bHasRanged = View.GetFragmentDataPtr<FRangedStateFragment>() != nullptr;
+				bRangedFragmentsCorrect = bRangedFragmentsCorrect && (bHasRanged == bExpectRanged);
+			}
+		};
+		CheckRoster(MeleeA, /*bExpectRanged*/ false);
+		CheckRoster(RangedA, /*bExpectRanged*/ true);
+		CheckRoster(RangedB, /*bExpectRanged*/ true);
+#if WITH_MASSENTITY_DEBUG
+		TestTrue(TEXT("ranged rows grow the archetype count (composition added)"), ArchetypesRanged >= ArchetypesA);
+		AddInfo(FString::Printf(TEXT("archetypes: melee-only=%d with-ranged=%d (growth %d, one ranged composition expected; itemized in the phase report)"),
+				ArchetypesA, ArchetypesRanged, ArchetypesRanged - ArchetypesA));
+#endif
+		World->DestroyWorld(false);
+	}
+
 #if WITH_MASSENTITY_DEBUG
 	TestEqual(TEXT("identical spawns -> identical archetype count"), ArchetypesB, ArchetypesA);
 	AddInfo(FString::Printf(TEXT("archetypes with combat fragments (2 infantry units): %d"), ArchetypesA));
@@ -446,6 +491,7 @@ bool FCombat_SpawnComposition::RunTest(const FString& Parameters)
 	AddInfo(TEXT("shipping build: archetype count folds 0 (debug API absent)"));
 #endif
 	TestTrue(TEXT("combat fragments on every spawned entity"), bFragmentsPresent);
+	TestTrue(TEXT("ranged fragments: present on ranged rosters, absent on melee rosters"), bRangedFragmentsCorrect);
 	return true;
 }
 

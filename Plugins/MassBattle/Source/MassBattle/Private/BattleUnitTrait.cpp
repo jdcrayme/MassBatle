@@ -1,5 +1,6 @@
 #include "BattleUnitTrait.h"
 #include "BattleFragments.h"
+#include "BattleRangedFragments.h"
 #include "MassEntityTemplateRegistry.h"
 #include "StructUtils/SharedStruct.h"
 
@@ -20,6 +21,19 @@ void UBattleUnitTrait::BuildTemplate(FMassEntityTemplateBuildContext& BuildConte
 	Base.ChargeDistance = ChargeDistance;
 
 	BuildContext.AddFragment<FHealthFragment>();
+
+	// Phase 3 (spec ranged-stack §3.1): the ranged fragment rides
+	// ranged-capable compositions only, mirroring Route A (arch §3.2).
+	if (Kind != EBattleProjectileKind::None)
+	{
+		FRangedStateFragment& Ranged = BuildContext.AddFragment_GetRef<FRangedStateFragment>();
+		Ranged.Kind = Kind;
+		Ranged.RangeM = RangedRangeM;
+		Ranged.InitialAmmo = static_cast<uint16>(FMath::Clamp(AmmoPerMan, 0, 65535));
+		Ranged.AmmoCount = static_cast<int16>(Ranged.InitialAmmo);
+		Ranged.ReloadTimer = 0.f;
+		Ranged.ShotsFired = 0;
+	}
 
 	if (bInfantry) { BuildContext.AddTag<FInfantryTag>(); }
 	if (bCavalry)  { BuildContext.AddTag<FCavalryTag>(); }

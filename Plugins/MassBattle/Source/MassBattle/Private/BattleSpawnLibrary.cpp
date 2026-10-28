@@ -1,8 +1,11 @@
 #include "BattleSpawnLibrary.h"
 #include "BattleFragments.h"
 #include "BattleCombatFragments.h"
+#include "BattleRangedFragments.h"
 #include "BattleMovementFragments.h"
 #include "BattleRegistry.h"
+#include "BattleMelee.h"
+#include "BattleRanged.h"
 #include "MassBattleModule.h"
 
 #include "Engine/World.h"
@@ -45,15 +48,66 @@ bool FBattleRowStats::FromEdu(const FEduUnit& Row, FBattleRowStats& OutStats, FS
 	OutStats.TypeName = Type->GetValue();
 	OutStats.SoldierCount = FCString::Atoi(*Soldier->Values[1]);
 	OutStats.BaseHealth = FCString::Atof(*Health->Values[0]);
-	OutStats.MeleeAttack = FCString::Atof(*Pri->Values[0]);
-	OutStats.MeleeDefense = FCString::Atof(*Pri->Values[1]);
 	OutStats.Armor = FCString::Atof(*Armour->Values[0]);
 	OutStats.MoraleBase = FCString::Atof(*Mental->Values[0]);
 	OutStats.ChargeDistance = FCString::Atof(*Charge->Values[0]);
 
 	OutStats.bInfantry = (Category->GetValue() == TEXT("infantry"));
 	OutStats.bCavalry = (Category->GetValue() == TEXT("cavalry"));
-	// Phase 0 fixture classes are melee ('light', 'spear'); bow flag arrives with ranged rows.
+
+	// Phase 3 ranged branch (spec ranged-stack section 6; brief F3):
+	// stat_pri is the missile weapon when its missile slot != "no";
+	// stat_sec is then the melee backup. Unknown missile tokens fail
+	// loudly (a "catapult_ball" row must not silently become melee).
+	if (Pri->Values.Num() > 4)
+	{
+		const FString& Missile = Pri->Values[2];
+		if (Missile == TEXT("no"))
+		{
+			OutStats.Kind = EBattleProjectileKind::None;
+		}
+		else if (Missile == TEXT("arrow"))
+		{
+			OutStats.Kind = EBattleProjectileKind::Arrow;
+		}
+		else if (Missile == TEXT("bolt"))
+		{
+			OutStats.Kind = EBattleProjectileKind::Bolt;
+		}
+		else
+		{
+			OutError = FString::Printf(TEXT("EDU row '%s': unknown missile kind '%s' (arrow|bolt|no)"),
+				*OutStats.TypeName, *Missile);
+			return false;
+		}
+	}
+	OutStats.bBow = (OutStats.Kind != EBattleProjectileKind::None);
+	OutStats.bSkirmishDefault = (Class->GetValue() == TEXT("missile"));
+
+	if (OutStats.bBow)
+	{
+		// Missile row: stat_pri carries the ranged weapon, stat_sec the
+		// melee backup (weapon-switch modeling is a spec section 10
+		// extension point -- v1 maps the backup as the melee stats).
+		OutStats.RangedAttack = FCString::Atof(*Pri->Values[0]);
+		OutStats.RangedRangeM = FCString::Atof(*Pri->Values[3]);
+		OutStats.AmmoPerMan = FCString::Atoi(*Pri->Values[4]);
+		const FEduField* Sec = Need(TEXT("stat_sec"), 2);
+		if (!Sec)
+		{
+			return false;
+		}
+		OutStats.MeleeAttack = FCString::Atof(*Sec->Values[0]);
+		OutStats.MeleeDefense = FCString::Atof(*Sec->Values[1]);
+	}
+	else
+	{
+		// Melee row: stat_pri is the melee weapon (the Phase 0-2
+		// mapping, unchanged); stat_sec mirrors it in the fixture and
+		// is not consumed.
+		OutStats.MeleeAttack = FCString::Atof(*Pri->Values[0]);
+		OutStats.MeleeDefense = FCString::Atof(*Pri->Values[1]);
+	}
 	OutStats.bMelee = !OutStats.bBow;
 
 	// Phase 2 combat fields (task 2 step 1, R-C10): typed extractions of the
@@ -145,24 +199,35 @@ FBattleSpawnResult UBattleSpawnLibrary::SpawnUnit(UWorld* World, const FUnitSpaw
 	// 3. Per-role archetype (Route A): fragments + tags + the shared fragment types.
 	// Phase 1: the movement spine rides on every battle entity uniformly so the
 	// role archetypes do not split further (Task 2 archetype probe).
-	const UScriptStruct* Fragments[] = {
-		FOwnerUnitFragment::StaticStruct(),
-		FLoadoutFragment::StaticStruct(),
-		FBaseStatsFragment::StaticStruct(),
-		FHealthFragment::StaticStruct(),
-		FTransformFragment::StaticStruct(),   // MassCommon: position (engine stack, cm)
-		FMassVelocityFragment::StaticStruct(),// MassMovement: adopted per arch §3.1 note
-		FSlotAssignmentFragment::StaticStruct(),
-		FSlotTargetFragment::StaticStruct(),
-		FMovementStateFragment::StaticStruct(),
-		FServoStateFragment::StaticStruct(),
-		// Phase 2 combat spine (spec §3.1, A2): on EVERY battle entity
-		// uniformly -- zero new tags, composition grows, the archetype count
-		// stays 6 (F6).
-		FCombatIntentFragment::StaticStruct(),
-		FCombatPairFragment::StaticStruct(),
-		FChargeFragment::StaticStruct(),
-	};
+	// Phase 3 (spec ranged-stack §3.1): the ranged fragment rides
+	// RANGED-CAPABLE rows only (arch §3.2: a spearman has no ranged
+	// fragments, so the ranged-fire processor never touches his chunks);
+	// bow and crossbow share ONE composition (Kind is a fragment value).
+	// The archetype count grows by the ranged compositions -- measured +
+	// itemized by SpawnComposition, growth disclosed in the phase report
+	// (F6).
+	const bool bRanged = Row.Kind != EBattleProjectileKind::None;
+	TArray<const UScriptStruct*> Fragments;
+	Fragments.Reserve(16);
+	Fragments.Add(FOwnerUnitFragment::StaticStruct());
+	Fragments.Add(FLoadoutFragment::StaticStruct());
+	Fragments.Add(FBaseStatsFragment::StaticStruct());
+	Fragments.Add(FHealthFragment::StaticStruct());
+	Fragments.Add(FTransformFragment::StaticStruct());   // MassCommon: position (engine stack, cm)
+	Fragments.Add(FMassVelocityFragment::StaticStruct());// MassMovement: adopted per arch §3.1 note
+	Fragments.Add(FSlotAssignmentFragment::StaticStruct());
+	Fragments.Add(FSlotTargetFragment::StaticStruct());
+	Fragments.Add(FMovementStateFragment::StaticStruct());
+	Fragments.Add(FServoStateFragment::StaticStruct());
+	// Phase 2 combat spine (spec §3.1, A2): on EVERY battle entity
+	// uniformly -- zero new tags, composition grows (F6).
+	Fragments.Add(FCombatIntentFragment::StaticStruct());
+	Fragments.Add(FCombatPairFragment::StaticStruct());
+	Fragments.Add(FChargeFragment::StaticStruct());
+	if (bRanged)
+	{
+		Fragments.Add(FRangedStateFragment::StaticStruct());
+	}
 	TArray<const UScriptStruct*> Tags;
 	if (Row.bInfantry) { Tags.Add(FInfantryTag::StaticStruct()); }
 	if (Row.bCavalry)  { Tags.Add(FCavalryTag::StaticStruct()); }
@@ -251,6 +316,23 @@ FBattleSpawnResult UBattleSpawnLibrary::SpawnUnit(UWorld* World, const FUnitSpaw
 		Charge.ImpactSpeed = 0.f;
 		Charge.bConnected = 0;
 
+		// Phase 3 ranged spine init (spec ranged-stack §3.1): spawn-immutable
+		// fields from the row; reload staggered via the handle-hash family so
+		// volleys never serialize (RC1 -- the StaggeredPhaseOffset
+		// discipline, one home for the Knuth multipliers). Fragments carry
+		// METERS here (the seam convention; the pool boundary converts once).
+		if (bRanged)
+		{
+			FRangedStateFragment& Ranged = View.GetFragmentData<FRangedStateFragment>();
+			Ranged.Kind = Row.Kind;
+			Ranged.RangeM = Row.RangedRangeM;
+			Ranged.InitialAmmo = static_cast<uint16>(FMath::Clamp(Row.AmmoPerMan, 0, 65535));
+			Ranged.AmmoCount = static_cast<int16>(Ranged.InitialAmmo);
+			Ranged.ReloadTimer = FMeleeMath::StaggeredPhaseOffset(
+				Entities[i].Index, FRangedCVars::ReloadInterval());
+			Ranged.ShotsFired = 0;
+		}
+
 		// Movement spine init (phase-1 Task 2): spawn transform, zeroed
 		// velocity, initial slot layout, HoldSlot state. Entities spawn at
 		// their FORMED slot positions (rank-major around the anchor) -- a
@@ -285,6 +367,10 @@ FBattleSpawnResult UBattleSpawnLibrary::SpawnUnit(UWorld* World, const FUnitSpaw
 
 	// 6. Publish the roster + initial attribute cache.
 	Registry->SetRoster(Unit, MoveTemp(Entities));
+
+	// Phase 3 (spec ranged-stack §3.2, A8): class-missile rows default the
+	// skirmish toggle on at spawn; the registry owns the toggle state.
+	Registry->SetUnitSkirmishDefault(Unit, Row.bSkirmishDefault);
 
 	FBattleAttributeSnapshot Snapshot;
 	Snapshot.Morale = Row.MoraleBase;

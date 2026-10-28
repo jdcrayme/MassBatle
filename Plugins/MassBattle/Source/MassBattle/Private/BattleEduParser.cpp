@@ -34,6 +34,7 @@ namespace
 			{TEXT("formation"),        6,  6, {EduFloat, EduFloat, EduFloat, EduFloat, EduFloat, EduToken},     false},
 			{TEXT("stat_health"),      2,  2, {EduInt, EduInt},                                                 false},
 			{TEXT("stat_pri"),        11, 11, {EduInt, EduInt, EduToken, EduInt, EduInt, EduToken, EduToken, EduToken, EduInt, EduFloat, EduFloat}, false},
+			{TEXT("stat_sec"),        11, 11, {EduInt, EduInt, EduToken, EduInt, EduInt, EduToken, EduToken, EduToken, EduInt, EduFloat, EduFloat}, false},
 			{TEXT("stat_pri_armour"),  4,  4, {EduInt, EduInt, EduInt, EduToken},                               false},
 			{TEXT("stat_mental"),      3,  3, {EduInt, EduToken, EduToken},                                     false},
 			{TEXT("stat_charge_dist"), 1,  1, {EduInt},                                                         false},

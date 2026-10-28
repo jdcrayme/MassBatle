@@ -18,7 +18,7 @@ struct FBattleRowStats
 	float BaseHealth = 1.f;
 	float MeleeAttack = 0.f;
 	float MeleeDefense = 0.f;
-	float RangedAttack = 0.f;   // fixture has no stat_sec; 0 until ranged rows exist
+	float RangedAttack = 0.f;   // stat_pri attack for missile rows (stat_sec is then the melee backup)
 	float Armor = 0.f;
 	float MoraleBase = 0.f;
 	float ChargeDistance = 0.f;
@@ -42,6 +42,17 @@ struct FBattleRowStats
 	bool bCavalry = false;
 	bool bMelee = false;
 	bool bBow = false;
+
+	// Phase 3 ranged mapping (spec ranged-stack section 6; brief F3):
+	// stat_pri is the MISSILE weapon when its missile slot != "no" (the
+	// M2TW convention); stat_sec is then the melee backup. Kind is the
+	// fragment-value discriminator (BattleTypes.h); the profile table
+	// (BattleRanged.h) keys speed/dispersion/AP posture off it. Constants
+	// are A6 placeholders pending the Phase-6 T6.1 audit.
+	EBattleProjectileKind Kind = EBattleProjectileKind::None;
+	float RangedRangeM = 0.f;   // stat_pri range value, meters
+	int32 AmmoPerMan = 0;       // stat_pri ammo value
+	bool bSkirmishDefault = false; // class "missile" rows default the toggle on (A8)
 
 	/** Map one parsed FEduUnit row onto typed stats. Fails loudly on missing fields. */
 	static MASSBATTLE_API bool FromEdu(const FEduUnit& Row, FBattleRowStats& OutStats, FString& OutError);

@@ -27,6 +27,12 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Battle") float MoraleBase = 0.f;
 	UPROPERTY(EditAnywhere, Category = "Battle") float ChargeDistance = 0.f;
 
+	/** Phase 3 ranged fields (spec ranged-stack §3.1): the fragment rides
+	 *  ranged-capable compositions only (arch §3.2), mirroring Route A. */
+	UPROPERTY(EditAnywhere, Category = "Battle") EBattleProjectileKind Kind = EBattleProjectileKind::None;
+	UPROPERTY(EditAnywhere, Category = "Battle") float RangedRangeM = 0.f;
+	UPROPERTY(EditAnywhere, Category = "Battle") int32 AmmoPerMan = 0;
+
 	/** Capability tags to apply (arch §3.2). */
 	UPROPERTY(EditAnywhere, Category = "Battle") bool bInfantry = true;
 	UPROPERTY(EditAnywhere, Category = "Battle") bool bCavalry = false;

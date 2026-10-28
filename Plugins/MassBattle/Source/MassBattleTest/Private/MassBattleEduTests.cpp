@@ -3,6 +3,10 @@
 // The on-disk fixture (Data/EDU/golden_edu_v1.txt) is the schema source of
 // truth; tests load it via FPaths::ProjectDir (per-commit tier runs in the
 // editor context, where ProjectDir is the repo root).
+// Phase 3 re-sign (2026-10-29, spec ranged-stack section 6): stat_sec joins
+// the schema (15 keys) and the fixture gains two ranged rows; the golden and
+// every inline edge fixture carry the new field. Disclosed re-sign per the
+// T0.2 policy -- any drift is a facts-correction entry (AGENTS section 4).
 #include "Misc/AutomationTest.h"
 #include "Misc/Paths.h"
 #include "Misc/FileHelper.h"
@@ -54,8 +58,8 @@ bool FEdu_RoundTripGolden::RunTest(const FString& Parameters)
 		AddError(FString::Printf(TEXT("parse error line %d: %s"), Err.LineNumber, *Err.Message));
 		return false;
 	}
-	TestEqual(TEXT("schema field count is 14 (reality-corrected)"), FBattleEduParser::SchemaFieldCount(), 14);
-	TestEqual(TEXT("fixture unit count"), Units.Num(), 2);
+	TestEqual(TEXT("schema field count is 15 (phase 3 re-sign: +stat_sec)"), FBattleEduParser::SchemaFieldCount(), 15);
+	TestEqual(TEXT("fixture unit count"), Units.Num(), 4);
 
 	// Spot-check the tables against the fixture content.
 	const FEduField* Type0 = Units[0].FindField(TEXT("type"));
@@ -82,6 +86,34 @@ bool FEdu_RoundTripGolden::RunTest(const FString& Parameters)
 	{
 		TestEqual(TEXT("unit1 stat_pri value count"), Pri1->Values.Num(), 11);
 		TestEqual(TEXT("unit1 stat_pri damage"), Pri1->Values[8], FString(TEXT("25")));
+	}
+	// Phase 3 ranged rows: stat_pri carries the missile weapon (M2TW
+	// convention), stat_sec the melee backup; spot-check the extraction
+	// inputs FromEdu consumes (spec ranged-stack section 6, brief F3).
+	const FEduField* Pri2 = Units[2].FindField(TEXT("stat_pri"));
+	const FEduField* Sec2 = Units[2].FindField(TEXT("stat_sec"));
+	TestNotNull(TEXT("unit2 stat_sec present"), Sec2);
+	if (Pri2 && Sec2)
+	{
+		TestEqualSensitive(TEXT("unit2 missile kind (token lowercased)"), Pri2->Values[2], FString(TEXT("arrow")));
+		TestEqual(TEXT("unit2 range"), Pri2->Values[3], FString(TEXT("120")));
+		TestEqual(TEXT("unit2 ammo"), Pri2->Values[4], FString(TEXT("25")));
+		TestEqual(TEXT("unit2 stat_sec melee attack"), Sec2->Values[0], FString(TEXT("4")));
+	}
+	const FEduField* Type3 = Units[3].FindField(TEXT("type"));
+	const FEduField* Pri3 = Units[3].FindField(TEXT("stat_pri"));
+	if (Type3 && Pri3)
+	{
+		TestEqualSensitive(TEXT("unit3 is Mercenary Crossbowmen"), Type3->GetValue(), FString(TEXT("Mercenary Crossbowmen")));
+		TestEqualSensitive(TEXT("unit3 missile kind"), Pri3->Values[2], FString(TEXT("bolt")));
+		TestEqual(TEXT("unit3 range"), Pri3->Values[3], FString(TEXT("160")));
+		TestEqual(TEXT("unit3 ammo"), Pri3->Values[4], FString(TEXT("18")));
+	}
+	// Melee rows mirror stat_sec with a "no" missile slot.
+	const FEduField* Sec0 = Units[0].FindField(TEXT("stat_sec"));
+	if (Sec0)
+	{
+		TestEqualSensitive(TEXT("unit0 stat_sec missile is no"), Sec0->Values[2], FString(TEXT("no")));
 	}
 
 	// tables -> canonical text
@@ -112,6 +144,7 @@ bool FEdu_RoundTripGolden::RunTest(const FString& Parameters)
 		"formation 1.2, 1.2, 2.4, 2.4, 3, square\n"
 		"stat_health 1, 1\n"
 		"stat_pri 1, 2, no, 0, 0, melee, simple, other, 10, 0.2, 0.2\n"
+		"stat_sec 1, 2, no, 0, 0, melee, simple, other, 10, 0.2, 0.2\n"
 		"stat_pri_armour 0, 1, 0, flesh\n"
 		"stat_mental 2, low, untrained\n"
 		"stat_charge_dist 30\n"
@@ -127,10 +160,43 @@ bool FEdu_RoundTripGolden::RunTest(const FString& Parameters)
 		"formation 1.2, 1.2, 2.4, 2.4, 3, square\n"
 		"stat_health 1, 1\n"
 		"stat_pri 4, 4, no, 0, 0, melee, blade_piercing, spear, 25, 0.35, 0.35\n"
+		"stat_sec 4, 4, no, 0, 0, melee, blade_piercing, spear, 25, 0.35, 0.35\n"
 		"stat_pri_armour 4, 5, 0, metal\n"
 		"stat_mental 6, normal, trained\n"
 		"stat_charge_dist 30\n"
 		"stat_cost 1, 250, 220, 90, 120, 220\n"
+		"ownership england, france\n"
+		"\n"
+		"type Peasant Archers\n"
+		"dictionary Peasant_Archers\n"
+		"category infantry\n"
+		"class missile\n"
+		"soldier Peasant_Archer, 40, 0, 1\n"
+		"attributes sea_faring, hide_forest, hardy, can_withdraw, can_skirmish\n"
+		"formation 1.2, 1.2, 2.4, 2.4, 3, square\n"
+		"stat_health 1, 1\n"
+		"stat_pri 6, 2, arrow, 120, 25, missile, simple, other, 10, 0.2, 0.2\n"
+		"stat_sec 4, 2, no, 0, 0, melee, simple, other, 10, 0.2, 0.2\n"
+		"stat_pri_armour 0, 1, 0, flesh\n"
+		"stat_mental 4, low, untrained\n"
+		"stat_charge_dist 30\n"
+		"stat_cost 1, 150, 130, 60, 90, 130\n"
+		"ownership slave, england\n"
+		"\n"
+		"type Mercenary Crossbowmen\n"
+		"dictionary Mercenary_Crossbowmen\n"
+		"category infantry\n"
+		"class missile\n"
+		"soldier Mercenary_Crossbow, 40, 0, 1\n"
+		"attributes sea_faring, hide_forest, hardy, can_withdraw\n"
+		"formation 1.2, 1.2, 2.4, 2.4, 3, square\n"
+		"stat_health 1, 1\n"
+		"stat_pri 9, 2, bolt, 160, 18, missile, simple, other, 10, 0.25, 0.25\n"
+		"stat_sec 5, 3, no, 0, 0, melee, simple, other, 10, 0.2, 0.2\n"
+		"stat_pri_armour 3, 4, 0, metal\n"
+		"stat_mental 5, normal, trained\n"
+		"stat_charge_dist 30\n"
+		"stat_cost 1, 300, 260, 100, 130, 260\n"
 		"ownership england, france\n");
 	TestEqualSensitive(TEXT("canonical text matches hand-written golden"), Canonical1, GoldenCanonical);
 
@@ -148,6 +214,7 @@ bool FEdu_EdgeCases::RunTest(const FString& Parameters)
 		const FString Bad = TEXT("type X\ndictionary X\ncategory infantry\nclass light\n"
 			"soldier X, 40, 0, 1\nattributes\nformation 1.2, 1.2, 2.4, 2.4, 3, square\n"
 			"stat_health 1, 1\nstat_pri 1, 2, no, 0, 0, melee, simple, other, 10, 0.2, 0.2\n"
+			"stat_sec 1, 2, no, 0, 0, melee, simple, other, 10, 0.2, 0.2\n"
 			"stat_pri_armour 0, 1, 0, flesh\nstat_mental 2, low, untrained\n"
 			"stat_charge_dist 30\nstat_cost 1, 100, 90, 40, 60, 90\nownership england\n"
 			"stat_magic 5\n"); // <- unknown
@@ -164,6 +231,7 @@ bool FEdu_EdgeCases::RunTest(const FString& Parameters)
 		const FString Dup = TEXT("type X\ntype Y\ndictionary X\ncategory infantry\nclass light\n"
 			"soldier X, 40, 0, 1\nattributes\nformation 1.2, 1.2, 2.4, 2.4, 3, square\n"
 			"stat_health 1, 1\nstat_pri 1, 2, no, 0, 0, melee, simple, other, 10, 0.2, 0.2\n"
+			"stat_sec 1, 2, no, 0, 0, melee, simple, other, 10, 0.2, 0.2\n"
 			"stat_pri_armour 0, 1, 0, flesh\nstat_mental 2, low, untrained\n"
 			"stat_charge_dist 30\nstat_cost 1, 100, 90, 40, 60, 90\nownership england\n");
 		TArray<FEduUnit> Units;
@@ -173,15 +241,34 @@ bool FEdu_EdgeCases::RunTest(const FString& Parameters)
 		const FString BadArity = TEXT("type X\ndictionary X\ncategory infantry\nclass light\n"
 			"soldier X, 40\nattributes\nformation 1.2, 1.2, 2.4, 2.4, 3, square\n" // soldier needs 4
 			"stat_health 1, 1\nstat_pri 1, 2, no, 0, 0, melee, simple, other, 10, 0.2, 0.2\n"
+			"stat_sec 1, 2, no, 0, 0, melee, simple, other, 10, 0.2, 0.2\n"
 			"stat_pri_armour 0, 1, 0, flesh\nstat_mental 2, low, untrained\n"
 			"stat_charge_dist 30\nstat_cost 1, 100, 90, 40, 60, 90\nownership england\n");
 		Err = FEduParseError();
 		TestFalse(TEXT("wrong arity fails"), FBattleEduParser::Parse(BadArity, Units, Err));
 
+		const FString BadSecArity = TEXT("type X\ndictionary X\ncategory infantry\nclass light\n"
+			"soldier X, 40, 0, 1\nattributes\nformation 1.2, 1.2, 2.4, 2.4, 3, square\n"
+			"stat_health 1, 1\nstat_pri 1, 2, no, 0, 0, melee, simple, other, 10, 0.2, 0.2\n"
+			"stat_sec 4, 2\n" // <- stat_sec needs 11
+			"stat_pri_armour 0, 1, 0, flesh\nstat_mental 2, low, untrained\n"
+			"stat_charge_dist 30\nstat_cost 1, 100, 90, 40, 60, 90\nownership england\n");
+		Err = FEduParseError();
+		TestFalse(TEXT("wrong stat_sec arity fails"), FBattleEduParser::Parse(BadSecArity, Units, Err));
+
+		const FString MissingSec = TEXT("type X\ndictionary X\ncategory infantry\nclass light\n"
+			"soldier X, 40, 0, 1\nattributes\nformation 1.2, 1.2, 2.4, 2.4, 3, square\n"
+			"stat_health 1, 1\nstat_pri 1, 2, no, 0, 0, melee, simple, other, 10, 0.2, 0.2\n"
+			"stat_pri_armour 0, 1, 0, flesh\nstat_mental 2, low, untrained\n"
+			"stat_charge_dist 30\nstat_cost 1, 100, 90, 40, 60, 90\nownership england\n");
+		Err = FEduParseError();
+		TestFalse(TEXT("missing stat_sec fails (schema completeness)"), FBattleEduParser::Parse(MissingSec, Units, Err));
+
 		const FString BadNum = TEXT("type X\ndictionary X\ncategory infantry\nclass light\n"
 			"soldier X, 40, 0, 1\nattributes\nformation 1.2, 1.2, 2.4, 2.4, 3, square\n"
 			"stat_health abc, 1\n" // <- not an int
 			"stat_pri 1, 2, no, 0, 0, melee, simple, other, 10, 0.2, 0.2\n"
+			"stat_sec 1, 2, no, 0, 0, melee, simple, other, 10, 0.2, 0.2\n"
 			"stat_pri_armour 0, 1, 0, flesh\nstat_mental 2, low, untrained\n"
 			"stat_charge_dist 30\nstat_cost 1, 100, 90, 40, 60, 90\nownership england\n");
 		Err = FEduParseError();
@@ -201,6 +288,7 @@ bool FEdu_EdgeCases::RunTest(const FString& Parameters)
 			"formation 1.20, 1.2, 2.40, 2.4, 3.00, square\n" // float forms
 			"stat_health 1, 1\n"
 			"stat_pri 07, 2, NO, 0, 0, melee, simple, other, 10, 0.2, 0.2\n"
+			"stat_sec 4, 2, ARROW, 120, 025, missile, simple, other, 10, 0.2, 0.2\n"
 			"stat_pri_armour 0, 1, 0, flesh\n"
 			"stat_mental 2, low, untrained\n"
 			"stat_charge_dist 30\n"
@@ -226,6 +314,7 @@ bool FEdu_EdgeCases::RunTest(const FString& Parameters)
 			"formation 1.2, 1.2, 2.4, 2.4, 3, square\n" // float forms normalized
 			"stat_health 1, 1\n"
 			"stat_pri 7, 2, no, 0, 0, melee, simple, other, 10, 0.2, 0.2\n"
+			"stat_sec 4, 2, arrow, 120, 25, missile, simple, other, 10, 0.2, 0.2\n"
 			"stat_pri_armour 0, 1, 0, flesh\n"
 			"stat_mental 2, low, untrained\n"
 			"stat_charge_dist 30\n"

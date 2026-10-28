@@ -195,6 +195,18 @@ void UUnitRegistrySubsystem::UpdateCachedAttributes(FUnitHandle Handle, const FB
 	}
 }
 
+void UUnitRegistrySubsystem::SetUnitSkirmishDefault(FUnitHandle Handle, bool bInSkirmish)
+{
+	// Phase 3 (spec ranged-stack §3.2, A8): spawn-time default only -- the
+	// runtime toggle surface lands with the Phase 3 data-spine task. Called
+	// from UBattleSpawnLibrary::SpawnUnit right after SetRoster.
+	UE_MT_SCOPED_WRITE_ACCESS(AccessDetector);
+	if (FUnitRuntimeState* State = Units.Find(Handle))
+	{
+		State->bSkirmish = bInSkirmish;
+	}
+}
+
 const FBattleAttributeSnapshot* UUnitRegistrySubsystem::FindCachedAttributes(FUnitHandle Handle) const
 {
 	UE_MT_SCOPED_READ_ACCESS(AccessDetector);

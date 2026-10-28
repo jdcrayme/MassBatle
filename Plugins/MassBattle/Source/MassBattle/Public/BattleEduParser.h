@@ -1,11 +1,13 @@
 // BattleEduParser.h -- pure EDU-format parser/serializer (roadmap R11/B.0
 // pure-math seam: free functions + plain structs, no UObject, fully unit-testable).
 //
-// Schema source of truth: Content/Data/EDU/golden_edu_v1.txt -- 14 field keys per unit
-// (BRIEF §1.8 as corrected by reality during this run):
+// Schema source of truth: Content/Data/EDU/golden_edu_v1.txt -- 15 field keys per unit
+// (14 through Phase 2; Phase 3 adds stat_sec, the ranged-stack brief F3 /
+// spec ranged-stack section 6 touch-point table; golden re-signed per the
+// T0.2 disclosed-re-sign policy):
 //   type, dictionary, category, class, soldier, attributes, formation,
-//   stat_health, stat_pri, stat_pri_armour, stat_mental, stat_charge_dist,
-//   stat_cost, ownership
+//   stat_health, stat_pri, stat_sec, stat_pri_armour, stat_mental,
+//   stat_charge_dist, stat_cost, ownership
 //
 // STRICTNESS (T0.2): unknown fields are rejected loudly (error carries the key
 // and the line number); wrong arity, duplicate fields, and malformed numbers
