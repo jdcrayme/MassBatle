@@ -46,14 +46,42 @@ All five fail at the audit's own subject HEAD, so they are **outside the audit
 series' blast radius** (the series' combat-path changes are value-identical by
 construction and the A/B confirms it behaviorally). Timeline: the engagement run's
 "func 21/21" (status block, 2026-10-27) predates `5e46a1b` "Formation fix"
-(2026-10-28 09:28, +305 lines `BattleSlotAssigner.cpp`, +100 `ServoProcessor.cpp`,
-+126 `FormationSlotResolveProcessor.cpp`) -- that commit is the prime suspect for the
-march/pairing regressions, but root-causing it is its own task and was **deferred**
-(owner's fresh work; not part of the audit mandate).
+(2026-10-28 09:28).
 
-`funcon` (flag-on tier) was **not** run: with 5 scenarios already red flag-off, its
-results would not be interpretable. Re-run both after the formation regression is
-fixed.
+## Follow-up session (same day): bisect + fixes -- 3 of 5 green
+
+A same-day bisect (build+run A/B cycles on this machine, `5b57c88` = 21/21
+verified twice) pinned each failure to a commit and produced `a7a0cd1`:
+
+| Failure | Pinned to | Root cause | Fix | Tier |
+|---|---|---|---|---|
+| CombatSmoke | `c3e0a96` | the record-gated waiter press: formations interpenetrate before the first record, waiter ring targets flip to the far side, pairing starves (paired=0 / 2400 ticks) | gate removed -- unconditional waiter press restored (the delay it targeted is separately addressed by MemberClamp) | GREEN |
+| S4_WidthOverride, S5_MarchRefront | `5e46a1b` | StragglerPace throttles on MAX slot error: a commanded re-front's 12-18 m edge walks floor the anchor at 0.25x for the whole walk | throttle reads the new `MeanSlotErrorM` (block-level dress metric; drags/choke queues still cross DressBreak) | GREEN |
+| worker cvar visibility (hygiene) | `c3e0a96` | plain `GetValueOnAnyThread()` from workers reads the render-thread shadow slot (slot 1); `SetInternal` writes slot 0 only -- runtime flips are invisible to worker gates in `-game -nullrhi` | `GetValueOnAnyThread(true)` (bForceGameThread) = engine-blessed slot-0 read | no functional change in current fixtures |
+
+Tier evidence at `a7a0cd1` (clean tree): **unit 69/69, func 19/21, funcon 19/21**.
+
+## Still deferred: S4_ShieldWall + S5_Mob (melt under defensive intents)
+
+Characterized to the subsystem but not fixed -- needs the owner's design input.
+Symptom: when the DEFENDER unit is idle it now receives defensive intents
+(`c3e0a96`'s demo-fix3 table) and claims the engagement: the defender's own
+counter-pairs work (80+ attacker deaths processed, rosters shrink), but the
+ORDERED attacker unit ends up holding **zero pairs** (unit-split resolution
+census: `U2 valid=0 rolls=0` across the whole 240 s budget). The melt tests
+premise a passive defender; with an active defender the attackers' offensive
+pairing is starved entirely. Verified NOT the cause: the engaged-march halt
+(probe: creep and disable both fail), the waiter gate (already removed), the
+intent table alone (probe: disabling it at `c3e0a96` still fails -- the
+starvation survives), and the worker cvar reads (fixed above; the fixtures
+never flip those cvars at runtime). Starvation mechanism bounded to the
+assign/seam record-pressure bookkeeping under defensive pairing; the probe
+runs that would pin the exact dropped-assignment site are sketched in the
+bisect history (`RESDBG`/`PROBESEEK` instrumentation, removed from this
+commit). Design question for the owner: what "defends itself" (demo-fix3's
+"front rank pairs, presses, and rolls") should mean for a FORMED defender
+facing an ordered attacker -- defensive hold-and-fight vs the current
+seek-the-aggressor-line.
 
 ## Also executed from the audit's deferred list
 
@@ -68,4 +96,5 @@ fixed.
 
 PR-1 (data-driven scenario composition), PR-2 (editor-owned IMC), PR-3 (share tile
 extent), PR-4 (registry-home locomotion maps + assign-pass extraction), and the D-3
-default-value fold-in (owner's nightly, per the movement report's checklist).
+default-value fold-in (owner's nightly, per the movement report's checklist) -- plus
+the ShieldWall/Mob design decision above.
