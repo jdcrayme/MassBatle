@@ -12,7 +12,9 @@
 
 #include "BattleBallistics.h"
 #include "BattleCostGrid.h"
+#include "BattleProjectilePool.h"
 #include "BattleRanged.h"
+#include "Math/RandomStream.h"
 
 namespace
 {
@@ -227,6 +229,350 @@ bool FRanged_LOS::RunTest(const FString& Parameters)
 		const bool B = MarchClear(Grid, FVector2D(-5.f, 2.f), 1.6f, FVector2D(45.f, -8.f), 1.2f, 0.3f);
 		TestEqual(TEXT("march deterministic"), A, B);
 	}
+
+	return true;
+}
+
+// ---------------------------------------------------------------------------
+// T3.3a: Battle.Unit.Ranged.Pool -- the SoA store (RC9: fails closed, never
+// grows; stale generations die; battle reset clears).
+// ---------------------------------------------------------------------------
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRanged_Pool,
+	"Battle.Unit.Ranged.Pool",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FRanged_Pool::RunTest(const FString& Parameters)
+{
+	FBattleProjectilePool Pool;
+	Pool.Reserve(8);
+
+	// Fill to capacity.
+	uint32 Gen = 0;
+	TArray<int32> Slots;
+	for (int32 i = 0; i < 8; ++i)
+	{
+		const int32 S = Pool.Acquire(Gen);
+		TestTrue(TEXT("acquire within capacity"), S != FBattleProjectilePool::InvalidIndex);
+		Slots.Add(S);
+	}
+	TestEqual(TEXT("live count at capacity"), Pool.GetLiveCount(), 8);
+
+	// Beyond capacity: fail closed, count the drop, never grow (RC9).
+	const int32 Over = Pool.Acquire(Gen);
+	TestEqual(TEXT("acquire beyond capacity fails closed"), Over, FBattleProjectilePool::InvalidIndex);
+	TestEqual(TEXT("drop counted"), Pool.GetDrops(), 1);
+	TestEqual(TEXT("capacity unchanged"), Pool.GetCapacity(), 8);
+	TestEqual(TEXT("SoA arrays never grew"), Pool.PosX.Num(), 8);
+
+	// Release one, re-acquire: the SAME slot comes back (LIFO), generation
+	// bumped so the OLD handle is stale.
+	const uint32 OldGen = Pool.GenerationArray[Slots[3]];
+	Pool.Release(Slots[3]);
+	TestEqual(TEXT("release decrements live count"), Pool.GetLiveCount(), 7);
+	const int32 Re = Pool.Acquire(Gen);
+	TestEqual(TEXT("LIFO re-acquire returns the released slot"), Re, Slots[3]);
+	TestEqual(TEXT("generation bumped on release"), Pool.GenerationArray[Re], OldGen + 1);
+	TestFalse(TEXT("stale generation is invalid"), Pool.IsValid(Re, OldGen));
+	TestTrue(TEXT("current generation is valid"), Pool.IsValid(Re, OldGen + 1));
+
+	// A short volley burst: fill, release all, fill again -- the drop counter
+	// only counts genuine overflow. Drain to zero first so every round's
+	// acquires succeed: the fill above left the pool at capacity, and an
+	// Acquire on a full pool fails closed into InvalidIndex (the PosX write
+	// below would RangeCheck-assert on -1 in dev builds).
+	for (int32 S = 0; S < Pool.GetCapacity(); ++S)
+	{
+		if (Pool.IsLive(S))
+		{
+			Pool.Release(S);
+		}
+	}
+	TestEqual(TEXT("drain returns to zero live"), Pool.GetLiveCount(), 0);
+	for (int32 Round = 0; Round < 100; ++Round)
+	{
+		for (int32 i = 0; i < 4; ++i)
+		{
+			const int32 S = Pool.Acquire(Gen);
+			Pool.PosX[S] = static_cast<float>(Round * 4 + i);
+		}
+		for (int32 i = 0; i < 4; ++i)
+		{
+			// Release by scanning live slots (the stepper's iteration shape).
+			for (int32 S = 0; S < Pool.GetCapacity(); ++S)
+			{
+				if (Pool.IsLive(S))
+				{
+					Pool.Release(S);
+					break;
+				}
+			}
+		}
+	}
+	TestEqual(TEXT("churn rounds leave live count 0"), Pool.GetLiveCount(), 0);
+	TestEqual(TEXT("churn rounds add no drops"), Pool.GetDrops(), 1);
+
+	// Battle reset: everything released, generations PRESERVED (stale indices
+	// from a prior battle still die).
+	Pool.Reset();
+	TestEqual(TEXT("reset clears live count"), Pool.GetLiveCount(), 0);
+	TestEqual(TEXT("reset preserves the drop ledger until re-reserve"), Pool.GetDrops(), 1);
+
+	return true;
+}
+
+// ---------------------------------------------------------------------------
+// T3.3b: Battle.Unit.Ranged.AmmoAccounting -- shots == decrements; the unit
+// aggregate == the entity sum; out-of-ammo entities never fire (RC5).
+// ---------------------------------------------------------------------------
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRanged_AmmoAccounting,
+	"Battle.Unit.Ranged.AmmoAccounting",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FRanged_AmmoAccounting::RunTest(const FString& Parameters)
+{
+	FBattleCostGrid Grid;
+	Grid.InitFlat(86, 86, FVector2D::ZeroVector, 3.0f);
+	const FProjectileProfile Arrow = GetProjectileProfile(EBattleProjectileKind::Arrow);
+	FVolleyTargetView Target;
+	Target.PosM = FVector2D(80.f, 0.f);
+	Target.ZM = 1.0f;
+
+	// 16 shooters, randomized reload states over 50 cycles: every emitted
+	// shot decrements exactly one shooter's ammo by exactly one.
+	FRandomStream Rng(20261029u);
+	FUnitHandle OwnerUnit;
+	OwnerUnit.Index = 1u;
+	OwnerUnit.Serial = 1u;
+	TArray<FVolleyShooterView> Shooters;
+	Shooters.SetNum(16);
+	for (int32 i = 0; i < Shooters.Num(); ++i)
+	{
+		Shooters[i].Entity = FMassEntityHandle(i + 1, 1);
+		Shooters[i].Unit = OwnerUnit;
+		Shooters[i].PosM = FVector2D(0.f, static_cast<float>(i - 8) * 1.2f);
+		Shooters[i].EyeZM = 1.6f;
+		Shooters[i].Kind = EBattleProjectileKind::Arrow;
+		Shooters[i].RangeM = 120.f;
+		Shooters[i].Ammo = 25;
+		Shooters[i].ReloadTimer = Rng.FRandRange(0.f, 3.f);
+		Shooters[i].ShotsFired = 0;
+		Shooters[i].Rank = (i < 8) ? 0 : 1; // VolleyRanks default 2: all eligible
+	}
+
+	TArray<FVolleyShot> Shots;
+	int32 TotalShots = 0;
+	for (int32 Cycle = 0; Cycle < 50; ++Cycle)
+	{
+		Shots.Reset();
+		// Advance reloads (the processor's job; emulated deterministically).
+		for (FVolleyShooterView& S : Shooters)
+		{
+			S.ReloadTimer = FMath::Max(0.f, S.ReloadTimer - 0.1f);
+		}
+		const int32 Fired = SelectVolleyShots(Shooters, Target, Arrow, Grid, TArray<FVector2D>(), 1.f, 0, Shots);
+		TotalShots += Fired;
+		TestTrue(TEXT("emitted shots carry launch data"), Fired == 0 || (Shots.Num() == Fired));
+	}
+	TestTrue(TEXT("randomized cycles produce shots"), TotalShots > 0);
+
+	// shots == decrements == ShotsFired sum (RC5).
+	int32 ShotsFiredSum = 0;
+	int32 AmmoSum = 0;
+	for (const FVolleyShooterView& S : Shooters)
+	{
+		ShotsFiredSum += S.ShotsFired;
+		AmmoSum += S.Ammo;
+	}
+	TestEqual(TEXT("shots == total decrements (ShotsFired sum)"), TotalShots, ShotsFiredSum);
+	TestEqual(TEXT("ammo conservation: sum + fired == 16 x 25"), AmmoSum + ShotsFiredSum, 16 * 25);
+
+	// Drain to zero: out-of-ammo entities never fire (no negative ammo, no
+	// reload zombie -- RC5).
+	for (FVolleyShooterView& S : Shooters)
+	{
+		S.Ammo = 0;
+		S.ReloadTimer = 0.f;
+	}
+	Shots.Reset();
+	TestEqual(TEXT("empty quivers never fire"),
+		SelectVolleyShots(Shooters, Target, Arrow, Grid, TArray<FVector2D>(), 1.f, 0, Shots), 0);
+	int32 MinAmmo = 25;
+	for (const FVolleyShooterView& S : Shooters)
+	{
+		MinAmmo = FMath::Min(MinAmmo, static_cast<int32>(S.Ammo));
+	}
+	TestEqual(TEXT("ammo never goes negative"), MinAmmo, 0);
+
+	// Fraction invariants (RC5): -1 non-ranged; 0 at the empty aggregate; the
+	// aggregate == the entity sum.
+	TestEqual(TEXT("fraction -1 for non-ranged"), ComputeAmmoFraction(0, 0, 40), -1.f, 1e-5f);
+	TestEqual(TEXT("fraction 0 at empty aggregate"), ComputeAmmoFraction(0, 25, 40), 0.f, 1e-5f);
+	TestEqual(TEXT("fraction 1 at full"), ComputeAmmoFraction(25 * 40, 25, 40), 1.f, 1e-5f);
+	TestEqual(TEXT("fraction 0.4 mid-band"), ComputeAmmoFraction(25 * 16, 25, 40), 0.4f, 1e-4f);
+
+	return true;
+}
+
+// ---------------------------------------------------------------------------
+// T3.3c: Battle.Unit.Ranged.VolleySelection -- eligibility matrix: rank
+// limits, range window, LOS fire rules (arced frontage vs flat lane, RC2/RC3),
+// friendly-fire holds (A7), reload staggering (RC1).
+// ---------------------------------------------------------------------------
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRanged_VolleySelection,
+	"Battle.Unit.Ranged.VolleySelection",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FRanged_VolleySelection::RunTest(const FString& Parameters)
+{
+	const FProjectileProfile Arrow = GetProjectileProfile(EBattleProjectileKind::Arrow);
+	const FProjectileProfile Bolt = GetProjectileProfile(EBattleProjectileKind::Bolt);
+	FVolleyTargetView Target;
+	Target.PosM = FVector2D(80.f, 0.f);
+	Target.ZM = 1.0f;
+
+	const auto MakeShooter = [&](int32 Index, int32 Rank) -> FVolleyShooterView
+	{
+		FVolleyShooterView S;
+		S.Entity = FMassEntityHandle(Index + 1, 1);
+		FUnitHandle U;
+		U.Index = 1u;
+		U.Serial = 1u;
+		S.Unit = U;
+		S.PosM = FVector2D(0.f, 0.f);
+		S.EyeZM = 1.6f;
+		S.Kind = EBattleProjectileKind::Arrow;
+		S.RangeM = 120.f;
+		S.Ammo = 25;
+		S.ReloadTimer = 0.f;
+		S.ShotsFired = 0;
+		S.Rank = Rank;
+		return S;
+	};
+
+	// -- rank limits (A10): arced fires ranks 0..VolleyRanks-1; flat fires
+	//    rank 0 only.
+	{
+		FBattleCostGrid Grid;
+		Grid.InitFlat(86, 86, FVector2D::ZeroVector, 3.0f);
+		TArray<FVolleyShooterView> Shooters = { MakeShooter(0, 0), MakeShooter(1, 1), MakeShooter(2, 2) };
+		TArray<FVolleyShot> Shots;
+		// VolleyRanks default = 2: ranks 0,1 fire (arced).
+		TestEqual(TEXT("arced fires the front 2 ranks"),
+			SelectVolleyShots(Shooters, Target, Arrow, Grid, TArray<FVector2D>(), 1.f, 0, Shots), 2);
+		// Flat: rank 0 only.
+		Shooters = { MakeShooter(0, 0), MakeShooter(1, 1) };
+		Shots.Reset();
+		TestEqual(TEXT("flat fires the front rank only"),
+			SelectVolleyShots(Shooters, Target, Bolt, Grid, TArray<FVector2D>(), 1.f, 0, Shots), 1);
+	}
+
+	// -- range window: below MinRangeM (default 8) holds; beyond weapon range
+	//    holds; in between fires.
+	{
+		FBattleCostGrid Grid;
+		Grid.InitFlat(86, 86, FVector2D::ZeroVector, 3.0f);
+		FVolleyTargetView Near = Target;
+		Near.PosM = FVector2D(6.f, 0.f); // inside MinRangeM
+		TArray<FVolleyShooterView> Shooters = { MakeShooter(0, 0) };
+		TArray<FVolleyShot> Shots;
+		TestEqual(TEXT("too close holds"),
+			SelectVolleyShots(Shooters, Near, Arrow, Grid, TArray<FVector2D>(), 1.f, 0, Shots), 0);
+		FVolleyTargetView Far = Target;
+		Far.PosM = FVector2D(121.f, 0.f); // beyond the 120 m EDU range
+		TestEqual(TEXT("too far holds"),
+			SelectVolleyShots(Shooters, Far, Arrow, Grid, TArray<FVector2D>(), 1.f, 0, Shots), 0);
+		TestEqual(TEXT("in window fires"),
+			SelectVolleyShots(Shooters, Target, Arrow, Grid, TArray<FVector2D>(), 1.f, 0, Shots), 1);
+	}
+
+	// -- the trajectory-class FIRE RULE over terrain (RC2 + RC3): a hill
+	//    mid-lane holds the flat shot (whole-lane march) but NOT the arced
+	//    shot (frontage-only march -- arrows go over).
+	{
+		FBattleCostGrid Grid;
+		Grid.InitFlat(86, 86, FVector2D::ZeroVector, 3.0f);
+		StampHill(Grid, FVector2D(38.f, -3.f), FVector2D(44.f, 3.f), 5.f);
+		TArray<FVolleyShooterView> Shooters = { MakeShooter(0, 0) };
+		TArray<FVolleyShot> Shots;
+		TestEqual(TEXT("arced fires over a mid-lane hill (frontage clear)"),
+			SelectVolleyShots(Shooters, Target, Arrow, Grid, TArray<FVector2D>(), 1.f, 0, Shots), 1);
+		TestEqual(TEXT("flat holds on a mid-lane hill (lane blocked)"),
+			SelectVolleyShots(Shooters, Target, Bolt, Grid, TArray<FVector2D>(), 1.f, 0, Shots), 0);
+	}
+
+	// -- friendly fire (A7): flat holds with a friendly body in the lane
+	//    corridor; arced holds when friends stand at the impact zone.
+	{
+		FBattleCostGrid Grid;
+		Grid.InitFlat(86, 86, FVector2D::ZeroVector, 3.0f);
+		TArray<FVolleyShooterView> Shooters = { MakeShooter(0, 0) };
+		TArray<FVolleyShot> Shots;
+
+		// Flat: a friendly at the lane midpoint (corridor half-width ~1.3 m).
+		TArray<FVector2D> LaneBlockers = { FVector2D(40.f, 0.5f) };
+		TestEqual(TEXT("flat holds with a friendly in the lane"),
+			SelectVolleyShots(Shooters, Target, Bolt, Grid, LaneBlockers, 1.f, 0, Shots), 0);
+		// The same friendly far off the lane does not hold fire.
+		LaneBlockers = { FVector2D(40.f, 12.f) };
+		TestEqual(TEXT("flat fires past an off-lane friendly"),
+			SelectVolleyShots(Shooters, Target, Bolt, Grid, LaneBlockers, 1.f, 0, Shots), 1);
+
+		// Arced: a friendly at the impact zone holds (tolerance 0); off-zone
+		// does not.
+		TArray<FVector2D> ZoneBlockers = { FVector2D(80.f, 0.5f) };
+		TestEqual(TEXT("arced holds with a friendly at the impact zone"),
+			SelectVolleyShots(Shooters, Target, Arrow, Grid, ZoneBlockers, 1.f, 0, Shots), 0);
+		ZoneBlockers = { FVector2D(80.f, 25.f) };
+		TestEqual(TEXT("arced fires with friendlies far from the zone"),
+			SelectVolleyShots(Shooters, Target, Arrow, Grid, ZoneBlockers, 1.f, 0, Shots), 1);
+	}
+
+	// -- reload staggering (RC1): a spent shooter sits out the reload cycle.
+	{
+		FBattleCostGrid Grid;
+		Grid.InitFlat(86, 86, FVector2D::ZeroVector, 3.0f);
+		TArray<FVolleyShooterView> Shooters = { MakeShooter(0, 0) };
+		TArray<FVolleyShot> Shots;
+		TestEqual(TEXT("first cycle fires"),
+			SelectVolleyShots(Shooters, Target, Arrow, Grid, TArray<FVector2D>(), 1.f, 0, Shots), 1);
+		TestEqual(TEXT("reload timer set from the cvar"),
+			Shooters[0].ReloadTimer, FRangedCVars::ReloadInterval(), 1e-4f);
+		Shots.Reset();
+		TestEqual(TEXT("reloading shooter sits out"),
+			SelectVolleyShots(Shooters, Target, Arrow, Grid, TArray<FVector2D>(), 1.f, 0, Shots), 0);
+	}
+
+	return true;
+}
+
+// ---------------------------------------------------------------------------
+// T3.3d: Battle.Unit.Ranged.SkirmishMath -- the RC7 truth table: break
+// trigger, hysteresis resume, hold-fire suppresses fire but not retreat.
+// ---------------------------------------------------------------------------
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRanged_SkirmishMath,
+	"Battle.Unit.Ranged.SkirmishMath",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FRanged_SkirmishMath::RunTest(const FString& Parameters)
+{
+	const float Break = 25.f;
+	const float Resume = 32.5f; // 1.3x
+
+	// Inside the break distance: retreat regardless of the fire toggle.
+	TestEqual(TEXT("inside break: retreat"), EvaluateSkirmish(20.f, true, true, false, Break, Resume), ESkirmishDecision::Retreat);
+	TestEqual(TEXT("inside break with hold-fire: still retreat"), EvaluateSkirmish(20.f, true, false, false, Break, Resume), ESkirmishDecision::Retreat);
+
+	// Past break but inside the resume band while retreating: keep retreating
+	// (hysteresis).
+	TestEqual(TEXT("hysteresis holds the retreat"), EvaluateSkirmish(30.f, true, true, true, Break, Resume), ESkirmishDecision::Retreat);
+
+	// Past resume: fire when ready + fire-at-will; hold otherwise.
+	TestEqual(TEXT("clear + ready + willing: fire"), EvaluateSkirmish(40.f, true, true, true, Break, Resume), ESkirmishDecision::Fire);
+	TestEqual(TEXT("clear + hold-fire: hold"), EvaluateSkirmish(40.f, true, false, true, Break, Resume), ESkirmishDecision::Hold);
+	TestEqual(TEXT("clear + not reloaded: hold"), EvaluateSkirmish(40.f, false, true, true, Break, Resume), ESkirmishDecision::Hold);
+
+	// Not retreating and past break: no hysteresis latch needed.
+	TestEqual(TEXT("past break, not retreating: fire"), EvaluateSkirmish(30.f, true, true, false, Break, Resume), ESkirmishDecision::Fire);
 
 	return true;
 }

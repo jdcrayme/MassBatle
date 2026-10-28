@@ -68,6 +68,7 @@ struct FVolleyShooterView
 	FVector2D PosM = FVector2D::ZeroVector;   // planar position, meters
 	float EyeZM = 1.6f;                       // launch height, meters
 	EBattleProjectileKind Kind = EBattleProjectileKind::None;
+	float RangeM = 0.f;                       // weapon range, meters (fragment-stamped)
 	int16 Ammo = 0;
 	float ReloadTimer = 0.f;
 	uint16 ShotsFired = 0;

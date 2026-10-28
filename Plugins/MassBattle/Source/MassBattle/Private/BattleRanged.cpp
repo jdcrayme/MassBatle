@@ -1,9 +1,10 @@
 // BattleRanged.cpp -- the Battle.Ranged.* CVAR block (spec ranged-stack
-// §4.11) + the ranged seam bodies. Task 0 ships the CVAR block live and the
-// seam functions as STUBS (the Phase 2 task-0 pattern: CI-visible gates,
-// empty math); the seam task replaces the stubs with the implementations
-// locked by T3.3. Defaults are A6 placeholders (ADR-30).
+// §4.11) + the ranged seam bodies (volley selection, ammo accounting,
+// skirmish decision -- T3.3-locked). The task-0 stubs are gone; the bodies
+// consume the ballistics seam (BattleBallistics.h) and never touch worlds or
+// fragments. Defaults are A6 placeholders (ADR-30).
 #include "BattleRanged.h"
+#include "BattleBallistics.h"
 #include "HAL/IConsoleManager.h"
 
 // -- Battle.Ranged.* CVAR block (spec §4.11; defaults are A6 placeholders) --
@@ -138,7 +139,27 @@ FProjectileProfile GetProjectileProfile(EBattleProjectileKind Kind)
 	return P;
 }
 
-// -- Seam stubs (task 0; replaced by the seam task, T3.3-locked) --
+// -- Seam bodies (the task-0 stubs replaced; T3.3-locked) --
+
+namespace
+{
+	/** Point-to-segment distance, 2D (the flat-lane corridor test, spec
+	 *  §4.5). Pure math, no allocation. */
+	float PointSegmentDist2D(const FVector2D& Point, const FVector2D& A, const FVector2D& B)
+	{
+		const FVector2D AB = B - A;
+		const float LenSq = AB.SizeSquared();
+		if (LenSq <= 1e-8f)
+		{
+			return FVector2D::Distance(Point, A);
+		}
+		const float T = FVector2D::DotProduct(Point - A, AB) / LenSq;
+		const float Clamped = FMath::Clamp(T, 0.f, 1.f);
+		return FVector2D::Distance(Point, A + AB * Clamped);
+	}
+
+	constexpr float VolleyBodyRadiusM = 0.4f; // the 40 cm body radius (B-1 family: one named constant per seam)
+}
 
 int32 SelectVolleyShots(
 	TArray<FVolleyShooterView>& InOutShooters,
@@ -150,16 +171,110 @@ int32 SelectVolleyShots(
 	int32 FriendlyImpactTolerance,
 	TArray<FVolleyShot>& OutShots)
 {
-	// STUB: the volley task implements eligibility + solving + dispersion.
-	(void)InOutShooters;
-	(void)Target;
-	(void)Profile;
-	(void)Grid;
-	(void)FriendlyLaneBlockersM;
-	(void)AccuracyMult;
-	(void)FriendlyImpactTolerance;
-	(void)OutShots;
-	return 0;
+	// Rank limit (A10): arced profiles fire from the front VolleyRanks ranks;
+	// flat profiles from the front rank only (the fixed rule).
+	const int32 MaxRank = Profile.bIndirect ? FMath::Max(1, FRangedCVars::VolleyRanks()) : 1;
+	const float MinRangeM = FRangedCVars::MinRangeM();
+	const float GravityMps2 = FBallisticsConstants::GravityMps2 * Profile.GravityScale;
+
+	// Arced impact-zone estimate (A7): the dispersion cone scaled to the
+	// horizontal distance, plus the hit radius. Friends inside -> hold when
+	// the count exceeds the tolerance.
+	const float HorizDist = FVector2D::Distance(InOutShooters.Num() > 0 ? InOutShooters[0].PosM : FVector2D::ZeroVector, Target.PosM);
+	const float ConeRad = FMath::DegreesToRadians(FMath::Max(Profile.DispersionDeg, 0.01f));
+	const float ImpactZoneRadiusM = (InOutShooters.Num() > 0 ? HorizDist : 0.f) * FMath::Tan(ConeRad) + Profile.HitRadiusM;
+	int32 FriendsInZone = 0;
+	for (const FVector2D& Friend : FriendlyLaneBlockersM)
+	{
+		if (FVector2D::Distance(Friend, Target.PosM) <= ImpactZoneRadiusM)
+		{
+			++FriendsInZone;
+		}
+	}
+	const bool bArcedHold = Profile.bIndirect && FriendsInZone > FriendlyImpactTolerance;
+
+	// Flat-lane corridor (A7): any friendly body inside the corridor holds
+	// fire. Corridor half-width = 2 body radii + hit radius.
+	const float CorridorHalfM = 2.f * VolleyBodyRadiusM + Profile.HitRadiusM;
+
+	int32 ShotCount = 0;
+	for (FVolleyShooterView& Shooter : InOutShooters)
+	{
+		// -- eligibility (RC1), cheapest tests first --
+		if (Shooter.ReloadTimer > 0.f || Shooter.Ammo <= 0 || Shooter.Rank >= MaxRank)
+		{
+			continue;
+		}
+		const float Dist = FVector2D::Distance(Shooter.PosM, Target.PosM);
+		if (Dist <= MinRangeM || Dist > Shooter.RangeM)
+		{
+			continue;
+		}
+
+		// -- LOS (RC3): arced checks the frontage segment only; flat checks
+		//    the whole lane (the trajectory-class FIRE RULE, RC2).
+		bool bClear = false;
+		if (Profile.bIndirect)
+		{
+			const FVector2D Dir = (Target.PosM - Shooter.PosM).GetSafeNormal();
+			const FVector2D FrontageEnd = Shooter.PosM + Dir * FRangedCVars::FrontageClearM();
+			bClear = FBallisticsMath::MarchClear(Grid, Shooter.PosM, Shooter.EyeZM, FrontageEnd, Shooter.EyeZM, 0.3f);
+		}
+		else
+		{
+			bClear = FBallisticsMath::MarchClear(Grid, Shooter.PosM, Shooter.EyeZM, Target.PosM, Target.ZM, 0.3f);
+			if (bClear)
+			{
+				for (const FVector2D& Friend : FriendlyLaneBlockersM)
+				{
+					if (PointSegmentDist2D(Friend, Shooter.PosM, Target.PosM) <= CorridorHalfM)
+					{
+						bClear = false;
+						break;
+					}
+				}
+			}
+		}
+		if (!bClear)
+		{
+			continue;
+		}
+
+		// -- arced friendly-zone hold (A7) --
+		if (Profile.bIndirect && bArcedHold)
+		{
+			continue;
+		}
+
+		// -- solve + disperse (RC1/RC2) --
+		const FBallisticSolution Solution = FBallisticsMath::SolveLaunch(
+			Shooter.PosM, Shooter.EyeZM, Target.PosM, Target.ZM, Profile.MuzzleSpeedMps, GravityMps2);
+		if (!Solution.bValid)
+		{
+			continue; // out of envelope: hold, never force-fire
+		}
+		const uint32 Seed = FBallisticsMath::ShotSeed(
+			Shooter.Entity.Index, Shooter.Entity.SerialNumber, Shooter.ShotsFired);
+		const float ConeDeg = Profile.DispersionDeg / FMath::Max(AccuracyMult, 0.05f);
+		const FVector LaunchDir = FBallisticsMath::PerturbDirection(Solution.LaunchDir, ConeDeg, Seed);
+
+		FVolleyShot Shot;
+		Shot.Entity = Shooter.Entity;
+		Shot.Unit = Shooter.Unit;
+		Shot.Kind = Shooter.Kind;
+		Shot.LaunchPosM = FVector(Shooter.PosM.X, Shooter.PosM.Y, Shooter.EyeZM);
+		Shot.LaunchDir = LaunchDir;
+		Shot.FlightTimeS = Solution.FlightTimeS;
+		Shot.Seed = Seed;
+		OutShots.Add(Shot);
+		++ShotCount;
+
+		// -- mutate the view: the accounting IS the shot (RC5) --
+		--Shooter.Ammo;
+		Shooter.ReloadTimer = FRangedCVars::ReloadInterval();
+		++Shooter.ShotsFired;
+	}
+	return ShotCount;
 }
 
 float ComputeAmmoFraction(int32 AmmoSum, int32 InitialAmmo, int32 RosterSize)
@@ -175,12 +290,16 @@ ESkirmishDecision EvaluateSkirmish(
 	float NearestEnemyDistM, bool bReloadReady, bool bFireAtWill,
 	bool bRetreating, float BreakDistM, float ResumeDistM)
 {
-	// STUB: the skirmish task implements the hysteresis decision (RC7).
-	(void)NearestEnemyDistM;
-	(void)bReloadReady;
-	(void)bFireAtWill;
-	(void)bRetreating;
-	(void)BreakDistM;
-	(void)ResumeDistM;
-	return ESkirmishDecision::Hold;
+	// RC7: retreat triggers inside the break distance regardless of the fire
+	// toggle (hold-fire is not hold-ground); hysteresis holds the retreat
+	// until the resume distance; fire resumes only past it.
+	if (NearestEnemyDistM <= BreakDistM)
+	{
+		return ESkirmishDecision::Retreat;
+	}
+	if (bRetreating && NearestEnemyDistM < ResumeDistM)
+	{
+		return ESkirmishDecision::Retreat;
+	}
+	return (bReloadReady && bFireAtWill) ? ESkirmishDecision::Fire : ESkirmishDecision::Hold;
 }
