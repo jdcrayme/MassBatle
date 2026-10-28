@@ -98,16 +98,15 @@ void UCombatResolutionProcessor::Execute(FMassEntityManager& EntityManager, FMas
 					+ Pair.DefenderArmor * FMeleeMath::ArmorMultiplier(Stats[i].bArmorPiercing != 0);
 				const float P = FMeleeMath::HitChance(Attack, Defense);
 
-				// Roll: deterministic per-entity hash (the worker cannot touch
-				// the game-thread RNG registry -- the A13 deviation logged in
-				// the progress log; seed-derived, no wall-clock). The tick
-				// input is the pair's OWN roll count -- GFrameCounter differs
-				// across two runs of the same seed (T2.8 would diverge); a
-				// per-entity count is run-invariant.
-				const uint32 H = (Context.GetEntity(i).Index * 2654435761u)
-					^ (static_cast<uint32>(Pair.RollCount) * 40503u)
-					^ (static_cast<uint32>(Context.GetEntity(i).SerialNumber) * 2685821657u);
-				const float Roll = static_cast<float>(H & 0xFFFFFFu) / 16777215.f;
+				// Roll: deterministic per-entity hash (A13: the worker cannot
+				// touch the game-thread RNG registry; seed-derived, no
+				// wall-clock; the tick input is the pair's OWN roll count --
+				// GFrameCounter differs across two runs of the same seed and
+				// would diverge T2.8). The hash lives in FMeleeMath beside
+				// the stagger hash (B-2: one home for the Knuth multipliers).
+				const float Roll = FMeleeMath::CombatRoll01(
+					Context.GetEntity(i).Index, Context.GetEntity(i).SerialNumber,
+					static_cast<uint32>(Pair.RollCount));
 				++Pair.RollCount;
 				const bool bLanded = Roll < P * FMath::Max(0.f, Stats[i].Lethality);
 

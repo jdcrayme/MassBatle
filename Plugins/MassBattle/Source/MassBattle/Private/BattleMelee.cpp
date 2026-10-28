@@ -70,6 +70,18 @@ namespace FMeleeMath
 		return Frac * FMath::Max(0.f, AttackInterval);
 	}
 
+	float CombatRoll01(uint32 EntityIndex, uint32 EntitySerial, uint32 RollCount)
+	{
+		// Same multiply-xor family as StaggeredPhaseOffset (the Knuth
+		// golden-ratio multiplier has ONE home here). Inputs: the striker's
+		// handle + the pair's own roll count (A13: no wall-clock, no
+		// GFrameCounter -- two runs of one seed agree).
+		const uint32 H = (EntityIndex * 2654435761u)
+			^ (RollCount * 40503u)
+			^ (EntitySerial * 2685821657u);
+		return static_cast<float>(H & 0xFFFFFFu) / 16777215.f;
+	}
+
 	float RecoveryWindow(float AttackInterval)
 	{
 		return FMeleeMathConstants::RecoveryFraction * FMath::Max(0.f, AttackInterval);
