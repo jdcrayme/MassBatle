@@ -130,6 +130,40 @@
   (verbatim above); archetype count stable across all spawns at this tier (two-row
   world=4; Task 0's isolated-world probe unchanged).
 
+## Task 2 -- ballistics + LOS seams on the machine (T3.1/T3.2 ratification)
+
+- [task2.1] T3.1/T3.2 ratified on the machine, NO golden drift: `Battle.Unit.Ranged.Ballistics`
+  + `Battle.Unit.Ranged.LOS` both `Result={Success}` (unit tier 76/76 after the additions;
+  `Tools/CI/last_run/unit.log`). The kickoff's closed-form checks (1e-3/1e-4 tolerances)
+  held under the same-machine compiler -- no re-sign, nothing disclosed.
+- [task2.2] The two DDA cell-corner cases added to the LOS test (the cases the kickoff
+  could not hand-verify), on the exact test grid (origin -129, 3 m cells; world (3,3) is
+  the shared corner of cells (43,43)/(43,44)/(44,43)/(44,44)); lane (0,0)->(30,30) steps
+  1.5 m (29 samples), straddle stations (60/29, 60/29) with bilinear tx=ty=0.1897 and
+  (90/29, 90/29) with tx=ty=0.5345 -- a corner-adjacent hill blends at w=0.1537/0.2488:
+  - Case A (single corner-touching hill cell, 10 m): blocks through the corner bleed
+    alone (2.49 m at the second straddle > ray 1.6 + clearance 0.3); 2 m control clears
+    (0.50 m).
+  - Case B (the diagonal keyhole: two hill cells touching ONLY at the corner): a pure
+    cell-DDA would advance (43,43) -> (44,44) and enter neither hill; the sub-cell
+    march's bilinear read taps both (3.07 m at the first straddle) -> blocked; 2 m
+    control clears (0.61 m). All four asserts green first run -- hand-computed
+    expectations matched machine behavior.
+- [task2.3] SampleHeight bilinear behavior recorded (the net-new grid API's first live
+  evidence; the test now prints a measured lattice through a synthetic 4 m hill cell
+  (46,46) at 1.5 m spacing, verbatim from `Tools/CI/last_run/unit.log`):
+  ```
+  SampleHeight lattice y=+7.5 : 0.000 0.000 0.000 0.000 0.000
+  SampleHeight lattice y=+9.0 : 0.000 1.000 2.000 1.000 0.000
+  SampleHeight lattice y=+10.5: 0.000 2.000 4.000 2.000 0.000
+  SampleHeight lattice y=+12.0: 0.000 1.000 2.000 1.000 0.000
+  SampleHeight lattice y=+13.5: 0.000 0.000 0.000 0.000 0.000
+  ```
+  Reads as: exact (4.000) at the hill cell's center, the bilinear tent half-step out
+  (2.000), quarter height (1.000) at the four shared cell corners, 0 outside the
+  neighbor ring; outside the grid reads 0 (GetHeight's bounds rule, asserted by the
+  existing fade case). The measured table matches the analytic blend exactly.
+
 ## Open items carried
 
 - S4_ShieldWall / S5_Mob melts: pre-existing, owned by the phase-2 dossier's deferred

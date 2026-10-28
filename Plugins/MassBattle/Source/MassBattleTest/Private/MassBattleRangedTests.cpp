@@ -220,6 +220,47 @@ bool FRanged_LOS::RunTest(const FString& Parameters)
 	TestFalse(TEXT("a 12 m mid-hill blocks the rising lane"),
 		MarchClear(Grid, FVector2D(0.f, 0.f), 1.6f, FVector2D(50.f, 0.f), 20.f, 0.3f));
 
+	// -- DDA boundary cases: cell-corner crossings (task 2; the two cases
+	//    the kickoff patch could not hand-verify). Grid geometry is exact
+	//    here: origin -129, 3 m cells, so cell (44,43) spans x [3,6) y [0,3)
+	//    and world (3,3) is the shared corner of cells
+	//    (43,43)/(43,44)/(44,43)/(44,44). The march steps 1.5 m (29 samples
+	//    on the 30 m diagonal); the stations straddling the corner are
+	//    (60/29, 60/29) -- cell (43,43), bilinear tx=ty=0.1897 -- and
+	//    (90/29, 90/29) -- cell (44,44), tx=ty=0.5345. A corner-adjacent
+	//    hill cell therefore blends into the read at w = 0.1897*0.8103 =
+	//    0.1537 (first straddle) and 0.5345*0.4655 = 0.2488 (second).
+	{
+		FBattleCostGrid CGrid;
+		CGrid.InitFlat(86, 86, FVector2D::ZeroVector, 3.0f);
+
+		// Case A: ONE hill cell whose only contact with the diagonal lane is
+		// the corner (3,3). 10 m blends to 2.49 m at the second straddling
+		// station -- above the 1.6 m ray + 0.3 m clearance -> blocked through
+		// the corner bleed alone. A 2 m hill blends to 0.50 m -> clear.
+		CGrid.CellHeight[CGrid.IndexOf(44, 43)] = 10.f;
+		TestFalse(TEXT("corner case A: a 10 m hill cell blocks through its corner bleed"),
+			MarchClear(CGrid, FVector2D(0.f, 0.f), 1.6f, FVector2D(30.f, 30.f), 1.6f, 0.3f));
+		CGrid.CellHeight[CGrid.IndexOf(44, 43)] = 2.f;
+		TestTrue(TEXT("corner case A control: a 2 m hill cell at the same corner is clear"),
+			MarchClear(CGrid, FVector2D(0.f, 0.f), 1.6f, FVector2D(30.f, 30.f), 1.6f, 0.3f));
+
+		// Case B: the diagonal keyhole -- two hill cells touching ONLY at the
+		// shared corner (3,3). A pure cell-DDA would advance (43,43) ->
+		// (44,44) on the simultaneous X/Y crossing and enter NEITHER hill;
+		// the sub-cell march's bilinear read taps BOTH hills at the first
+		// straddle station (10 m * 2 * 0.1537 = 3.07 m) -> blocked. At 2 m
+		// the blend is 0.61 m -> clear.
+		CGrid.CellHeight[CGrid.IndexOf(44, 43)] = 10.f;
+		CGrid.CellHeight[CGrid.IndexOf(43, 44)] = 10.f;
+		TestFalse(TEXT("corner case B: diagonal hills touching at a corner cannot be shot between"),
+			MarchClear(CGrid, FVector2D(0.f, 0.f), 1.6f, FVector2D(30.f, 30.f), 1.6f, 0.3f));
+		CGrid.CellHeight[CGrid.IndexOf(44, 43)] = 2.f;
+		CGrid.CellHeight[CGrid.IndexOf(43, 44)] = 2.f;
+		TestTrue(TEXT("corner case B control: 2 m diagonal hills leave the keyhole open"),
+			MarchClear(CGrid, FVector2D(0.f, 0.f), 1.6f, FVector2D(30.f, 30.f), 1.6f, 0.3f));
+	}
+
 	// -- bilinear SampleHeight: exact at a cell center, averaged at a corner.
 	{
 		FBattleCostGrid HGrid;
@@ -233,6 +274,22 @@ bool FRanged_LOS::RunTest(const FString& Parameters)
 		// A corner between the 4 m cell and three flat cells averages ~1 m.
 		const FVector2D Corner = Center + FVector2D(1.5f, 1.5f);
 		TestEqual(TEXT("SampleHeight bilinear at a cell corner"), HGrid.SampleHeight(Corner), 1.f, 1e-3f);
+
+		// Task 2 evidence: the measured bilinear tent over the synthetic
+		// 4 m hill cell, sampled on a 1.5 m lattice through the center and
+		// the shared corners (the grid API's first live record; verbatim in
+		// the phase progress log).
+		for (int32 Row = 0; Row < 5; ++Row)
+		{
+			const float Y = Center.Y + (Row - 2) * 1.5f;
+			FString Line;
+			for (int32 Col = 0; Col < 5; ++Col)
+			{
+				const float X = Center.X + (Col - 2) * 1.5f;
+				Line += FString::Printf(TEXT("%s%.3f"), Col > 0 ? TEXT(" ") : TEXT(""), HGrid.SampleHeight(FVector2D(X, Y)));
+			}
+			AddInfo(FString::Printf(TEXT("SampleHeight lattice y=%+.1f: %s"), Y, *Line));
+		}
 	}
 
 	// -- march determinism: two identical calls agree.
