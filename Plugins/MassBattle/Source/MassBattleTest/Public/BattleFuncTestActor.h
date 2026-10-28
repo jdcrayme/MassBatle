@@ -636,6 +636,44 @@ private:
 };
 
 // ---------------------------------------------------------------------------
+// Phase 3 task 0: T3.4/T3.5 gate SKELETONS (fail-by-design until the ranged
+// pipeline tasks land; counted + listed in the phase-3 progress log -- the
+// Phase 2 task-0 pattern, with the audit's C-6 lesson applied: no perf stub
+// ships, T3.6 lands as a fixture + measured metrics with its task). The
+// implementing tasks replace these actors with the real scenario machines
+// (spec ranged-stack section 5).
+// ---------------------------------------------------------------------------
+UCLASS()
+class MASSBATTLETEST_API AS6VolleyTest : public AFunctionalTest
+{
+	GENERATED_BODY()
+
+public:
+	AS6VolleyTest();
+
+	void BeginTest();
+	void CompleteTest(EFunctionalTestResult TestResult, const FString& Message);
+	virtual void StartTest() override;
+	virtual void Tick(float DeltaSeconds) override;
+	virtual bool IsReady_Implementation() override { return true; }
+};
+
+UCLASS()
+class MASSBATTLETEST_API ASkirmishBehaviorTest : public AFunctionalTest
+{
+	GENERATED_BODY()
+
+public:
+	ASkirmishBehaviorTest();
+
+	void BeginTest();
+	void CompleteTest(EFunctionalTestResult TestResult, const FString& Message);
+	virtual void StartTest() override;
+	virtual void Tick(float DeltaSeconds) override;
+	virtual bool IsReady_Implementation() override { return true; }
+};
+
+// ---------------------------------------------------------------------------
 // S-scenario actor factory registry -- deterministic, reflection-free class
 // lookup for the automation harness (FindObject with /Script/ paths and
 // TObjectIterator both failed to resolve fresh C++ classes in -game processes

@@ -5763,3 +5763,97 @@ namespace
 	}
 	const FBattleFuncTestRegistry::FRegistrar GRegDetTwoRun(TEXT("ADeterminismTwoRunTest"), &MakeDeterminismTwoRunTest);
 }
+
+// ---------------------------------------------------------------------------
+// Phase 3 task 0: T3.4/T3.5 gate skeletons (fail-by-design until the ranged
+// pipeline tasks land). The implementing task replaces these bodies with the
+// real scenario machines (spec ranged-stack section 5).
+// ---------------------------------------------------------------------------
+
+AS6VolleyTest::AS6VolleyTest()
+{
+	TimeLimit = 180.f;
+	TimesUpResult = EFunctionalTestResult::Error;
+}
+
+void AS6VolleyTest::BeginTest()
+{
+	SetActorTickEnabled(true);
+	PrimaryActorTick.bCanEverTick = true;
+	bIsRunning = true;
+	Result = EFunctionalTestResult::Running;
+}
+
+void AS6VolleyTest::CompleteTest(EFunctionalTestResult TestResult, const FString& Message)
+{
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S6_Volley %s %s"),
+		TestResult == EFunctionalTestResult::Succeeded ? TEXT("PASS") : TEXT("FAIL"), *Message);
+	Result = TestResult;
+	bIsRunning = false;
+	SetActorTickEnabled(false);
+}
+
+void AS6VolleyTest::StartTest()
+{
+	// SKELETON: the S6 scenario (dispersion, LOS, friendly-fire, ammo
+	// accounting in one scenario) lands with the Phase 3 scenario task.
+	CompleteTest(EFunctionalTestResult::Error,
+		TEXT("skeleton: S6_Volley lands with the phase-3 scenario task (T3.4)"));
+}
+
+void AS6VolleyTest::Tick(float DeltaSeconds)
+{
+	// Nothing to step while the skeleton stands.
+}
+
+ASkirmishBehaviorTest::ASkirmishBehaviorTest()
+{
+	TimeLimit = 180.f;
+	TimesUpResult = EFunctionalTestResult::Error;
+}
+
+void ASkirmishBehaviorTest::BeginTest()
+{
+	SetActorTickEnabled(true);
+	PrimaryActorTick.bCanEverTick = true;
+	bIsRunning = true;
+	Result = EFunctionalTestResult::Running;
+}
+
+void ASkirmishBehaviorTest::CompleteTest(EFunctionalTestResult TestResult, const FString& Message)
+{
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SkirmishBehavior %s %s"),
+		TestResult == EFunctionalTestResult::Succeeded ? TEXT("PASS") : TEXT("FAIL"), *Message);
+	Result = TestResult;
+	bIsRunning = false;
+	SetActorTickEnabled(false);
+}
+
+void ASkirmishBehaviorTest::StartTest()
+{
+	// SKELETON: the skirmish scenario (break/resume/hysteresis, hold-fire
+	// still retreats, player-order override) lands with the Phase 3 scenario
+	// task.
+	CompleteTest(EFunctionalTestResult::Error,
+		TEXT("skeleton: SkirmishBehavior lands with the phase-3 scenario task (T3.5)"));
+}
+
+void ASkirmishBehaviorTest::Tick(float DeltaSeconds)
+{
+	// Nothing to step while the skeleton stands.
+}
+
+namespace
+{
+	AFunctionalTest* MakeS6VolleyTest(UWorld* World)
+	{
+		return World->SpawnActor<AS6VolleyTest>();
+	}
+	const FBattleFuncTestRegistry::FRegistrar GRegS6Volley(TEXT("AS6VolleyTest"), &MakeS6VolleyTest);
+
+	AFunctionalTest* MakeSkirmishBehaviorTest(UWorld* World)
+	{
+		return World->SpawnActor<ASkirmishBehaviorTest>();
+	}
+	const FBattleFuncTestRegistry::FRegistrar GRegSkirmishBehavior(TEXT("ASkirmishBehaviorTest"), &MakeSkirmishBehaviorTest);
+}

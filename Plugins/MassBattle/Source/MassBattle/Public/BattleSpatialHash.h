@@ -2,9 +2,10 @@
 // arch §7.1; task 5). Game-thread rebuild each tick from end-of-last-tick
 // transforms via a two-pass counting sort into preallocated arrays (EC9: zero
 // per-tick allocation in the steady fight -- arrays grow at battle start
-// only). QueryCircle serves COVERAGE and MOB TARGETING only -- formed-fight
-// targeting reads defender slot tables (data, not proximity; arch §7.1):
-// lanes never do circle queries.
+// only). QueryCircle serves COVERAGE, MOB TARGETING, and (Phase 3, ADR-31)
+// PROJECTILE lane/impact queries -- formed-fight targeting reads defender
+// slot tables (data, not proximity; arch §7.1): lanes never do circle
+// queries.
 #pragma once
 
 #include "CoreMinimal.h"
@@ -13,12 +14,21 @@
 #include "BattleTypes.h"
 #include "BattleSpatialHash.generated.h"
 
+/** Hash-entry flag bits (spec ranged-stack §3.3). Phase 3 defines the first
+ *  bit (the field was "reserved for ranged/LOD" since Phase 2); LOD bands
+ *  extend this set in Phase 5. */
+enum class ECombatHashFlags : uint8
+{
+	None = 0,
+	RangedCapable = 1 << 0   /**< Loadout-stamped: ranged-capable entity (targeting priority + impact debug). */
+};
+
 /** One hash entry (spec §3.3): packed, blittable, sorted by cell. */
 struct FBattleHashEntry
 {
 	FMassEntityHandle Entity;
 	FUnitHandle Unit;
-	/** ECombatHashFlags bits (currently none; reserved for ranged/LOD). */
+	/** ECombatHashFlags bits. */
 	uint8 Flags = 0;
 	/** Body radius, centimeters (fact 1.9: 40 cm infantry). */
 	uint8 RadiusCm = 40;

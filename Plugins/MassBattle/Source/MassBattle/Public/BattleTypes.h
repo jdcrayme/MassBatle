@@ -43,6 +43,18 @@ enum class EBattleWeaponReach : uint8
 	Pike = 4
 };
 
+/** Projectile class (spec ranged-stack §3.1): the ranged discriminator is a
+ *  fragment VALUE, not a composition tag -- bow and crossbow units share one
+ *  ranged-capable composition (archetype discipline, spec §3.1); the profile
+ *  table (BattleRanged.h) keys speed/dispersion/AP posture off this enum. */
+UENUM(BlueprintType)
+enum class EBattleProjectileKind : uint8
+{
+	None = 0,
+	Arrow = 1,   // arced: indirect-capable, fires over a friendly frontage
+	Bolt = 2     // flat: high-speed solution, lane-gated (spec §4.2)
+};
+
 /** Plain-struct mirror of the closed GAS attribute set (arch §10.1). Cached in
  *  the registry; UnitSync derives the shared-fragment multipliers from it. */
 struct MASSBATTLE_API FBattleAttributeSnapshot
@@ -119,6 +131,16 @@ struct FUnitRuntimeState
 	// inputs), rebuilt by the 4 Hz cluster pass. Game thread only.
 	int32 EngagedCount = 0;
 	int32 ChargingCount = 0; // written by the charge processor (task 7)
+
+	// Phase 3 (spec ranged-stack §3.2): unit-level fire-control toggles + the
+	// out-of-ammo aggregate flip. bFireAtWill defaults on; bSkirmish defaults on
+	// for class-missile rows at spawn (A8); bOutOfAmmo flips exactly once when
+	// the entity ammo sum hits zero (RC5, A14) and never un-flips (no resupply
+	// v1). Registry APIs land with the Phase 3 data-spine task; the fields are
+	// plain struct state so the save round-trip captures them verbatim.
+	bool bFireAtWill = true;
+	bool bSkirmish = false;
+	bool bOutOfAmmo = false;
 };
 
 /** Spawn request: one parsed EDU row + roster size. Formation params seed the

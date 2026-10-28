@@ -287,6 +287,14 @@ namespace
 				{
 					Det->BeginTest();
 				}
+				else if (AS6VolleyTest* Volley = Cast<AS6VolleyTest>(TestActor))
+				{
+					Volley->BeginTest();
+				}
+				else if (ASkirmishBehaviorTest* Skirm = Cast<ASkirmishBehaviorTest>(TestActor))
+				{
+					Skirm->BeginTest();
+				}
 				// T0.9: apply + assert the test-mode contract at scenario start
 				// (roadmap B.0: assert ACTIVE engine settings, not CVars being
 				// set; the -game process does not seed the contract on its own).
@@ -730,6 +738,45 @@ bool FDeterminismTwoRun::RunTest(const FString& Parameters)
 	IFunctionalTestingModule::Get().MarkPendingActivation();
 	ADD_LATENT_AUTOMATION_COMMAND(FOpenBattleFuncMap(this));
 	ADD_LATENT_AUTOMATION_COMMAND(FRunBattleFuncTest(this, TEXT("DeterminismTwoRun"), TEXT("ADeterminismTwoRunTest")));
+	return true;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3 task 0: T3.4/T3.5 gate skeletons (fail-by-design until the ranged
+// pipeline tasks land; counted + listed in the phase-3 progress log).
+// ---------------------------------------------------------------------------
+
+IMPLEMENT_CUSTOM_COMPLEX_AUTOMATION_TEST(FS6Volley, FBattleFuncTestBase,
+	"Battle.Func.S6_Volley", (EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter))
+
+void FS6Volley::GetTests(TArray<FString>& OutBeautifiedNames, TArray<FString>& OutTestCommands) const
+{
+	OutBeautifiedNames.Add(TEXT("S6_Volley"));
+	OutTestCommands.Add(TEXT(""));
+}
+
+bool FS6Volley::RunTest(const FString& Parameters)
+{
+	IFunctionalTestingModule::Get().MarkPendingActivation();
+	ADD_LATENT_AUTOMATION_COMMAND(FOpenBattleFuncMap(this));
+	ADD_LATENT_AUTOMATION_COMMAND(FRunBattleFuncTest(this, TEXT("S6_Volley"), TEXT("AS6VolleyTest")));
+	return true;
+}
+
+IMPLEMENT_CUSTOM_COMPLEX_AUTOMATION_TEST(FSkirmishBehavior, FBattleFuncTestBase,
+	"Battle.Func.SkirmishBehavior", (EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter))
+
+void FSkirmishBehavior::GetTests(TArray<FString>& OutBeautifiedNames, TArray<FString>& OutTestCommands) const
+{
+	OutBeautifiedNames.Add(TEXT("SkirmishBehavior"));
+	OutTestCommands.Add(TEXT(""));
+}
+
+bool FSkirmishBehavior::RunTest(const FString& Parameters)
+{
+	IFunctionalTestingModule::Get().MarkPendingActivation();
+	ADD_LATENT_AUTOMATION_COMMAND(FOpenBattleFuncMap(this));
+	ADD_LATENT_AUTOMATION_COMMAND(FRunBattleFuncTest(this, TEXT("SkirmishBehavior"), TEXT("ASkirmishBehaviorTest")));
 	return true;
 }
 
