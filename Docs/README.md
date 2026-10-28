@@ -45,7 +45,7 @@
 | `Docs/phases/pre-phase-0/` | brief · progress · report (environment scaffold run) | **Archive** |
 | `Docs/phases/phase-0/` | brief · progress · report · audit (foundation run + post-run audit) | **Archive** (report §7 = Phase 1 entry point) |
 | `Docs/phases/phase-1/` | brief · progress · report · audit + the rolled-in garrison run (`brief-garrison` · `progress-garrison` · `report-garrison`) | **Archive** (report §4 + report-garrison §4 = Phase 2 entry points) |
-| `Docs/phases/phase-2/` | Movement-cleanup run: brief · progress · report (**Archive**). Engagement-solver run: `brief-engagement` · `progress-engagement` · `report-engagement` (**Archive**) | |
+| `Docs/phases/phase-2/` | Movement-cleanup run: brief · progress · report (**Archive**). Engagement-solver run: `brief-engagement` · `progress-engagement` · `report-engagement` (**Archive**). Post-run audit: `audit-engagement` (2026-10-28) | |
 | `Docs/reviews/plan-review-findings.md` | 2026-10-23 plan review: errors E1–E6, risks R1–R13, improvements I1–I7, evidence + citations | **Archive** (referenced by live specs) |
 
 Repo files outside `Docs/` you will be pointed at: `Tools/CI/README.md`, `Tools/CI/JENKINS.md`, `Tools/CI/run_tests.bat` / `nightly.bat` / `compare_baseline.py`, `Baselines/perf/README.md`, `Jenkinsfile`.
