@@ -52,6 +52,68 @@ namespace FSlotAssigner
 	 *  most once per pass. */
 	MASSBATTLE_API void ApplyPredictiveSwaps(TArray<int32>& InOutAssignment, const TArray<FIntPoint>& Pairs,
 		const TArray<FVector2D>& Positions, const TArray<FVector2D>& SlotPositions);
+
+	/** Formation flow, rule 1 (owner proposal 2026-10-28): directional gap
+	 *  closure. Deterministic passes over vacant slots in rank-major,
+	 *  file-ascending order (front first, low file first): a vacant slot is
+	 *  claimed by its directly-behind occupant (fill front) or, if the file
+	 *  is empty behind it, by its directly-right occupant (fill left, toward
+	 *  file 0). Both sources sit at HIGHER slot indices, so a vacancy created
+	 *  by a fill is visited later in the same pass: rank and file cascades
+	 *  resolve within a pass and every entity moves at most one slot per
+	 *  pass. A bounded fixpoint (<= 4 passes; a lateral fill arriving after a
+	 *  slot's scan can make it behind-fillable) drains every ordinary hole
+	 *  in one call. Holes migrate to the rear / high-file drain corner --
+	 *  the same corner AssignFinal parks surplus slots in (self-consistent:
+	 *  "fixing" the fill direction later would fight the final sort). Pure
+	 *  permutation: the greedy bijection survives and INDEX_NONE entries
+	 *  pass through. */
+	MASSBATTLE_API void CloseGaps(TArray<int32>& InOutAssignment, int32 NumSlots, int32 NumFiles);
+
+	/** Formation flow, rule 2 (owner proposal 2026-10-28): evict-to-reachable.
+	 *  Entities flagged stuck (servo-ladder mark; slot physically unreachable)
+	 *  claim the slot nearest their BODY regardless of occupancy -- a blocked-out
+	 *  entity re-homes at the perimeter instead of orbiting the block. The
+	 *  displaced owners shift one slot each along the monotone staircase
+	 *  toward the stuck entity's vacated old slot (the sink -- the chain
+	 *  terminates there by construction, or earlier at any mid-path vacancy,
+	 *  which then migrates to the sink for CloseGaps to drain). A 2-opt-style
+	 *  churn guard demands the claimed slot at less than half the old slot's
+	 *  squared distance. Roster order, deterministic, pure permutation. */
+	MASSBATTLE_API void EvictToReachable(TArray<int32>& InOutAssignment,
+		const TArray<FVector2D>& EntityPositions, const TArray<FVector2D>& SlotPositions,
+		int32 NumSlots, int32 NumFiles, const TArray<uint8>& StuckFlags);
+
+	/** Formation flow v2 (owner observation 2026-10-28: "the slot is claimed
+	 *  even though the entity is nowhere near it"): DISTANCE-triggered
+	 *  vacancy diffusion. Rule 1 alone could never fire in a full unit -- the
+	 *  greedy bijection leaves no INDEX_NONE slots to close, and the holes the
+	 *  owner observes are VIRTUAL (claimed-but-far), invisible to the rank-gap
+	 *  trigger and to CloseGaps alike. This pass makes them real in three
+	 *  steps:
+	 *    1. EVICT: an entity farther than StaleRadiusM from the slot it holds
+	 *       does not occupy it in any physical sense -- the claim is dropped
+	 *       and the slot opens for the neighbors (SkipFlags exempt entities
+	 *       whose motion is owned by a combat ring: their slot distance is
+	 *       combat, not staleness).
+	 *    2. CASCADE: CloseGaps runs on the opened slots -- the directly-behind
+	 *       or directly-right neighbor (whichever is closer to the slot) claims
+	 *       it and moves in; the hole walks one step per fill toward the
+	 *       rear-right drain corner. The owner's absence has become a REAL
+	 *       vacancy and diffuses through the block.
+	 *    3. RE-HOME: evicted (and never-assigned) entities walk into the
+	 *       remaining holes nearest their BODIES -- in a full unit the cascade
+	 *       has dragged the hole to the rear, so a tail-dragged entity is
+	 *       re-awarded a REAR slot it can reach instead of orbiting the block
+	 *       toward its old front slot. Surplus entities find no hole and stay
+	 *       INDEX_NONE.
+	 *  Eviction is self-hysteretic: after re-homing the entity is near its new
+	 *  slot, so the next pass does not re-evict. Bijection-preserving (each
+	 *  eviction opens exactly one hole; the cascade only permutes), roster
+	 *  order, squared distances, lowest slot index on ties -- deterministic. */
+	MASSBATTLE_API void DiffuseVacancies(TArray<int32>& InOutAssignment,
+		const TArray<FVector2D>& EntityPositions, const TArray<FVector2D>& SlotPositions,
+		int32 NumSlots, int32 NumFiles, float StaleRadiusM, const TArray<uint8>& SkipFlags);
 }
 
 /** Batched reflow cadence (arch §8.4): reflow at most every IntervalSeconds,

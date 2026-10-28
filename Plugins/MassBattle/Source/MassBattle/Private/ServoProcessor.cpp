@@ -30,9 +30,14 @@ namespace
 
 	// Phase 2 A1 (F-4): slot-velocity feed-forward in the servo. 0 keeps the
 	// pure position pursuit byte-for-byte.
+	// OWNER DEFAULT FLIP (2026-10-28, formation-flow v2): the pure pursuit
+	// trails any moving slot by Tau*v and closes a drag at only the quickstep
+	// margin -- the owner's tail-drag symptom. The FF form (Reynolds velocity
+	// matching) is the measured fix and cooperates with the seek boost below.
+	// Ships ON; restore with `Battle.Movement.FeedForward 0`.
 	TAutoConsoleVariable<int32> GBattleMovementFeedForward(
 		TEXT("Battle.Movement.FeedForward"),
-		0,
+		1,
 		TEXT("1 = servo adds the slot-velocity feed-forward term (V_slot + (Target-Pos)/Tau). Phase 2 A1."),
 		ECVF_Default);
 
@@ -40,10 +45,49 @@ namespace
 	// (WalkSpeed x SpeedMult), not the anchor's pace -- in a wheel the anchor
 	// slows and every entity's ceiling must NOT drop with it, because outer
 	// files have to move faster than the anchor to track their sweeping slots.
+	// OWNER DEFAULT FLIP (2026-10-28, formation-flow v2): with the default
+	// clamp the ceiling rides Formation.SpeedLimit -- INCLUDING the straggler
+	// throttle, so a throttled recovery slows the very men it waits for
+	// (0.25 x 0.25 closing; the coupling the owner's "significantly higher"
+	// ask targets). The member clamp decouples the ceiling from the anchor
+	// pace. Ships ON; restore with `Battle.Movement.MemberClamp 0`.
 	TAutoConsoleVariable<int32> GBattleMovementMemberClamp(
 		TEXT("Battle.Movement.MemberClamp"),
-		0,
+		1,
 		TEXT("1 = servo clamps at the member's own max speed (arch §8.3 MaxSpeed = member max). Phase 2 A2."),
+		ECVF_Default);
+
+	// Formation-flow rule 2 (owner proposal 2026-10-28): the unstuck-ladder
+	// level at which an entity's slot is considered PHYSICALLY UNREACHABLE and
+	// the slot reflow may re-home it at its nearest reachable slot (the
+	// EvictToReachable chain in the assigner). 0 disables -- marks stay 0 and
+	// the resolve stage is byte-identical to the legacy pipeline. 2 = ~3 s
+	// slow + far from slot (one escalation period past the sidestep step).
+	TAutoConsoleVariable<int32> GBattleMovementStuckReawardLevel(
+		TEXT("Battle.Movement.StuckReawardLevel"),
+		2,
+		TEXT("Unstuck-ladder level that marks a slot unreachable for the formation-flow reflow (0 = off; 1..4; default 2)."),
+		ECVF_Default);
+
+	// Formation-flow v2 (owner observation 2026-10-28): error-gated servo seek
+	// boost. The §12 quickstep (CatchupBoost 1.25) leaves a closing rate of
+	// only 0.25x against a marching anchor -- a dragged entity trails for
+	// tens of seconds (the owner's tail-drag symptom) and outer files cannot
+	// track a sweeping wheel (the arc symptom). Beyond SeekErrorGate meters
+	// of slot error the servo clamp rises to SeekSpeedScale x the ceiling:
+	// "entity slot seeking speed significantly higher than the unit movement
+	// speed." 1.8 x walk = 2.52 m/s against the 1.4 m/s anchor: ~1.1 m/s
+	// closing. <= 1.25 restores the constant quickstep.
+	TAutoConsoleVariable<float> GBattleMovementSeekSpeedScale(
+		TEXT("Battle.Movement.SeekSpeedScale"),
+		1.8f,
+		TEXT("Servo clamp multiplier while slot error exceeds SeekErrorGate (formation-flow v2; <= 1.25 = the constant quickstep)."),
+		ECVF_Default);
+
+	TAutoConsoleVariable<float> GBattleMovementSeekErrorGate(
+		TEXT("Battle.Movement.SeekErrorGate"),
+		1.f,
+		TEXT("Slot error (m) that arms the seek-speed boost; below it the quickstep ceiling holds so dressed blocks do not churn."),
 		ECVF_Default);
 }
 
@@ -199,6 +243,14 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 	const bool bFallInServo = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Movement.ProgressiveFallIn"))
 		? IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Movement.ProgressiveFallIn"))->GetInt() != 0
 		: false;
+	// Formation-flow rule 2 feed: the ladder threshold that marks a slot as
+	// physically unreachable for the next slot reflow (read once per Execute,
+	// captured by value like the flags above).
+	const int32 StuckReawardLevel = GBattleMovementStuckReawardLevel.GetValueOnAnyThread();
+	// Formation-flow v2 feeds: the error-gated seek boost (owner ask: seek
+	// speed significantly higher than the unit movement speed).
+	const float SeekSpeedScale = GBattleMovementSeekSpeedScale.GetValueOnAnyThread();
+	const float SeekErrorGateM = GBattleMovementSeekErrorGate.GetValueOnAnyThread();
 
 	// ---- Unit-vs-unit OBB contact (arch §8.6, Phase 1 scale: 8 units) ----
 	// One body per unit from the formation fragment; pairs resolved to
@@ -334,7 +386,7 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 	}
 
 	const IConsoleVariable* WalkCvar = WalkSpeedCvar;
-	ServoQuery.ForEachEntityChunk(Context, [DT, MaxAccel, bFeedForward, bMemberClamp, bFallInServo, Debug, &Snapshot, &ShoveVel, &ShoveW, &HandleToSnapshot, &BlockPartners, WalkCvar](FMassExecutionContext& Context)
+	ServoQuery.ForEachEntityChunk(Context, [DT, MaxAccel, bFeedForward, bMemberClamp, bFallInServo, StuckReawardLevel, SeekSpeedScale, SeekErrorGateM, Debug, &Snapshot, &ShoveVel, &ShoveW, &HandleToSnapshot, &BlockPartners, WalkCvar](FMassExecutionContext& Context)
 	{
 		const FUnitFormationSharedFragment& Formation = *Context.GetSharedFragmentPtr<FUnitFormationSharedFragment>();
 		const FUnitStatsSharedFragment* Stats = Context.GetSharedFragmentPtr<FUnitStatsSharedFragment>();
@@ -382,8 +434,6 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 		// speeds; inside the radius the deflection math is unchanged.
 		constexpr float CullRadiusSq = FMath::Square(12.f);
 
-		const float MaxBlendSpeedM = MaxSpeedM * FUnitServoConstants::CatchupBoost;
-
 		for (int32 i = 0; i < Context.GetNumEntities(); ++i)
 		{
 			const FVector P = Transforms[i].GetTransform().GetTranslation();
@@ -426,6 +476,24 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 				bCombatOverride = true;
 			}
 
+			// Formation-flow v2 (owner ask 2026-10-28: "entity slot seeking
+			// speed needs to be significantly higher than the unit movement
+			// speed"): error-gated seek boost. A dressed entity keeps the
+			// §12 quickstep ceiling (1.25x); an entity whose slot error
+			// exceeds the gate may run up to SeekSpeedScale x -- the closing
+			// rate against a marching anchor rises from 0.25x to
+			// (SeekScale - 1)x, which is what actually drains a drag.
+			// Measured against the SLOT target (Targets[i].TargetPos), not
+			// the combat-override target: ring approach speeds are combat
+			// policy, not formation recovery. The same ceiling bounds the
+			// avoidance/deflection/shove clamps below (the audit M4 doctrine:
+			// nothing walks the limit upward).
+			const float SlotErrM = FVector2D::Distance(PosM, SlotPosM);
+			const float ServoBoost = (SeekSpeedScale > FUnitServoConstants::CatchupBoost && SlotErrM > SeekErrorGateM)
+				? SeekSpeedScale
+				: FUnitServoConstants::CatchupBoost;
+			const float ServoCeilM = MaxSpeedM * ServoBoost;
+
 			// §8.3 servo (velocity control, ADR-07). Phase 2 A1: the
 			// feed-forward form adds the slot's own velocity (Reynolds
 			// velocity matching on a moving target) so sweeping/wheeling
@@ -438,12 +506,12 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 					: SlotPosM; // first write: no slot motion yet
 				DesiredVel = FUnitServo::ComputeServoVelocityFF(PosM, ServoTargetM,
 					bCombatOverride ? ServoTargetM : PrevSlotPosM,
-					FUnitServoConstants::Tau, MaxSpeedM, FUnitServoConstants::CatchupBoost, DT);
+					FUnitServoConstants::Tau, MaxSpeedM, ServoBoost, DT);
 			}
 			else
 			{
 				DesiredVel = FUnitServo::ComputeServoVelocity(PosM, ServoTargetM,
-					FUnitServoConstants::Tau, MaxSpeedM, FUnitServoConstants::CatchupBoost);
+					FUnitServoConstants::Tau, MaxSpeedM, ServoBoost);
 			}
 
 			// Phase 2 C3 settle (the plan's §4.1 flow: settled = stop and turn
@@ -526,7 +594,7 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 				// Audit M4: the accumulated push is unbounded by construction
 				// (full Combined per overlapping neighbor); clamp it so the
 				// blended velocity can never ratchet past the §8.2 unit limit.
-				Deflection = Deflection.GetClampedToMaxSize(MaxBlendSpeedM);
+				Deflection = Deflection.GetClampedToMaxSize(ServoCeilM);
 				DesiredVel += Deflection;
 
 				// Step 2 sidestep impulse: perpendicular to the servo output.
@@ -538,7 +606,7 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 				// Audit M4 (rate + total): ClampAcceleration bounds the CHANGE,
 				// not the magnitude -- clamp the commanded velocity itself so
 				// avoidance + sidestep cannot walk the limit upward.
-				DesiredVel = DesiredVel.GetClampedToMaxSize(MaxBlendSpeedM);
+				DesiredVel = DesiredVel.GetClampedToMaxSize(ServoCeilM);
 			}
 
 			// §8.6 Block realized as a follow constraint (audit H3): the
@@ -607,7 +675,7 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 			// Audit M4: the shove blend targets a fixed 1.5 m/s displacement
 			// regardless of the unit's own limit -- clamp the post-blend
 			// result to the servo ceiling.
-			NewVelM = NewVelM.GetClampedToMaxSize(MaxBlendSpeedM);
+			NewVelM = NewVelM.GetClampedToMaxSize(ServoCeilM);
 			Velocities[i].Value = FVector(NewVelM.X, NewVelM.Y, 0.f) * 100.f;
 
 			// Ladder bookkeeping (§8.5): slow + away from slot escalates.
@@ -703,6 +771,18 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 			}
 			ServoStates[i].LowSpeedTime = Timer;
 			ServoStates[i].LadderLevel = NewLevel;
+
+			// Formation-flow rule 2 (owner proposal 2026-10-28): surface the
+			// reachability ladder to the slot reflow. FormationSlotResolve
+			// reads StuckMark when a reflow fires and re-homes marked entities
+			// at their nearest reachable slot (EvictToReachable). Written every
+			// frame (self-correcting against cvar changes and any state drift);
+			// recovery to level 0 clears it. Diagnostic byte, never hashed
+			// (bFinalLocked pattern).
+			{
+				auto AssignFrag = Context.GetMutableFragmentView<FSlotAssignmentFragment>();
+				AssignFrag[i].StuckMark = (StuckReawardLevel > 0 && NewLevel >= StuckReawardLevel) ? 1 : 0;
+			}
 			if (bCombatOverride)
 			{
 				States[i].State = State; // the pair state owns the movement state

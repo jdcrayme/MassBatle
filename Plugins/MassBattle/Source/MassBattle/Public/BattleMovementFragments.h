@@ -225,6 +225,16 @@ struct FSlotAssignmentFragment : public FMassFragment
 	 *  slot -- the early TW settle). Cleared whenever the layout re-assigns
 	 *  (new slots, old latch is meaningless). Diagnostic: never hashed. */
 	UPROPERTY() uint8 bFinalLocked = 0;
+
+	/** Formation-flow rule 2 (owner proposal 2026-10-28): set by ServoProcessor
+	 *  when the unstuck ladder reaches Battle.Movement.StuckReawardLevel (the
+	 *  slot is physically unreachable -- the entity is blocked out and orbiting
+	 *  the block); FormationSlotResolve re-homes marked entities at their
+	 *  nearest reachable slot on the next reflow. ServoProcessor runs after the
+	 *  resolve stage in the frame chain, so the mark carries one frame of lag --
+	 *  invisible at the 0.5 s reflow cadence. Diagnostic byte, never hashed
+	 *  (bFinalLocked pattern); Level 0 recovery clears it. */
+	UPROPERTY() uint8 StuckMark = 0;
 };
 
 /** Servo target written by FormationSlotResolve (arch §4 row 6: "move targets").

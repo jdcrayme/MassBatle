@@ -92,7 +92,13 @@ namespace FUnitLocomotion
 	MASSBATTLE_API bool FallInHandoffLatch(bool bLocked, float DistFinalSlotM, float HandoffDistM);
 
 	/** Phase 2 C3: the effective morph distance for a layout of NumRanks
-	 *  ranks -- max(cvar, 2 x rank depth). ONE home for the floor so the
-	 *  resolve blend and the locomotion throttle gate agree exactly. */
-	MASSBATTLE_API float FallInMorphDistance(float MorphDistanceCvarM, int32 NumRanks, float RankSpacingM);
+	 *  ranks -- max(cvar, 2 x rank depth, 0.5 x frontage). ONE home for the
+	 *  floor so the resolve blend and the locomotion throttle gate agree
+	 *  exactly. The frontage term (owner rule 2026-10-28: "if the unit is
+	 *  10 m wide, all the entities seek their final slots when the unit is
+	 *  within 5 m of its destination") guarantees the blend is well under
+	 *  way by one unit radius out -- wide, shallow blocks need their lateral
+	 *  corner walks budgeted, not just the depth term. */
+	MASSBATTLE_API float FallInMorphDistance(float MorphDistanceCvarM, int32 NumRanks, float RankSpacingM,
+		int32 NumFiles, float FileSpacingM);
 }

@@ -375,6 +375,18 @@ bool FSpeedLimits_FallInBlend::RunTest(const FString& Parameters)
 	TestEqual(TEXT("at 1.5x boundary: stays latched"), FUnitLocomotion::FallInHandoffLatch(true, 1.05f, Handoff), true);
 	TestEqual(TEXT("past 1.5x: unlatch"), FUnitLocomotion::FallInHandoffLatch(true, 1.1f, Handoff), false);
 
+	// Morph-distance floor (formation-flow v2): max(cvar, 2x depth, half
+	// the frontage -- the owner's "one unit radius" rule: a 10 m wide unit
+	// starts its final-slot seeking no later than ~5 m out).
+	TestEqual(TEXT("morph: cvar dominates when large"),
+		FUnitLocomotion::FallInMorphDistance(24.f, 3, 1.f, 4, 1.2f), 24.f);
+	TestEqual(TEXT("morph: depth floor (2x 3 ranks x 1 m)"),
+		FUnitLocomotion::FallInMorphDistance(4.f, 3, 1.f, 4, 1.2f), 6.f);
+	TestTrue(TEXT("morph: frontage floor (0.5 x 9 files x 1.2 m = 5.4)"),
+		FMath::IsNearlyEqual(FUnitLocomotion::FallInMorphDistance(4.f, 2, 1.f, 10, 1.2f), 5.4f, 1e-4f));
+	TestEqual(TEXT("morph: single file has no frontage term"),
+		FUnitLocomotion::FallInMorphDistance(4.f, 2, 1.f, 1, 1.2f), 4.f);
+
 	return true;
 }
 

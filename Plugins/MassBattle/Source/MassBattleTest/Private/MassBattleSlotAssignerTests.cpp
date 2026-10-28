@@ -482,4 +482,481 @@ bool FSlots_AssignFinal::RunTest(const FString& Parameters)
 	return true;
 }
 
+// ---- Formation flow (owner proposal 2026-10-28): CloseGaps (rule 1) and
+// EvictToReachable (rule 2). Both are pure permutations on the greedy
+// bijection; holes drain to the rear-right corner; stuck entities re-home at
+// the perimeter with a one-slot-per-owner displacement chain. ----
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlots_CloseGaps,
+	"Battle.Unit.Slots.CloseGaps",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FSlots_CloseGaps::RunTest(const FString& Parameters)
+{
+	// Assignment is ENTITY-indexed (Assignment[E] = slot). Rule 1a, the
+	// file cascade: 2 files x 3 ranks, entity 0 the casualty (its slot 0 is
+	// the hole). The whole file 0 shifts up one rank; the hole exits at the
+	// rear-right drain corner (slot 5), NOT at the file's rear (slot 4) --
+	// the rear rank's right occupant closes left into it first.
+	{
+		const int32 NumFiles = 2;
+		const int32 NumSlots = 6;
+		TArray<int32> Assignment = { INDEX_NONE, 1, 2, 3, 4, 5 };
+		FSlotAssigner::CloseGaps(Assignment, NumSlots, NumFiles);
+		TestEqual(TEXT("file cascade: entity 2 pulled up (2 -> 0)"), Assignment[2], 0);
+		TestEqual(TEXT("file cascade: entity 4 pulled up (4 -> 2)"), Assignment[4], 2);
+		TestEqual(TEXT("file cascade: entity 5 closed left (5 -> 4)"), Assignment[5], 4);
+		TestEqual(TEXT("file cascade: untouched file"), Assignment[1], 1);
+		TestEqual(TEXT("file cascade: untouched file"), Assignment[3], 3);
+		TestEqual(TEXT("file cascade: casualty passes through"), Assignment[0], INDEX_NONE);
+		TSet<int32> Used;
+		for (int32 Slot : Assignment)
+		{
+			if (Slot != INDEX_NONE)
+			{
+				Used.Add(Slot);
+			}
+		}
+		TestFalse(TEXT("file cascade: hole exited at slot 5 (rear-right)"), Used.Contains(5));
+		TestEqual(TEXT("file cascade: exactly one hole"), Used.Num(), 5);
+	}
+
+	// Rule 1b, the lateral cascade: single rank, 4 files, hole at file 1.
+	// Everyone right of the hole closes LEFT; the hole exits at the right edge.
+	{
+		const int32 NumFiles = 4;
+		const int32 NumSlots = 4;
+		TArray<int32> Assignment = { 0, INDEX_NONE, 2, 3 };
+		FSlotAssigner::CloseGaps(Assignment, NumSlots, NumFiles);
+		TestEqual(TEXT("lateral cascade: file 0 holds"), Assignment[0], 0);
+		TestEqual(TEXT("lateral cascade: entity 2 closed left (2 -> 1)"), Assignment[2], 1);
+		TestEqual(TEXT("lateral cascade: entity 3 closed left (3 -> 2)"), Assignment[3], 2);
+		// Slot 3 (the right edge) is the one slot nobody owns.
+		TSet<int32> Used;
+		for (int32 Slot : Assignment)
+		{
+			if (Slot != INDEX_NONE)
+			{
+				Used.Add(Slot);
+			}
+		}
+		TestFalse(TEXT("lateral cascade: hole is at slot 3 (right edge)"), Used.Contains(3));
+		TestEqual(TEXT("lateral cascade: exactly one hole"), Used.Num(), 3);
+	}
+
+	// Permutation property: a mid-formation double casualty collapses to
+	// the rear rank. Pass 1 drains both mid-formation holes; the bounded
+	// fixpoint pass 2 additionally pulls entity 8 left (7 -> 6) because
+	// slot 6's right neighbor only became occupied late in pass 1.
+	{
+		const int32 NumFiles = 3;
+		const int32 NumSlots = 9;
+		TArray<int32> Assignment = { INDEX_NONE, 1, 2, 3, INDEX_NONE, 5, 6, 7, 8 };
+		FSlotAssigner::CloseGaps(Assignment, NumSlots, NumFiles);
+		TestEqual(TEXT("permutation: entity 3 pulled up (3 -> 0)"), Assignment[3], 0);
+		TestEqual(TEXT("permutation: entity 6 pulled up (6 -> 3)"), Assignment[6], 3);
+		TestEqual(TEXT("permutation: entity 7 pulled up (7 -> 4)"), Assignment[7], 4);
+		TestEqual(TEXT("permutation: fixpoint pass pulled entity 8 left (8 -> 6)"), Assignment[8], 6);
+		TSet<int32> Used;
+		bool bBijection = true;
+		for (int32 Slot : Assignment)
+		{
+			bBijection = bBijection && (Slot == INDEX_NONE || (Slot >= 0 && Slot < NumSlots && !Used.Contains(Slot)));
+			if (Slot != INDEX_NONE)
+			{
+				Used.Add(Slot);
+			}
+		}
+		TestTrue(TEXT("permutation: bijection over survivors"), bBijection);
+		TestEqual(TEXT("permutation: survivor count preserved"), Used.Num(), 7);
+		// Both remaining holes are in the rear rank (slots 6..8).
+		TestFalse(TEXT("permutation: holes only in the rear rank"), Used.Contains(7) && Used.Contains(8) && Used.Contains(6));
+	}
+
+	// The fixpoint counter-case (replica-verified): 2 files, owners at
+	// slots 0 and 5 only. Slot 1 is scanned while its behind (slot 3) is
+	// still vacant; slot 3 fills laterally from 5's behind-fill later in
+	// pass 1; pass 2 then sees slot 1 behind-fillable and pulls entity 5
+	// forward again. A single-pass implementation would strand slot 1.
+	{
+		TArray<int32> Assignment = { 0, INDEX_NONE, INDEX_NONE, INDEX_NONE, INDEX_NONE, 5 };
+		FSlotAssigner::CloseGaps(Assignment, 6, 2);
+		TestEqual(TEXT("fixpoint: entity 5 walked 5 -> 3 -> 1"), Assignment[5], 1);
+		TSet<int32> Used;
+		for (int32 Slot : Assignment)
+		{
+			if (Slot != INDEX_NONE)
+			{
+				Used.Add(Slot);
+			}
+		}
+		TestFalse(TEXT("fixpoint: slot 1 drained (not a hole)"), Used.Contains(1));
+		TestEqual(TEXT("fixpoint: survivors"), Used.Num(), 2);
+	}
+
+	// Determinism: identical inputs, identical outputs.
+	{
+		TArray<int32> A = { INDEX_NONE, 1, 2, 3, 4, 5, 6, 7, 8 };
+		TArray<int32> B = { INDEX_NONE, 1, 2, 3, 4, 5, 6, 7, 8 };
+		FSlotAssigner::CloseGaps(A, 9, 3);
+		FSlotAssigner::CloseGaps(B, 9, 3);
+		bool bIdentical = true;
+		for (int32 i = 0; i < A.Num(); ++i)
+		{
+			bIdentical = bIdentical && A[i] == B[i];
+		}
+		TestTrue(TEXT("deterministic repeat"), bIdentical);
+	}
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlots_EvictToReachable,
+	"Battle.Unit.Slots.EvictToReachable",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FSlots_EvictToReachable::RunTest(const FString& Parameters)
+{
+	// 4 files x 3 ranks, 1.2 m spacing, grid layout (file = +X, rank = -Y
+	// so slot positions are bijective with indices).
+	constexpr int32 NumFiles = 4;
+	constexpr int32 NumSlots = 12;
+	auto SlotPosOf = [](int32 Slot)
+	{
+		return FVector2D((Slot % NumFiles) * 1.2f, -(Slot / NumFiles) * 1.2f);
+	};
+	TArray<FVector2D> SlotPos;
+	for (int32 S = 0; S < NumSlots; ++S)
+	{
+		SlotPos.Add(SlotPosOf(S));
+	}
+
+	// The reported repro: entity 0 owns interior slot 5 = (rank 1, file 1)
+	// but was shoved out and circles the right flank next to slot 3 =
+	// (rank 0, file 3). It must take slot 3; the owners along the staircase
+	// (0,2) -> (0,1) -> (1,1) shift one slot each; the chain's last member
+	// lands on the vacated slot 5. No entity moves more than one slot.
+	{
+		TArray<int32> Assignment;
+		TArray<FVector2D> EntityPos;
+		TArray<uint8> Stuck;
+		for (int32 E = 0; E < NumSlots; ++E)
+		{
+			Assignment.Add(E);
+			EntityPos.Add(SlotPos[E]);
+			Stuck.Add(0);
+		}
+		Swap(Assignment[0], Assignment[5]);   // e0 owns the interior slot 5...
+		EntityPos[0] = SlotPos[3] + FVector2D(0.2f, 0.f); // ...but stands at the right flank
+		Stuck[0] = 1;
+		FSlotAssigner::EvictToReachable(Assignment, EntityPos, SlotPos, NumSlots, NumFiles, Stuck);
+
+		TestEqual(TEXT("eviction: stuck entity takes the nearest (perimeter) slot"), Assignment[0], 3);
+		TestEqual(TEXT("eviction: flank owner steps aside (3 -> 2)"), Assignment[3], 2);
+		TestEqual(TEXT("eviction: chain member steps aside (2 -> 1)"), Assignment[2], 1);
+		TestEqual(TEXT("eviction: chain terminates on the vacated interior slot (1 -> 5)"), Assignment[1], 5);
+		TestEqual(TEXT("eviction: off-path owner untouched"), Assignment[5], 0);
+		TSet<int32> Used;
+		for (int32 Slot : Assignment)
+		{
+			Used.Add(Slot);
+		}
+		TestEqual(TEXT("eviction: bijection preserved"), Used.Num(), NumSlots);
+	}
+
+	// Churn guard: a stuck entity standing exactly between its own slot and
+	// the neighbor's (tie -> lowest index is nearest) has no reachability
+	// win -- 2x the best distance is NOT below the own distance -- so it
+	// must NOT evict.
+	{
+		TArray<int32> Assignment;
+		TArray<FVector2D> EntityPos;
+		TArray<uint8> Stuck;
+		for (int32 E = 0; E < NumSlots; ++E)
+		{
+			Assignment.Add(E);
+			EntityPos.Add(SlotPos[E]);
+			Stuck.Add(0);
+		}
+		Swap(Assignment[0], Assignment[5]);
+		EntityPos[0] = SlotPos[5] + FVector2D(0.6f, 0.f); // equidistant: 0.6 to slot 5, 0.6 to slot 4
+		Stuck[0] = 1;
+		TArray<int32> Before = Assignment;
+		FSlotAssigner::EvictToReachable(Assignment, EntityPos, SlotPos, NumSlots, NumFiles, Stuck);
+		bool bIdentical = true;
+		for (int32 i = 0; i < Assignment.Num(); ++i)
+		{
+			bIdentical = bIdentical && Assignment[i] == Before[i];
+		}
+		TestTrue(TEXT("churn guard: marginal gain, no eviction"), bIdentical);
+	}
+
+	// Mid-path vacancy absorbs the chain: the vacancy migrates to the sink
+	// slot for CloseGaps to drain; nothing is orphaned.
+	{
+		TArray<int32> Assignment;
+		TArray<FVector2D> EntityPos;
+		TArray<uint8> Stuck;
+		for (int32 E = 0; E < NumSlots; ++E)
+		{
+			Assignment.Add(E);
+			EntityPos.Add(SlotPos[E]);
+			Stuck.Add(0);
+		}
+		Swap(Assignment[0], Assignment[9]);                   // e0 owns deep interior (2,1)
+		Assignment[2] = INDEX_NONE;                           // slot 2 vacant mid-path
+		EntityPos[0] = SlotPos[3] + FVector2D(0.2f, 0.f);   // circles the right flank
+		Stuck[0] = 1;
+		FSlotAssigner::EvictToReachable(Assignment, EntityPos, SlotPos, NumSlots, NumFiles, Stuck);
+
+		TestEqual(TEXT("absorption: stuck entity still takes the perimeter slot"), Assignment[0], 3);
+		TestEqual(TEXT("absorption: displaced owner lands on the mid-path vacancy"), Assignment[3], 2);
+		TestEqual(TEXT("absorption: the unassigned entity passes through"), Assignment[2], INDEX_NONE);
+		TSet<int32> Used;
+		for (int32 Slot : Assignment)
+		{
+			if (Slot != INDEX_NONE)
+			{
+				Used.Add(Slot);
+			}
+		}
+		TestEqual(TEXT("absorption: bijection preserved"), Used.Num(), 11);
+		TestFalse(TEXT("absorption: the sink slot 9 is left vacant for CloseGaps"), Used.Contains(9));
+		// And CloseGaps drains the migrated sink vacancy to the rear-right.
+		FSlotAssigner::CloseGaps(Assignment, NumSlots, NumFiles);
+		TSet<int32> UsedAfter;
+		for (int32 Slot : Assignment)
+		{
+			if (Slot != INDEX_NONE)
+			{
+				UsedAfter.Add(Slot);
+			}
+		}
+		TestEqual(TEXT("absorption: survivor count preserved through CloseGaps"), UsedAfter.Num(), 11);
+		TestEqual(TEXT("absorption: entity 10 closed left (10 -> 9)"), Assignment[10], 9);
+		TestEqual(TEXT("absorption: entity 11 closed left (11 -> 10)"), Assignment[11], 10);
+		TestFalse(TEXT("absorption: vacancy parked at slot 11 (rear-right)"), UsedAfter.Contains(11));
+	}
+
+	// Determinism: identical inputs, identical outputs.
+	{
+		TArray<int32> A, B;
+		TArray<FVector2D> Pos;
+		TArray<uint8> Stuck;
+		for (int32 E = 0; E < NumSlots; ++E)
+		{
+			A.Add(E);
+			B.Add(E);
+			Pos.Add(SlotPos[E]);
+			Stuck.Add(E == 4 ? 1 : 0);
+		}
+		Swap(A[4], A[6]);
+		Swap(B[4], B[6]);
+		Pos[4] = SlotPos[11] + FVector2D(0.2f, 0.f);
+		FSlotAssigner::EvictToReachable(A, Pos, SlotPos, NumSlots, NumFiles, Stuck);
+		FSlotAssigner::EvictToReachable(B, Pos, SlotPos, NumSlots, NumFiles, Stuck);
+		bool bIdentical = true;
+		for (int32 i = 0; i < A.Num(); ++i)
+		{
+			bIdentical = bIdentical && A[i] == B[i];
+		}
+		TestTrue(TEXT("deterministic repeat"), bIdentical);
+		// And the eviction actually happened in both (guard passed,
+		// chain walked): entity 4 ends on the perimeter slot 11.
+		TestEqual(TEXT("deterministic repeat: the eviction fired"), A[4], 11);
+	}
+
+	return true;
+}
+
+// ---- Formation flow v2 (owner observation 2026-10-28: "the slot is claimed
+// even though the entity is nowhere near it"): DiffuseVacancies converts the
+// VIRTUAL hole (claimed-but-far) into a real vacancy, cascades it rearward,
+// and re-homes the owner at the hole nearest its body. ----
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FSlots_DiffuseVacancies,
+	"Battle.Unit.Slots.DiffuseVacancies",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FSlots_DiffuseVacancies::RunTest(const FString& Parameters)
+{
+	// 4 files x 3 ranks, 1.2 m spacing, grid layout (file = +X, rank = -Y).
+	constexpr int32 NumFiles = 4;
+	constexpr int32 NumSlots = 12;
+	auto SlotPosOf = [](int32 Slot)
+	{
+		return FVector2D((Slot % NumFiles) * 1.2f, -(Slot / NumFiles) * 1.2f);
+	};
+	TArray<FVector2D> SlotPos;
+	for (int32 S = 0; S < NumSlots; ++S)
+	{
+		SlotPos.Add(SlotPosOf(S));
+	}
+	constexpr float StaleRadius = 3.f;
+
+	// The owner's tail-drag repro: a FULL bijection (no INDEX anywhere -- the
+	// v1 triggers could not see this state at all) where entity 0 holds the
+	// FRONT slot 0 but was dragged 6 m behind the rear rank. The claim is
+	// stale: the whole file pulls up (fill front), the hole cascades to the
+	// rear-right corner, and the dragged entity is re-awarded the REAR slot
+	// it can actually walk into -- instead of orbiting the block toward the
+	// front slot it will never reach.
+	{
+		TArray<int32> Assignment;
+		TArray<FVector2D> EntityPos;
+		TArray<uint8> Skip;
+		for (int32 E = 0; E < NumSlots; ++E)
+		{
+			Assignment.Add(E);
+			EntityPos.Add(SlotPos[E]);
+			Skip.Add(0);
+		}
+		EntityPos[0] = FVector2D(0.f, -8.4f); // 6 m behind the rear rank, file 0's column
+		FSlotAssigner::DiffuseVacancies(Assignment, EntityPos, SlotPos, NumSlots, NumFiles, StaleRadius, Skip);
+
+		TestEqual(TEXT("tail-drag: re-homed at the rear (11), not the unreachable front slot"), Assignment[0], 11);
+		TestEqual(TEXT("tail-drag: file pulled up (4 -> 0)"), Assignment[4], 0);
+		TestEqual(TEXT("tail-drag: file pulled up (8 -> 4)"), Assignment[8], 4);
+		TestEqual(TEXT("tail-drag: rear rank closed left (9 -> 8)"), Assignment[9], 8);
+		TestEqual(TEXT("tail-drag: rear rank closed left (10 -> 9)"), Assignment[10], 9);
+		TestEqual(TEXT("tail-drag: rear rank closed left (11 -> 10)"), Assignment[11], 10);
+		TestEqual(TEXT("tail-drag: neighbor file untouched"), Assignment[1], 1);
+		TestEqual(TEXT("tail-drag: neighbor file untouched"), Assignment[5], 5);
+		TSet<int32> Used;
+		for (int32 Slot : Assignment)
+		{
+			Used.Add(Slot);
+		}
+		TestEqual(TEXT("tail-drag: bijection preserved (full house)"), Used.Num(), NumSlots);
+	}
+
+	// Self-hysteresis: an entity 2 m from its slot (mid-catchup, walking it
+	// down) is NOT stale -- no eviction, no cascade, assignment identical.
+	{
+		TArray<int32> Assignment;
+		TArray<FVector2D> EntityPos;
+		TArray<uint8> Skip;
+		for (int32 E = 0; E < NumSlots; ++E)
+		{
+			Assignment.Add(E);
+			EntityPos.Add(SlotPos[E]);
+			Skip.Add(0);
+		}
+		EntityPos[0] = FVector2D(0.f, -2.f); // trailing its slot, under the radius
+		TArray<int32> Before = Assignment;
+		FSlotAssigner::DiffuseVacancies(Assignment, EntityPos, SlotPos, NumSlots, NumFiles, StaleRadius, Skip);
+		bool bIdentical = true;
+		for (int32 i = 0; i < Assignment.Num(); ++i)
+		{
+			bIdentical = bIdentical && Assignment[i] == Before[i];
+		}
+		TestTrue(TEXT("hysteresis: mid-catchup entity keeps its claim"), bIdentical);
+	}
+
+	// Combat exemption: the same dragged distance, but the entity's motion is
+	// owned by a combat ring (SkipFlags) -- the distance is combat
+	// displacement, not a formation hole. No eviction.
+	{
+		TArray<int32> Assignment;
+		TArray<FVector2D> EntityPos;
+		TArray<uint8> Skip;
+		for (int32 E = 0; E < NumSlots; ++E)
+		{
+			Assignment.Add(E);
+			EntityPos.Add(SlotPos[E]);
+			Skip.Add(E == 0 ? 1 : 0);
+		}
+		EntityPos[0] = FVector2D(0.f, -8.4f);
+		TArray<int32> Before = Assignment;
+		FSlotAssigner::DiffuseVacancies(Assignment, EntityPos, SlotPos, NumSlots, NumFiles, StaleRadius, Skip);
+		bool bIdentical = true;
+		for (int32 i = 0; i < Assignment.Num(); ++i)
+		{
+			bIdentical = bIdentical && Assignment[i] == Before[i];
+		}
+		TestTrue(TEXT("combat skip: ring-owned entity is not stale"), bIdentical);
+	}
+
+	// The settled neighbor is never displaced: the flank-shoved entity's
+	// nearest slot (right edge, 0.2 m away) is held by an owner STANDING on
+	// it -- diffusion does not steal settled slots (that is the ladder's
+	// EvictToReachable escalation, not the distance policy). The shoved
+	// entity re-homes through the cascade instead.
+	{
+		TArray<int32> Assignment;
+		TArray<FVector2D> EntityPos;
+		TArray<uint8> Skip;
+		for (int32 E = 0; E < NumSlots; ++E)
+		{
+			Assignment.Add(E);
+			EntityPos.Add(SlotPos[E]);
+			Skip.Add(0);
+		}
+		Swap(Assignment[0], Assignment[5]); // e0 owns interior slot 5 (rank 1, file 1)
+		EntityPos[0] = FVector2D(5.f, 0.f); // shoved past the right flank: 3.98 m from slot 5
+		FSlotAssigner::DiffuseVacancies(Assignment, EntityPos, SlotPos, NumSlots, NumFiles, StaleRadius, Skip);
+
+		TestEqual(TEXT("flank: settled edge owner untouched (e3 keeps 3)"), Assignment[3], 3);
+		TestEqual(TEXT("flank: shoved entity re-homed through the cascade (rear-right)"), Assignment[0], 11);
+		TestEqual(TEXT("flank: file pulled up (9 -> 5)"), Assignment[9], 5);
+		TestEqual(TEXT("flank: rear rank closed left (10 -> 9)"), Assignment[10], 9);
+		TestEqual(TEXT("flank: rear rank closed left (11 -> 10)"), Assignment[11], 10);
+		TestEqual(TEXT("flank: the swap partner keeps the front slot (e5 -> 0)"), Assignment[5], 0);
+		TSet<int32> Used;
+		for (int32 Slot : Assignment)
+		{
+			Used.Add(Slot);
+		}
+		TestEqual(TEXT("flank: bijection preserved"), Used.Num(), NumSlots);
+	}
+
+	// Radius 0 = the policy is off: byte-for-byte passthrough.
+	{
+		TArray<int32> Assignment;
+		TArray<FVector2D> EntityPos;
+		TArray<uint8> Skip;
+		for (int32 E = 0; E < NumSlots; ++E)
+		{
+			Assignment.Add(E);
+			EntityPos.Add(SlotPos[E]);
+			Skip.Add(0);
+		}
+		EntityPos[0] = FVector2D(0.f, -8.4f);
+		TArray<int32> Before = Assignment;
+		FSlotAssigner::DiffuseVacancies(Assignment, EntityPos, SlotPos, NumSlots, NumFiles, 0.f, Skip);
+		bool bIdentical = true;
+		for (int32 i = 0; i < Assignment.Num(); ++i)
+		{
+			bIdentical = bIdentical && Assignment[i] == Before[i];
+		}
+		TestTrue(TEXT("policy off: radius 0 passthrough"), bIdentical);
+	}
+
+	// Determinism: identical inputs, identical outputs.
+	{
+		TArray<int32> A, B;
+		TArray<FVector2D> Pos;
+		TArray<uint8> Skip;
+		for (int32 E = 0; E < NumSlots; ++E)
+		{
+			A.Add(E);
+			B.Add(E);
+			Pos.Add(SlotPos[E]);
+			Skip.Add(0);
+		}
+		Pos[0] = FVector2D(0.f, -8.4f);
+		FSlotAssigner::DiffuseVacancies(A, Pos, SlotPos, NumSlots, NumFiles, StaleRadius, Skip);
+		FSlotAssigner::DiffuseVacancies(B, Pos, SlotPos, NumSlots, NumFiles, StaleRadius, Skip);
+		bool bIdentical = true;
+		for (int32 i = 0; i < A.Num(); ++i)
+		{
+			bIdentical = bIdentical && A[i] == B[i];
+		}
+		TestTrue(TEXT("deterministic repeat"), bIdentical);
+		TestEqual(TEXT("deterministic repeat: the diffusion fired"), A[0], 11);
+	}
+
+	return true;
+}
+
 #endif // WITH_DEV_AUTOMATION_TESTS

@@ -60,18 +60,30 @@ namespace
 	// path-wrapped column sweep r_path + HalfFrontage, so that (not the
 	// centroid's OuterRadius) sets the angular cap while a path is active.
 	// 0 keeps the E2 pivot form for every traversal.
+	// OWNER DEFAULT FLIP (2026-10-28, formation-flow v2): the owner's edge
+	// symptom ("the entities on the left and right edges keep falling behind
+	// causing the line to become an arc") is the flag-off wheel: the anchor
+	// runs the E2 pivot cap while outer files sweep the wider marching
+	// radius, and nothing lets them quickstep. Ships ON; restore with
+	// `Battle.Movement.WheelCapV2 0`.
 	TAutoConsoleVariable<int32> GBattleMovementWheelCapV2(
 		TEXT("Battle.Movement.WheelCapV2"),
-		0,
+		1,
 		TEXT("1 = marching-form wheel cap (AnchorCap = v_member * r/(r + HalfFrontage) with a path active). Phase 2 A3."),
 		ECVF_Default);
 
 	// Phase 2 B2 (F-6): straggler pacing -- the exhausted flanker finally
 	// slows the whole unit. The block's max slot error throttles the anchor
 	// after the hysteresis stage; recovery rides the same hysteresis gate.
+	// OWNER DEFAULT FLIP (2026-10-28, formation-flow v2): the owner asked for
+	// exactly this policy ("the unit speed needs to be nerfed when entities
+	// are away from their slots"); with the servo seek boost also shipping,
+	// the throttle is the backstop for tears the boost cannot out-run
+	// (long drags, choke queues). Ships ON; restore with
+	// `Battle.Movement.StragglerPace 0`.
 	TAutoConsoleVariable<int32> GBattleMovementStragglerPace(
 		TEXT("Battle.Movement.StragglerPace"),
-		0,
+		1,
 		TEXT("1 = throttle the anchor when MaxSlotErrorM exceeds Battle.Movement.DressBreak (phase 2 B2)."),
 		ECVF_Default);
 
@@ -1023,7 +1035,8 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 				const float RemainingNowM = FMath::Max(0.f, PathM.TotalLength - Formation.PathS * 0.01f);
 				const int32 NumRanksNow = FMath::Max(1, FMath::CeilToInt(static_cast<float>(Formation.NumSlots) / Formation.NumFiles));
 				AlphaNow = FUnitLocomotion::FallInBlendAlpha(RemainingNowM,
-					FUnitLocomotion::FallInMorphDistance(MorphDistanceCvarM, NumRanksNow, Formation.RankSpacing * 0.01f));
+					FUnitLocomotion::FallInMorphDistance(MorphDistanceCvarM, NumRanksNow, Formation.RankSpacing * 0.01f,
+						Formation.NumFiles, Formation.FileSpacing * 0.01f));
 			}
 			if (AlphaNow <= KINDA_SMALL_NUMBER)
 			{

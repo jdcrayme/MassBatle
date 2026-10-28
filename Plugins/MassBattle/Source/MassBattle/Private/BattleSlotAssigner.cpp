@@ -238,6 +238,311 @@ namespace FSlotAssigner
 			}
 		}
 	}
+
+	void CloseGaps(TArray<int32>& InOutAssignment, int32 NumSlots, int32 NumFiles)
+	{
+		const int32 NumEntities = InOutAssignment.Num();
+		if (NumSlots <= 0 || NumFiles <= 0 || NumEntities == 0)
+		{
+			return;
+		}
+
+		// Inverse map slot -> entity, mutated in place so later fills observe
+		// earlier ones (the within-pass cascade).
+		TArray<int32> SlotOwner;
+		SlotOwner.Init(INDEX_NONE, NumSlots);
+		for (int32 E = 0; E < NumEntities; ++E)
+		{
+			const int32 S = InOutAssignment[E];
+			if (S >= 0 && S < NumSlots)
+			{
+				SlotOwner[S] = E;
+			}
+		}
+
+		// Bounded fixpoint (replica-verified): a single pass can leave a
+		// hole whose behind slot was VACANT at scan time but got laterally
+		// filled later in the same pass -- that hole becomes
+		// behind-fillable and needs one more look. Every productive fill
+		// strictly decreases the owners' total slot index, so passes
+		// terminate; the cap bounds the worst case and any residual hole
+		// drains on the next reflow (0.5 s cadence -- the Brownian
+		// relaxation the owner described).
+		for (int32 Guard = 0; Guard < 4; ++Guard)
+		{
+			bool bChanged = false;
+			// Front-to-back, file-ascending IS slot-index ascending
+			// (rank-major, file-ascending layout). Both fill sources sit
+			// at HIGHER indices: the behind source S+NumFiles and the
+			// right source S+1 (same rank, so only when file+1 <
+			// NumFiles). A vacancy created by a fill is therefore
+			// processed later this same pass, and within a pass each
+			// entity moves at most once (a filled entity sits at a LOWER
+			// index than any slot still to be processed, so nothing
+			// targets it again). Holes walk toward the rear / high-file
+			// drain corner.
+			for (int32 S = 0; S < NumSlots; ++S)
+			{
+				if (SlotOwner[S] != INDEX_NONE)
+				{
+					continue;
+				}
+				const int32 Behind = S + NumFiles; // same file, next rank: fill FRONT (rule 1a)
+				const int32 Right = S + 1;         // next file, same rank: fill LEFT (rule 1b)
+				const bool bRightSameRank = (S % NumFiles) + 1 < NumFiles;
+				int32 Taker = INDEX_NONE;
+				int32 Vacated = INDEX_NONE;
+				if (Behind < NumSlots && SlotOwner[Behind] != INDEX_NONE)
+				{
+					Taker = SlotOwner[Behind];
+					Vacated = Behind;
+				}
+				else if (bRightSameRank && Right < NumSlots && SlotOwner[Right] != INDEX_NONE)
+				{
+					Taker = SlotOwner[Right];
+					Vacated = Right;
+				}
+				if (Taker != INDEX_NONE)
+				{
+					SlotOwner[S] = Taker;
+					SlotOwner[Vacated] = INDEX_NONE;
+					InOutAssignment[Taker] = S;
+					bChanged = true;
+				}
+			}
+			if (!bChanged)
+			{
+				break;
+			}
+		}
+	}
+
+	void EvictToReachable(TArray<int32>& InOutAssignment, const TArray<FVector2D>& EntityPositions,
+		const TArray<FVector2D>& SlotPositions, int32 NumSlots, int32 NumFiles, const TArray<uint8>& StuckFlags)
+	{
+		const int32 NumEntities = InOutAssignment.Num();
+		if (NumSlots <= 0 || NumFiles <= 0 || NumEntities == 0)
+		{
+			return;
+		}
+
+		TArray<int32> SlotOwner;
+		SlotOwner.Init(INDEX_NONE, NumSlots);
+		for (int32 E = 0; E < NumEntities; ++E)
+		{
+			const int32 S = InOutAssignment[E];
+			if (S >= 0 && S < NumSlots)
+			{
+				SlotOwner[S] = E;
+			}
+		}
+
+		// Roster order -- deterministic; a later eviction observes the
+		// earlier ones' result.
+		for (int32 E = 0; E < NumEntities; ++E)
+		{
+			if (E >= StuckFlags.Num() || StuckFlags[E] == 0 || !EntityPositions.IsValidIndex(E))
+			{
+				continue;
+			}
+			const int32 OldSlot = InOutAssignment[E];
+			if (OldSlot < 0 || OldSlot >= NumSlots)
+			{
+				continue; // no owned slot -> no sink; the greedy vacant-bid path already covers it
+			}
+
+			// Claim the slot nearest the BODY, occupancy ignored (the stuck
+			// entity stands outside the block; its nearest slot is a
+			// reachable perimeter slot). Ties: lowest slot index.
+			float BestDistSq = FLT_MAX;
+			int32 NewSlot = INDEX_NONE;
+			for (int32 S = 0; S < NumSlots; ++S)
+			{
+				const float DistSq = FVector2D::DistSquared(EntityPositions[E], SlotPositions[S]);
+				if (DistSq < BestDistSq)
+				{
+					BestDistSq = DistSq;
+					NewSlot = S;
+				}
+			}
+			if (NewSlot == INDEX_NONE || NewSlot == OldSlot)
+			{
+				continue; // already owns the nearest slot: nothing to fix
+			}
+			// 2-opt-style churn guard (the predictive swaps' doctrine):
+			// evict only for a REAL reachability win -- the claimed slot
+			// at less than half the old slot's squared distance. Marginally
+			// nearer slots never justify displacing a settled owner.
+			if (!(BestDistSq * 2.f < FVector2D::DistSquared(EntityPositions[E], SlotPositions[OldSlot])))
+			{
+				continue;
+			}
+
+			// Monotone staircase NewSlot -> OldSlot: file axis first (toward
+			// the sink's file), then the rank axis. Every hop lands on an
+			// existing slot or the eviction is skipped (a partial rear rank
+			// can make an intermediate step nonexistent).
+			const int32 SinkR = OldSlot / NumFiles;
+			const int32 SinkF = OldSlot % NumFiles;
+			TArray<int32> Path; // slots AFTER NewSlot, ending AT OldSlot
+			{
+				int32 R = NewSlot / NumFiles;
+				int32 F = NewSlot % NumFiles;
+				bool bValid = true;
+				while ((R != SinkR || F != SinkF) && bValid)
+				{
+					if (F != SinkF)
+					{
+						F += (SinkF > F) ? 1 : -1;
+					}
+					else
+					{
+						R += (SinkR > R) ? 1 : -1;
+					}
+					const int32 Idx = R * NumFiles + F;
+					if (Idx < 0 || Idx >= NumSlots)
+					{
+						bValid = false;
+					}
+					else
+					{
+						Path.Add(Idx);
+					}
+				}
+				if (!bValid)
+				{
+					continue; // staircase leaves the slot set: keep the current assignment
+				}
+			}
+
+			// E takes the claimed slot; the displaced owner chain walks the
+			// staircase one slot each and terminates on E's vacated old slot
+			// (the sink) -- or earlier, absorbed by a mid-path vacancy, which
+			// then migrates to the sink for CloseGaps to drain.
+			int32 Carry = SlotOwner[NewSlot];
+			SlotOwner[NewSlot] = E;
+			InOutAssignment[E] = NewSlot;
+			SlotOwner[OldSlot] = INDEX_NONE; // E vacated -- the sink
+			for (int32 P = 0; P < Path.Num(); ++P)
+			{
+				if (Carry == INDEX_NONE)
+				{
+					break; // mid-path vacancy absorbed the chain
+				}
+				const int32 Next = SlotOwner[Path[P]];
+				InOutAssignment[Carry] = Path[P];
+				SlotOwner[Path[P]] = Carry;
+				Carry = Next;
+			}
+		}
+	}
+
+	void DiffuseVacancies(TArray<int32>& InOutAssignment, const TArray<FVector2D>& EntityPositions,
+		const TArray<FVector2D>& SlotPositions, int32 NumSlots, int32 NumFiles,
+		float StaleRadiusM, const TArray<uint8>& SkipFlags)
+	{
+		const int32 NumEntities = InOutAssignment.Num();
+		if (NumSlots <= 0 || NumFiles <= 0 || NumEntities == 0 || StaleRadiusM <= 0.f)
+		{
+			return; // degenerate layout or the policy is off
+		}
+
+		// Inverse map slot -> entity (the CloseGaps contract), rebuilt
+		// after each mutation phase so later passes observe earlier ones.
+		TArray<int32> SlotOwner;
+		SlotOwner.Init(INDEX_NONE, NumSlots);
+		for (int32 E = 0; E < NumEntities; ++E)
+		{
+			const int32 S = InOutAssignment[E];
+			if (S >= 0 && S < NumSlots)
+			{
+				SlotOwner[S] = E;
+			}
+		}
+
+		// Pass 1 -- evict stale claims. This is the trigger the v1 patch
+		// never had: an entity farther than StaleRadiusM from the slot it
+		// HOLDS does not occupy it in any physical sense, but the greedy
+		// bijection still counts it -- no INDEX_NONE appears, the rank-gap
+		// detector stays quiet, CloseGaps finds nothing to close. Dropping
+		// the claim converts the VIRTUAL hole (claimed-but-far) into a real
+		// vacancy the cascade can drain. Roster order; distance ties are
+		// impossible (threshold comparison).
+		const float StaleSq = StaleRadiusM * StaleRadiusM;
+		for (int32 E = 0; E < NumEntities; ++E)
+		{
+			const int32 S = InOutAssignment[E];
+			if (S < 0 || S >= NumSlots)
+			{
+				continue; // already a hole-walker; the re-home pass covers it
+			}
+			if (SkipFlags.IsValidIndex(E) && SkipFlags[E] != 0)
+			{
+				continue; // combat ring owns the motion; the distance is not staleness
+			}
+			if (!EntityPositions.IsValidIndex(E) || !SlotPositions.IsValidIndex(S))
+			{
+				continue;
+			}
+			if (FVector2D::DistSquared(EntityPositions[E], SlotPositions[S]) > StaleSq)
+			{
+				SlotOwner[S] = INDEX_NONE;
+				InOutAssignment[E] = INDEX_NONE;
+			}
+		}
+
+		// Pass 2 -- the CloseGaps cascade over the opened slots: the
+		// directly-behind (else directly-right) neighbor claims each hole
+		// and moves in; holes walk one step per fill toward the rear-right
+		// drain corner. In a full unit each eviction opened exactly one
+		// hole, and the cascade drags it to the rear where the evicted
+		// entity physically is -- the vacancy diffuses to its owner.
+		CloseGaps(InOutAssignment, NumSlots, NumFiles);
+
+		// Rebuild the inverse map: the cascade mutated the assignment.
+		SlotOwner.Init(INDEX_NONE, NumSlots);
+		for (int32 E = 0; E < NumEntities; ++E)
+		{
+			const int32 S = InOutAssignment[E];
+			if (S >= 0 && S < NumSlots)
+			{
+				SlotOwner[S] = E;
+			}
+		}
+
+		// Pass 3 -- re-home: evicted (and never-assigned) entities walk
+		// into the remaining holes nearest their BODIES. Roster order,
+		// lowest slot index on distance ties (the greedy contract).
+		// Surplus entities (roster > slots) find no hole and stay
+		// INDEX_NONE -- the bijection is never forced.
+		for (int32 E = 0; E < NumEntities; ++E)
+		{
+			if (InOutAssignment[E] != INDEX_NONE || !EntityPositions.IsValidIndex(E))
+			{
+				continue;
+			}
+			float BestDistSq = FLT_MAX;
+			int32 BestSlot = INDEX_NONE;
+			for (int32 S = 0; S < NumSlots; ++S)
+			{
+				if (SlotOwner[S] != INDEX_NONE || !SlotPositions.IsValidIndex(S))
+				{
+					continue;
+				}
+				const float DistSq = FVector2D::DistSquared(EntityPositions[E], SlotPositions[S]);
+				if (DistSq < BestDistSq)
+				{
+					BestDistSq = DistSq;
+					BestSlot = S;
+				}
+			}
+			if (BestSlot != INDEX_NONE)
+			{
+				SlotOwner[BestSlot] = E;
+				InOutAssignment[E] = BestSlot;
+			}
+		}
+	}
 }
 
 bool FReflowScheduler::ConsumeIfDue(float DT, bool bRankGapDetected)

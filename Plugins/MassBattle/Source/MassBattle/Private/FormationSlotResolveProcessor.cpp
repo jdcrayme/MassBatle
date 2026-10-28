@@ -39,6 +39,40 @@ namespace
 		TEXT("Max file columns an entity may shift during a reflow (k in the T1.1 bound)."),
 		ECVF_Default);
 
+	// Formation-flow rule 1 (owner proposal 2026-10-28): directional gap
+	// closure. After every greedy (re)assignment, vacant slots fill from
+	// their directly-behind occupant (fill front) or directly-right occupant
+	// (fill left), so holes drain to the rear-right corner instead of
+	// persisting mid-formation while the unit marches. 0 keeps the greedy
+	// result byte-for-byte. Rule 2 (stuck re-homing) is gated servo-side by
+	// Battle.Movement.StuckReawardLevel -- the A/B matrix:
+	//   GapCascade=0, StuckReawardLevel=0 -> legacy byte-for-byte
+	//   GapCascade=1, StuckReawardLevel=0 -> rule 1 only (gap closure)
+	//   GapCascade=0, StuckReawardLevel>0 -> rule 2 only (stuck re-homing)
+	//   GapCascade=1, StuckReawardLevel>0 -> full formation flow
+	TAutoConsoleVariable<int32> GBattleMovementGapCascade(
+		TEXT("Battle.Movement.GapCascade"),
+		1,
+		TEXT("1 = directional gap closure after slot assignment: fill front / fill left, holes drain to the rear-right (owner formation-flow rule 1)."),
+		ECVF_Default);
+
+	// Formation flow v2 (owner observation 2026-10-28): the distance at which a
+	// HELD slot claim goes stale -- the entity is "nowhere near it" and the
+	// claim is dropped so the vacancy can diffuse (DiffuseVacancies: evict,
+	// cascade, re-home). v1's cascade never fired in a full unit because the
+	// greedy bijection leaves no INDEX_NONE slots: the holes the owner observed
+	// were VIRTUAL (claimed-but-far), invisible to the rank-gap trigger and to
+	// CloseGaps alike. This radius converts them into real vacancies. Calibrated
+	// well beyond dressing jitter (SlotReachEps 0.35) and the unit-level
+	// DressBreak (1.8): 3.0 m is unambiguously "not in the slot" while a
+	// mid-catchup entity walking its slot stays under it. 0 disables -- v1
+	// behavior (CloseGaps only) byte-for-byte.
+	TAutoConsoleVariable<float> GBattleMovementStaleClaimRadius(
+		TEXT("Battle.Movement.StaleClaimRadius"),
+		3.f,
+		TEXT("Distance from its held slot at which an entity's claim goes stale and the vacancy diffuses (formation-flow v2; 0 = off)."),
+		ECVF_Default);
+
 	// TW-style fan-in peel (arch §8.1 amendment): while a field path exists,
 	// an entity targets its destination-layout slot whenever that is the
 	// closer walk than its traveling slot -- entities stream directly into
@@ -66,10 +100,18 @@ namespace
 	// (sort-matching final assignment at layout re-decisions), C3 (the
 	// march->final target blend with the per-soldier handoff latch), C4's
 	// arrival-deletion (UnitLocomotion side) and C5 (generalized rest-facing,
-	// Integrate side). 0 keeps the pre-phase-2 pipeline byte-for-byte.
+	// Integrate side).
+	// OWNER DEFAULT FLIP (2026-10-28, formation-flow v2): 0 kept the pre-phase-2
+	// pipeline byte-for-byte for baseline A/B; the owner's symptom report
+	// (tail entities dragged back, overshoot at the moving slot, late fall-back
+	// to finals) IS the flag-off pipeline -- the binary fan-in peel flips
+	// targets across a 0.3 m deadband and the servo settle basin (the damped
+	// final meter that kills the micro-orbit) rides this same switch. The
+	// phase-2 C machinery is built and measured; it now ships ON. Restore the
+	// legacy tier with `Battle.Movement.ProgressiveFallIn 0`.
 	TAutoConsoleVariable<int32> GBattleMovementProgressiveFallIn(
 		TEXT("Battle.Movement.ProgressiveFallIn"),
-		0,
+		1,
 		TEXT("1 = TW progressive fall-in: final slots from order time, target blend march->final, early handoff, no arrival re-decision (phase 2 C)."),
 		ECVF_Default);
 
@@ -187,6 +229,8 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 		static thread_local TArray<float> TLPostYaw, TLPostZCm, TLSlotYaw;
 		static thread_local TArray<int32> TLAssignment, TLNewAssignment;
 		static thread_local TArray<bool> TLSlotOccupied;
+		static thread_local TArray<uint8> TLStuckFlags;
+		static thread_local TArray<uint8> TLStaleSkipFlags;
 		static thread_local FBattlePlannedPath TLPathM;
 
 		FUnitFormationSharedFragment& Formation = Context.GetMutableSharedFragment<FUnitFormationSharedFragment>();
@@ -406,7 +450,8 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 			const float RemainingM = FMath::Max(0.f, PathM.TotalLength - Formation.PathS * 0.01f);
 			const int32 NumRanksLayout = FMath::Max(1, FMath::CeilToInt(static_cast<float>(Formation.NumSlots) / Formation.NumFiles));
 			AlphaUnit = FUnitLocomotion::FallInBlendAlpha(RemainingM,
-				FUnitLocomotion::FallInMorphDistance(MorphDistCvarM, NumRanksLayout, RankSpacingM));
+				FUnitLocomotion::FallInMorphDistance(MorphDistCvarM, NumRanksLayout, RankSpacingM,
+					Formation.NumFiles, FileSpacingM));
 		}
 
 		// ---- Batched reflow (arch §8.4): 0.5 s cadence or rank-gap trigger ----
@@ -414,9 +459,28 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 		Assignment.Reset(NumEntities);
 		TArray<bool>& SlotOccupied = TLSlotOccupied;
 		SlotOccupied.Init(false, Formation.NumSlots);
+		// Formation-flow rule 2 trigger: servo-ladder stuck marks (written by
+		// ServoProcessor; one frame of lag at this 0.5 s cadence). A marked
+		// entity's slot is physically unreachable -- the reflow must fire and
+		// re-home it at the perimeter instead of letting it orbit the block.
+		// Formation-flow v2 skip flags: an entity whose motion is owned by a
+		// combat ring is exempt from STALE-CLAIM eviction -- its distance to
+		// the held slot is combat displacement, not a formation hole, and
+		// evicting it every 0.5 s would churn the assignment for no gain (the
+		// ring, not the slot, owns the walk).
+		TArray<uint8>& StuckFlags = TLStuckFlags;
+		StuckFlags.Init(0, NumEntities);
+		TArray<uint8>& StaleSkipFlags = TLStaleSkipFlags;
+		StaleSkipFlags.Init(0, NumEntities);
+		bool bStuckPresent = false;
+		const auto CombatPairView = Context.GetFragmentView<FCombatPairFragment>();
 		for (int32 i = 0; i < NumEntities; ++i)
 		{
-			Assignment.Add(Context.GetFragmentView<FSlotAssignmentFragment>()[i].SlotIndex);
+			const FSlotAssignmentFragment& SlotFrag = Context.GetFragmentView<FSlotAssignmentFragment>()[i];
+			Assignment.Add(SlotFrag.SlotIndex);
+			StuckFlags[i] = SlotFrag.StuckMark;
+			bStuckPresent = bStuckPresent || SlotFrag.StuckMark != 0;
+			StaleSkipFlags[i] = (CombatPairView.Num() == NumEntities && CombatPairView[i].bRingValid != 0) ? 1 : 0;
 			if (Assignment[i] != INDEX_NONE && Assignment[i] < Formation.NumSlots)
 			{
 				SlotOccupied[Assignment[i]] = true;
@@ -472,11 +536,13 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 		// Phase 2 B3 march stickiness (F-7): while a path is active and the
 		// block is dressed, the interval reflow + predictive swaps are churn --
 		// skip them. The cooldown still decays, so a later tear reflows on the
-		// first due tick; rank gaps and layout re-decisions bypass the gate.
+		// first due tick; rank gaps, layout re-decisions and stuck entities
+		// (formation-flow rule 2: a blocked-out entity must not wait out the
+		// sticky gate) bypass it.
 		const bool bMarchSticky = GBattleMovementMarchStickiness.GetValueOnAnyThread() != 0
 			&& FUnitLocomotion::MarchReflowSticky(bHasPath, Formation.MaxSlotErrorM, DressBreakM);
 		bool bIntervalReflowDue = false;
-		if ((bMarchSticky || bFinalOwnedNoPath) && !bRankGap)
+		if ((bMarchSticky || bFinalOwnedNoPath) && !bRankGap && !bStuckPresent)
 		{
 			// Stickiness (B3) / finals-owned (C): decay without consuming --
 			// a later tear or rank gap reflows on the first due tick.
@@ -537,6 +603,54 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 					TArray<FIntPoint> Pairs;
 					FSlotAssigner::FindCrossingPairs(EntityPosM, VelM, NewAssignment, SlotPosM, 1.0f, 0.5f, Pairs);
 					FSlotAssigner::ApplyPredictiveSwaps(NewAssignment, Pairs, EntityPosM, SlotPosM);
+				}
+
+				// ---- Formation flow (owner proposal 2026-10-28) ----
+				// Rule 2 (before rule 1: the eviction's vacated sink is
+				// exactly the vacancy CloseGaps should drain). Stuck-marked
+				// entities claim their physically nearest slot regardless of
+				// occupancy; the displaced owners chain one slot each toward
+				// the vacated interior slot. A blocked-out entity re-homes at
+				// the perimeter in ONE reflow instead of orbiting the block.
+				// Gated servo-side by Battle.Movement.StuckReawardLevel --
+				// no marks, no call.
+				if (bStuckPresent)
+				{
+					FSlotAssigner::EvictToReachable(NewAssignment, EntityPosM, SlotPosM,
+						Formation.NumSlots, Formation.NumFiles, StuckFlags);
+				}
+				// Formation-flow v2 (owner observation: "the slot is claimed
+				// even though the entity is nowhere near it"): DISTANCE-
+				// triggered vacancy diffusion. The v1 triggers never saw the
+				// holes the owner observed -- CloseGaps keys on INDEX_NONE
+				// (a full bijection has none) and EvictToReachable keys on
+				// the SLOW-ladder (an orbiting entity moves at full servo
+				// speed and never escalates). DiffuseVacancies evicts claims
+				// held from beyond Battle.Movement.StaleClaimRadius, lets
+				// the cascade pull the neighbors in, and re-homes the
+				// evicted at the hole nearest their body -- one reflow, no
+				// orbit. Gates: NOT on the layout re-decision frame (the
+				// layout just changed; distances are transition noise the
+				// unbounded Assign already sorted), NOT inside the C3 blend
+				// (the morph tear is the intended shape change -- the blend
+				// owns convergence, same doctrine as the pace throttle's
+				// AlphaNow gate), and only while the fall-in machinery owns
+				// the approach (bFallIn) or on standing frames (no path:
+				// travel slots ARE the anchor slots, the binary peel is
+				// inert and staleness is real).
+				if (!bBlendEngaged && !bLayoutRedecision && (bFallIn || !bHasPath))
+				{
+					FSlotAssigner::DiffuseVacancies(NewAssignment, EntityPosM, SlotPosM,
+						Formation.NumSlots, Formation.NumFiles,
+						GBattleMovementStaleClaimRadius.GetValueOnAnyThread(), StaleSkipFlags);
+				}
+				// Rule 1: directional gap closure -- fill front, then fill
+				// left; holes drain to the rear-right corner (AssignFinal's
+				// surplus corner, so the finals sort and the cadence agree).
+				// Pure permutation on the greedy bijection.
+				if (GBattleMovementGapCascade.GetValueOnAnyThread() != 0)
+				{
+					FSlotAssigner::CloseGaps(NewAssignment, Formation.NumSlots, Formation.NumFiles);
 				}
 			}
 

@@ -108,9 +108,15 @@ namespace FUnitLocomotion
 		return bLocked;
 	}
 
-	float FallInMorphDistance(const float MorphDistanceCvarM, const int32 NumRanks, const float RankSpacingM)
+	float FallInMorphDistance(const float MorphDistanceCvarM, const int32 NumRanks, const float RankSpacingM,
+		const int32 NumFiles, const float FileSpacingM)
 	{
 		const float DepthM = static_cast<float>(FMath::Max(1, NumRanks)) * RankSpacingM;
-		return FMath::Max(MorphDistanceCvarM, 2.f * DepthM);
+		// Owner rule (2026-10-28): one unit radius = half the frontage.
+		// The blend must be engaged by the time the anchor is that close
+		// -- a wide line's lateral corner walks are the longest final
+		// transitions and must not start at the depth-only floor.
+		const float FrontageM = static_cast<float>(FMath::Max(0, NumFiles - 1)) * FileSpacingM;
+		return FMath::Max3(MorphDistanceCvarM, 2.f * DepthM, 0.5f * FrontageM);
 	}
 }
