@@ -43,7 +43,6 @@ void UChargeProcessor::ConfigureQueries(const TSharedRef<FMassEntityManager>& En
 	ChargeQuery.AddRequirement<FCombatIntentFragment>(EMassFragmentAccess::ReadOnly);
 	ChargeQuery.AddRequirement<FTransformFragment>(EMassFragmentAccess::ReadOnly);
 	ChargeQuery.AddRequirement<FMassVelocityFragment>(EMassFragmentAccess::ReadOnly);
-	ChargeQuery.AddRequirement<FBaseStatsFragment>(EMassFragmentAccess::ReadOnly);
 	ChargeQuery.AddTagRequirement<FDeadTag>(EMassFragmentPresence::None);
 	ChargeQuery.RegisterWithProcessor(*this);
 }
@@ -66,7 +65,6 @@ void UChargeProcessor::Execute(FMassEntityManager& EntityManager, FMassExecution
 		const auto Intents = Context.GetFragmentView<FCombatIntentFragment>();
 		const auto Transforms = Context.GetFragmentView<FTransformFragment>();
 		const auto Velocities = Context.GetFragmentView<FMassVelocityFragment>();
-		const auto Stats = Context.GetFragmentView<FBaseStatsFragment>();
 
 		for (int32 i = 0; i < Context.GetNumEntities(); ++i)
 		{
@@ -126,7 +124,6 @@ void UChargeProcessor::Execute(FMassEntityManager& EntityManager, FMassExecution
 				Pair.ChargeBonusRemaining = FMath::Max(0.f,
 					Pair.ChargeBonusRemaining - FMeleeMath::BaseChargeBonus() * DT / FMath::Max(0.01f, FCombatCVars::ChargeDecayWindow()));
 			}
-			(void)Stats;
 		}
 	});
 }

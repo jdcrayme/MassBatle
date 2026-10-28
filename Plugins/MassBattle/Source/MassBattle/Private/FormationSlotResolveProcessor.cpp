@@ -185,13 +185,6 @@ void UFormationSlotResolveProcessor::ConfigureQueries(const TSharedRef<FMassEnti
 
 void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionContext& Context)
 {
-	static bool bTracedOnce = false;
-	if (!bTracedOnce)
-	{
-		bTracedOnce = true;
-		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT MovementSpine FormationSlotResolve first-execute"));
-	}
-
 	if (GBattleMovementSlotResolve.GetValueOnAnyThread() == 0)
 	{
 		return;

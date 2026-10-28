@@ -198,7 +198,6 @@ void UAssignPairsProcessor::Execute(FMassEntityManager& EntityManager, FMassExec
 		Intent.bAutoEngage = 1;
 		Intent.bHasIntent = true;
 		FUnitHandle Best;
-		float BestDistSq = TNumericLimits<float>::Max();
 		for (const TPair<FEngagementKey, int32>& Rec : RecordIndexMap)
 		{
 			const FUnitHandle Enemy = Rec.Key.Attacker == OrderPair.Key ? Rec.Key.Defender
@@ -215,7 +214,6 @@ void UAssignPairsProcessor::Execute(FMassEntityManager& EntityManager, FMassExec
 			{
 				Best = Enemy;
 			}
-			(void)BestDistSq;
 		}
 		Intent.TargetUnit = Best;
 		UnitIntents.Add(OrderPair.Key, Intent);

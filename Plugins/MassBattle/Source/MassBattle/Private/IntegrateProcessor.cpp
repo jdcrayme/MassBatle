@@ -92,13 +92,6 @@ void UIntegrateProcessor::ConfigureQueries(const TSharedRef<FMassEntityManager>&
 
 void UIntegrateProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionContext& Context)
 {
-	static bool bTracedOnce = false;
-	if (!bTracedOnce)
-	{
-		bTracedOnce = true;
-		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT MovementSpine Integrate first-execute"));
-	}
-
 	if (GBattleMovementIntegrate.GetValueOnAnyThread() == 0)
 	{
 		return;

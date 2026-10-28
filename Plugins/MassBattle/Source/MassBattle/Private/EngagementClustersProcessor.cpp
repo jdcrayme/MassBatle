@@ -199,19 +199,6 @@ void UEngagementClustersProcessor::Execute(FMassEntityManager& EntityManager, FM
 		Registry->SetEngagedCount(Node.Unit, EngagedCount.FindOrAdd(Node.Unit));
 	}
 
-	static int32 DbgRuns = 0;
-	if (DbgRuns < 3)
-	{
-		++DbgRuns;
-		FString NodeDump;
-		for (const FCombatSolver::FUnitClusterNode& Node : Nodes)
-		{
-			NodeDump += FString::Printf(TEXT("[%u:%u (%.1f,%.1f) w%.1fxh%.1f] "),
-				Node.Unit.Index, Node.Unit.Serial, Node.AnchorM.X, Node.AnchorM.Y, Node.HalfAlongM, Node.HalfAcrossM);
-		}
-		UE_LOG(LogTemp, Display, TEXT("ClusterDbg runs=%d nodes=%d contacts=%d %s"),
-			DbgRuns, Nodes.Num(), ContactPairs.Num(), *NodeDump);
-	}
 	int32 ClusterCount = 0;
 	for (int32 i = 0; i < ClusterIds.Num(); ++i)
 	{
@@ -234,15 +221,6 @@ void UEngagementClustersProcessor::Execute(FMassEntityManager& EntityManager, FM
 			{
 				continue;
 			}
-			const FUnitHandle* AttackerNode = nullptr;
-			const FUnitHandle* DefenderNode = nullptr;
-			for (const FCombatSolver::FUnitClusterNode& Node : Nodes)
-			{
-				if (Node.Unit == Key.Attacker) { AttackerNode = &Node.Unit; }
-				if (Node.Unit == Key.Defender) { DefenderNode = &Node.Unit; }
-			}
-			(void)AttackerNode;
-			(void)DefenderNode;
 			Debug->EnqueueEngagementLine(Key.Attacker, Key.Defender,
 				static_cast<int32>(Record->Mode), Record->DesiredPressure, Record->AssignedAttackers);
 		}

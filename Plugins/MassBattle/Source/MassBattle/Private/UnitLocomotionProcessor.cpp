@@ -164,13 +164,6 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 {
 	// One-time pipeline-ordering trace (phase-1 Task 2 verify; Display so the
 	// func-tier boot log carries it without log-level changes -- not hot path).
-	static bool bTracedOnce = false;
-	if (!bTracedOnce)
-	{
-		bTracedOnce = true;
-		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT MovementSpine UnitLocomotion first-execute"));
-	}
-
 	if (GBattleMovementLocomotion.GetValueOnGameThread() == 0)
 	{
 		return;

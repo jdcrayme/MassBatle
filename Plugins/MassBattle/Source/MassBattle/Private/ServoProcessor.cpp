@@ -163,13 +163,6 @@ void UServoProcessor::ConfigureQueries(const TSharedRef<FMassEntityManager>& Ent
 
 void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionContext& Context)
 {
-	static bool bTracedOnce = false;
-	if (!bTracedOnce)
-	{
-		bTracedOnce = true;
-		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT MovementSpine Servo first-execute"));
-	}
-
 	if (GBattleMovementServo.GetValueOnAnyThread() == 0)
 	{
 		// Audit M6: a gated-out servo must still zero planar velocity, or the
