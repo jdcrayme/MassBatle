@@ -22,7 +22,7 @@
 | CI state | Per-commit gate + Jenkins `massbattle-gate` green; nightly runs smoke + T1.8 movement soak on the staged build (garrison-phase run green; baseline committed) |
 | Phase 2 — engagement solver & melee (the combat heart; brief at `Docs/phases/phase-2/brief-engagement.md`) | **COMPLETE** 2026-10-27 — unit 66/66, func 21/21; T2.1–T2.9 green (pairing 0.452 ms < 0.5 ms @ 1k); ADR-24 StateTree REJECTED; report at `Docs/phases/phase-2/report-engagement.md` |
 | CI state | Per-commit gate + Jenkins `massbattle-gate` green; nightly runs smoke + T1.8 movement soak on the staged build (garrison-phase run green; baseline committed; the engagement soak variant rides the next staged run) |
-| **Next** | Phase 3 — ranged stack (roadmap Part A): projectile pooling, ballistic arcs, the impact-seeded pairs (`Battle.Combat` records carry the seam), the EDU ranged fields (stat_sec, bow rows). Also pending: the D3 movement fold-in checklist (`Docs/phases/phase-2/report.md` §6) and the ADR-22..26 owner-applied proposals (ADR-24's rejection evidence is complete). |
+| **Next** | Phase 3 -- ranged stack (roadmap Part A): projectile pooling, ballistic arcs, the impact-seeded pairs (`Battle.Combat` records carry the seam), the EDU ranged fields (stat_sec, bow rows). Spec at `Docs/spec/ranged-stack.md`; brief at `Docs/phases/phase-3/brief.md`; kickoff patches `Patches/0010..0016` (branch `phase3/kickoff`) deliver the seams + gate skeletons; PR-6..PR-9 in `Patches/PRs/` carry the UE/MCP-gated remainder. Also pending: the D3 movement fold-in checklist (`Docs/phases/phase-2/report.md` §6) and the ADR-22..26 owner-applied proposals (ADR-24's rejection evidence is complete). |
 
 **Deferred items carried into Phase 2** (from A4 dispositions + report §4): shipping split of test deps — **DONE in Phase 1** (`MassBattleTest` DeveloperTool module) · `.uproject` `TargetAllowList` pruning of MCP toolset plugins (owner call, still deferred) · EDU floats >2 decimals remain rounded (documented rule) · soak-map cook-list entry — **DONE in Phase 1** (`MapsToCook` + `Content/Data` staging) · re-baseline `entity_spawn_80_us` on the nightly hardware path (T2.9).
 
@@ -37,6 +37,7 @@
 | `Docs/spec/architecture.md` | System architecture + ADR decision log (ADR-01…17) | **Living spec** |
 | `Docs/spec/garrison-movement.md` | Garrison movement design spec: B1-B7 behavior contract, data model, mechanics §4, ADR-18…21 proposals | **Living spec** (owner-authored; implementing agents read cited sections only) |
 | `Docs/spec/engagement-and-melee.md` | Engagement solver & melee design spec: §0 EC-table acceptance contract, §3 data model, §4 mechanics, §6 touch points, ADR-22…26 proposals | **Living spec** (owner-authored; implementing agents read cited sections only) |
+| `Docs/spec/ranged-stack.md` | Ranged stack design spec (Phase 3): §0 RC-table acceptance contract, §3 data model (fragment + pool), §4 mechanics (ballistics, LOS, volleys, impacts), §6 touch points, ADR-27…31 proposals | **Living spec** (owner-authored; implementing agents read cited sections only) |
 | `Docs/spec/roadmap-and-testing.md` | Build order (Phase 0–6), test gates T0–T6, scenarios S1–S7, automation strategy | **Living spec** |
 | `Docs/spec/reference-machine.md` | Perf-baseline hardware record (R10) | **Living** |
 | `Docs/reference/engine-api-5.8.md` | Pinned UE 5.8.4 API reference: Part A audit (C1–C12 verdicts), Part B operational digest (§4.0–§4.13), Part C sources | **Living reference** |
@@ -46,6 +47,7 @@
 | `Docs/phases/phase-0/` | brief · progress · report · audit (foundation run + post-run audit) | **Archive** (report §7 = Phase 1 entry point) |
 | `Docs/phases/phase-1/` | brief · progress · report · audit + the rolled-in garrison run (`brief-garrison` · `progress-garrison` · `report-garrison`) | **Archive** (report §4 + report-garrison §4 = Phase 2 entry points) |
 | `Docs/phases/phase-2/` | Movement-cleanup run: brief · progress · report (**Archive**). Engagement-solver run: `brief-engagement` · `progress-engagement` · `report-engagement` (**Archive**). Post-run audit: `audit-engagement` (2026-10-28) + first-pass verification record: `audit-engagement-verification` (2026-10-28) | |
+| `Docs/phases/phase-3/` | Ranged-stack run: brief (kickoff state inside: the `Patches/0010..0016` seam patches) · progress/report to be written by the implementing agent | **Active** |
 | `Docs/reviews/plan-review-findings.md` | 2026-10-23 plan review: errors E1–E6, risks R1–R13, improvements I1–I7, evidence + citations | **Archive** (referenced by live specs) |
 
 Repo files outside `Docs/` you will be pointed at: `Tools/CI/README.md`, `Tools/CI/JENKINS.md`, `Tools/CI/run_tests.bat` / `nightly.bat` / `compare_baseline.py`, `Baselines/perf/README.md`, `Jenkinsfile`.
