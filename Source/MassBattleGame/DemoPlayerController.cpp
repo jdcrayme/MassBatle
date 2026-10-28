@@ -363,7 +363,7 @@ bool ADemoPlayerController::PickUnitAtScreen(const FVector2D& ScreenPos, FUnitHa
 			continue;
 		}
 		FVector2D Proj;
-		if (!ProjectWorldLocationToScreen(FVector(Info.BodyCenterCm.X, Info.BodyCenterCm.Y, BodyLabelZCm), Proj))
+		if (!ProjectWorldLocationToScreen(FVector(Info.BodyCenterCm.X, Info.BodyCenterCm.Y, DemoUi::BodyLabelZCm), Proj))
 		{
 			continue;
 		}
@@ -457,7 +457,7 @@ void ADemoPlayerController::OnLMBReleased()
 				continue;
 			}
 			FVector2D Proj;
-			if (ProjectWorldLocationToScreen(FVector(Info.BodyCenterCm.X, Info.BodyCenterCm.Y, BodyLabelZCm), Proj)
+			if (ProjectWorldLocationToScreen(FVector(Info.BodyCenterCm.X, Info.BodyCenterCm.Y, DemoUi::BodyLabelZCm), Proj)
 				&& Box.IsInside(Proj))
 			{
 				Marquee.Add(Handle);
