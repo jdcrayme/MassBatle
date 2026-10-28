@@ -1,6 +1,7 @@
 // EngagementClustersProcessor.cpp -- the 4 Hz record machine (task 5; spec §4.2).
 #include "EngagementClustersProcessor.h"
 #include "BattleEngagement.h"
+#include "BattleTypes.h"
 #include "BattleFragments.h"
 #include "BattleDebugSubsystem.h"
 #include "BattleRegistry.h"
@@ -85,10 +86,12 @@ void UEngagementClustersProcessor::Execute(FMassEntityManager& EntityManager, FM
 	});
 
 	// -- Contact pairs: OBBs dilated by the engage distance (radius sum +
-	// reach, one scalar; each OBB inflated by half so the sum matches). --
-	constexpr float BodyRadiusM = 0.4f;    // fact 1.9
-	constexpr float MaxReachM = 0.7f;      // normal melee reach (spear handled per-pair later)
-	const float Dilation = (2.f * BodyRadiusM + MaxReachM) * 0.5f;
+	// reach, one scalar; each OBB inflated by half so the sum matches).
+	// B-1: the body radius + normal-reach literals live in the seam now --
+	// contact detection and pairing must read the SAME numbers.
+	static const FCombatSolver::FAssignContext ContactContext; // default reach table
+	const float Dilation = (FCombatSolver::Contact::BodyRadiusM * 2.f
+		+ ContactContext.ReachByClassM[static_cast<int32>(EBattleWeaponReach::Normal)]) * 0.5f;
 	TArray<FIntPoint> ContactPairs;
 	for (int32 A = 0; A < Nodes.Num(); ++A)
 	{

@@ -212,7 +212,7 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 			Entry.Vel = FVector2D(Velocities[i].Value.X, Velocities[i].Value.Y) * 0.01f;
 			Entry.Owner = Owners[i].Owner;
 			Entry.HandleIndex = Context.GetEntity(i).Index;
-			Entry.RadiusM = 0.4f; // FAgentRadiusFragment 40 cm (fact 1.9); cavalry widens in Task 9
+			Entry.RadiusM = FCombatSolver::Contact::BodyRadiusM; // fact 1.9; cavalry widens in Task 9
 			Snapshot.Add(Entry);
 		}
 	});
@@ -583,7 +583,7 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 				}
 				const float WeightMul = FUnstuckLadder::AvoidanceWeightMultiplier(ServoStates[i].LadderLevel);
 				FVector2D Deflection = FUnitServo::ComputeAvoidanceDeflection(
-					PosM, DesiredVel, 0.4f, MyHandle, Neighbors, Weight * WeightMul);
+					PosM, DesiredVel, FCombatSolver::Contact::BodyRadiusM, MyHandle, Neighbors, Weight * WeightMul);
 				// Audit M4: the accumulated push is unbounded by construction
 				// (full Combined per overlapping neighbor); clamp it so the
 				// blended velocity can never ratchet past the §8.2 unit limit.
@@ -624,7 +624,7 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 						}
 						const FVector2D Rel = Entry.Pos - PosM;
 						const float Dist = Rel.Size();
-						constexpr float CombinedRadius = 0.8f; // 40 cm + 40 cm (fact 1.9)
+						constexpr float CombinedRadius = 2.f * FCombatSolver::Contact::BodyRadiusM; // fact 1.9
 						if (Dist > CombinedRadius + 2.2f)
 						{
 							continue;
@@ -795,7 +795,7 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 				bool bTouchingTeammate = false;
 				if (State == EBattleMovementState::ManeuverToSlot || State == EBattleMovementState::HoldSlot)
 				{
-					const float TouchSq = FMath::Square(2.f * 0.4f); // sum of 40 cm body radii (fact 1.9)
+					const float TouchSq = FMath::Square(2.f * FCombatSolver::Contact::BodyRadiusM); // fact 1.9
 					for (const FSnapshotEntry& Entry : Snapshot)
 					{
 						if (Entry.HandleIndex == MyHandle || Entry.Owner != MyOwner)

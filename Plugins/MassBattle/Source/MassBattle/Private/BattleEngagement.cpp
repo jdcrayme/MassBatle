@@ -241,38 +241,38 @@ namespace FCombatSolver
 		return DefenderAlive * FCombatCVars::FormedSlots();
 	}
 
+	float RingRadiusFor(uint8 ReachClass, const FAssignContext& Context)
+	{
+		const uint8 ClassIdx = FMath::Min<uint8>(ReachClass, 7);
+		return Context.DefenderRadiusM + Context.AttackerRadiusM + Context.ReachByClassM[ClassIdx];
+	}
+
+	const FAssignDefenderState* FindDefender(const TArray<FAssignDefenderState>& Defenders, FMassEntityHandle Entity)
+	{
+		int32 Lo = 0;
+		int32 Hi = Defenders.Num() - 1;
+		while (Lo <= Hi)
+		{
+			const int32 Mid = (Lo + Hi) / 2;
+			if (Defenders[Mid].Entity == Entity)
+			{
+				return &Defenders[Mid];
+			}
+			if (Defenders[Mid].Entity.Index < Entity.Index ||
+				(Defenders[Mid].Entity.Index == Entity.Index && Defenders[Mid].Entity.SerialNumber < Entity.SerialNumber))
+			{
+				Lo = Mid + 1;
+			}
+			else
+			{
+				Hi = Mid - 1;
+			}
+		}
+		return nullptr;
+	}
+
 	namespace
 	{
-		/** Binary search over the handle-sorted defender table. */
-		const FAssignDefenderState* FindDefenderSorted(const TArray<FAssignDefenderState>& Defenders, FMassEntityHandle Entity)
-		{
-			int32 Lo = 0;
-			int32 Hi = Defenders.Num() - 1;
-			while (Lo <= Hi)
-			{
-				const int32 Mid = (Lo + Hi) / 2;
-				if (Defenders[Mid].Entity == Entity)
-				{
-					return &Defenders[Mid];
-				}
-				if (Defenders[Mid].Entity.Index < Entity.Index ||
-					(Defenders[Mid].Entity.Index == Entity.Index && Defenders[Mid].Entity.SerialNumber < Entity.SerialNumber))
-				{
-					Lo = Mid + 1;
-				}
-				else
-				{
-					Hi = Mid - 1;
-				}
-			}
-			return nullptr;
-		}
-
-		float RingRadiusFor(const FAssignSeekerState& Seeker, const FAssignContext& Context)
-		{
-			const uint8 ClassIdx = FMath::Min<uint8>(Seeker.ReachClass, 7);
-			return Context.DefenderRadiusM + Context.AttackerRadiusM + Context.ReachByClassM[ClassIdx];
-		}
 
 		/** Per-defender sector scratch view (Defenders.Num() x 16). */
 		int32* SectorRow(TArray<int32>* Scratch, int32 DefenderIndex)
@@ -418,7 +418,7 @@ namespace FCombatSolver
 			// the same pass see vacated slots -- the <= 1 tick handoff, EC5). --
 			if (S.Target.IsValid())
 			{
-				const FAssignDefenderState* D = FindDefenderSorted(Defenders, S.Target);
+				const FAssignDefenderState* D = FindDefender(Defenders, S.Target);
 				if (!D || D->bValidTarget == 0)
 				{
 					// Target died / stale handle / invalid -> release.
@@ -436,8 +436,8 @@ namespace FCombatSolver
 			}
 			if (S.Target.IsValid())
 			{
-				const FAssignDefenderState* D = FindDefenderSorted(Defenders, S.Target);
-				const float Ring = RingRadiusFor(S, Context);
+				const FAssignDefenderState* D = FindDefender(Defenders, S.Target);
+				const float Ring = RingRadiusFor(S.ReachClass, Context);
 				const float BreakRadius = Ring * Context.BreakRadiusFactor;
 				const float Dist = D ? FVector2D::Distance(S.PosM, D->PosM) : 0.f;
 				if (Dist > BreakRadius && S.PairAge > Hysteresis)

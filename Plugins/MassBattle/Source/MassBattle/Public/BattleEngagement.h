@@ -80,6 +80,18 @@ struct FCombatAttackerView
 
 namespace FCombatSolver
 {
+	// -- Body geometry (ONE home for the 40 cm soldier body radius, fact 1.9) --
+	//
+	// Consumers: the cluster pass's OBB dilation, the assign pass's contact
+	// ring, and the servo's avoidance/touch radii all re-derive the same
+	// body size. Keep it HERE (beside FAssignContext, which carries it into
+	// the seam) -- a per-file retyped 0.4f drifts silently (B-1).
+	namespace Contact
+	{
+		/** Soldier body radius, meters (fact 1.9: FAgentRadiusFragment 40 cm). */
+		constexpr float BodyRadiusM = 0.4f;
+	}
+
 	// -- ContactAngle conventions (ONE value, TWO consumers, spec §4.5) --
 	//
 	// ContactAngle is stored 0-255 (full circle around the defender). Angle 0
@@ -203,6 +215,17 @@ namespace FCombatSolver
 		 *  EBattleWeaponReach); the contact ring + break radius inputs. */
 		float ReachByClassM[8] = { 0.5f, 0.7f, 1.6f, 2.2f, 2.8f, 0.7f, 0.7f, 0.7f };
 	};
+
+	/** Ring distance for a seeker's reach class about a defender:
+	 *  DefenderRadius + AttackerRadius + reach (the seam's ONE ring
+	 *  formula -- the write-back's ring points and the pass's break
+	 *  radius must not re-derive it, B-1). Reach clamped to the table. */
+	MASSBATTLE_API float RingRadiusFor(uint8 ReachClass, const FAssignContext& Context);
+
+	/** Binary search over the handle-sorted defender table (the seam
+	 *  sorts it; callers MUST sort handle-wise before searching). Exposed
+	 *  so processors can stop linear-scanning the mirror (A-4). */
+	MASSBATTLE_API const FAssignDefenderState* FindDefender(const TArray<FAssignDefenderState>& Defenders, FMassEntityHandle Entity);
 
 	// -- Cluster pass pure math (task 5; spec §4.2). The processors are thin
 	//    shims: gather unit bodies + contact pairs, call these, write records. --

@@ -102,7 +102,7 @@ void UChargeProcessor::Execute(FMassEntityManager& EntityManager, FMassExecution
 			// run-up means the contact is not fresh -- the distance gate
 			// covers it, since a standing melee never accumulates).
 			if (Pair.Target.IsValid() && Charge.bConnected == 0
-				&& Charge.DistanceTraveled > 1.f && SpeedM >= Threshold)
+				&& Charge.DistanceTraveled > FMeleeMathConstants::MinChargeRunUpM && SpeedM >= Threshold)
 			{
 				Charge.bConnected = 1;
 				Charge.ImpactSpeed = SpeedM;

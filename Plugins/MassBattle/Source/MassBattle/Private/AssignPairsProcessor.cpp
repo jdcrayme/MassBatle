@@ -477,16 +477,12 @@ void UAssignPairsProcessor::Execute(FMassEntityManager& EntityManager, FMassExec
 				// refresh must not restore it).
 				if (S.Target.IsValid() && S.Target != PrevTarget)
 				{
-					for (const FCombatSolver::FAssignDefenderState& Def : Defenders)
+					if (const FCombatSolver::FAssignDefenderState* Def = FCombatSolver::FindDefender(Defenders, S.Target))
 					{
-						if (Def.Entity == S.Target)
-						{
-							Out.DefenderDefense = Def.Defense;
-							Out.DefenderShield = Def.Shield;
-							Out.DefenderArmor = Def.Armor;
-							Out.DefenderMountRemaining = static_cast<int16>(Def.MountHP);
-							break;
-						}
+						Out.DefenderDefense = Def->Defense;
+						Out.DefenderShield = Def->Shield;
+						Out.DefenderArmor = Def->Armor;
+						Out.DefenderMountRemaining = static_cast<int16>(Def->MountHP);
 					}
 				}
 				Out.ContactAngle = S.ContactAngle;
@@ -501,21 +497,13 @@ void UAssignPairsProcessor::Execute(FMassEntityManager& EntityManager, FMassExec
 				// intent defender's ring (press the line, spec §4.6).
 				const FVector P = Transforms[i].GetTransform().GetTranslation();
 				const FVector2D MyPosM(P.X * 0.01f, P.Y * 0.01f);
-				const uint8 ClassIdx = FMath::Min<uint8>(S.ReachClass, 7);
-				const float RingRadiusM = 0.4f + 0.4f + AssignContext.ReachByClassM[ClassIdx];
+				const float RingRadiusM = FCombatSolver::RingRadiusFor(S.ReachClass, AssignContext);
 				const FCombatSolver::FAssignDefenderState* RingDef = nullptr;
 				float RingAngleDeg = 0.f;
 				bool bRing = false;
 				if (S.Target.IsValid())
 				{
-					for (const FCombatSolver::FAssignDefenderState& Def : Defenders)
-					{
-						if (Def.Entity == S.Target)
-						{
-							RingDef = &Def;
-							break;
-						}
-					}
+					RingDef = FCombatSolver::FindDefender(Defenders, S.Target);
 					RingAngleDeg = static_cast<float>(S.ContactAngle) * (360.f / 255.f);
 					bRing = RingDef != nullptr;
 				}

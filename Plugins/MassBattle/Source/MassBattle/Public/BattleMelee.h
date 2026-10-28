@@ -38,6 +38,9 @@ namespace FMeleeMathConstants
 	// bounded (deterministic; no knockdown RNG v1, spec §4.9).
 	constexpr float KnockbackPerSpeed = 0.6f;  // (m/s)/(m/s above threshold)
 	constexpr float KnockbackMaxMps = 2.5f;
+	// Charge: minimum accumulated run-up (m) before a fast contact counts
+	// as a charge impact (a standing nudge at speed is not a charge, EC7).
+	constexpr float MinChargeRunUpM = 1.f;
 	// Composite HP: landed hits drain the mount pool first, then the rider
 	// (documented simplification: the ORDER does not affect the total; no
 	// riderless mounts v1, spec §10).
