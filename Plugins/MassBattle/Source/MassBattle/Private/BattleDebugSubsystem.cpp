@@ -91,15 +91,100 @@ void UBattleDebugSubsystem::Tick(float DeltaTime)
 	{
 		return;
 	}
+	constexpr int32 CircleSegments = 10;
 	for (const FBattleOverlayLine& Line : Lines)
 	{
-		DrawDebugLine(GetWorld(), Line.From, Line.To, Line.Color, false, 0.f, 0, 2.f);
-		if (Line.LadderLevel > 0)
+		switch (Line.Shape)
 		{
-			const FVector Mid = (Line.From + Line.To) * 0.5f;
-			DrawDebugString(GetWorld(), Mid, FString::Printf(TEXT("L%d"), Line.LadderLevel), nullptr, Line.Color, 0.f, true);
+		case EBattleOverlayShape::Circle:
+		{
+			// Expand the circle into a segment fan (ground plane).
+			float PrevX = Line.From.X + Line.Radius;
+			float PrevY = Line.From.Y;
+			for (int32 Seg = 1; Seg <= CircleSegments; ++Seg)
+			{
+				const float Angle = static_cast<float>(Seg) * (2.f * PI / CircleSegments);
+				const float X = Line.From.X + Line.Radius * FMath::Cos(Angle);
+				const float Y = Line.From.Y + Line.Radius * FMath::Sin(Angle);
+				DrawDebugLine(GetWorld(), FVector(PrevX, PrevY, Line.From.Z), FVector(X, Y, Line.From.Z),
+					Line.Color, false, 0.f, 0, 1.5f);
+				PrevX = X;
+				PrevY = Y;
+			}
+			break;
+		}
+		case EBattleOverlayShape::Rect:
+		{
+			// Yaw-aligned rectangle: center + half-extent + facing.
+			const float Rad = FMath::DegreesToRadians(Line.YawDeg);
+			const FVector2D Forward(FMath::Cos(Rad), FMath::Sin(Rad));
+			const FVector2D Side(-Forward.Y, Forward.X);
+			const FVector2D C(Line.From.X, Line.From.Y);
+			const FVector2D HalfForward = Forward * Line.Radius;
+			const FVector2D HalfSide = Side * Line.Radius;
+			const FVector2D Corners[4] = { C + HalfForward + HalfSide, C - HalfForward + HalfSide,
+				C - HalfForward - HalfSide, C + HalfForward - HalfSide };
+			for (int32 Corner = 0; Corner < 4; ++Corner)
+			{
+				const FVector2D& A = Corners[Corner];
+				const FVector2D& B = Corners[(Corner + 1) & 3];
+				DrawDebugLine(GetWorld(), FVector(A.X, A.Y, Line.From.Z), FVector(B.X, B.Y, Line.From.Z),
+					Line.Color, false, 0.f, 0, 1.5f);
+			}
+			break;
+		}
+		default:
+		{
+			DrawDebugLine(GetWorld(), Line.From, Line.To, Line.Color, false, 0.f, 0, 2.f);
+			if (Line.LadderLevel > 0)
+			{
+				const FVector Mid = (Line.From + Line.To) * 0.5f;
+				DrawDebugString(GetWorld(), Mid, FString::Printf(TEXT("L%d"), Line.LadderLevel), nullptr, Line.Color, 0.f, true);
+			}
+			break;
+		}
 		}
 	}
+
+	// Task 10: corpse rectangles (the debug-side ledger; capped FIFO).
+	for (const FCorpseMark& Corpse : CorpseMarks)
+	{
+		FBattleOverlayLine Rect;
+		Rect.Shape = EBattleOverlayShape::Rect;
+		Rect.From = Corpse.PosCm;
+		Rect.Radius = 40.f; // body half-extent (40 cm radius fact)
+		Rect.YawDeg = Corpse.YawDeg;
+		Rect.Color = FColor(90, 90, 90);
+		// Reuse the rect expansion inline (the draw switch above ran on Lines).
+		const float Rad = FMath::DegreesToRadians(Rect.YawDeg);
+		const FVector2D Forward(FMath::Cos(Rad), FMath::Sin(Rad));
+		const FVector2D Side(-Forward.Y, Forward.X);
+		const FVector2D C(Rect.From.X, Rect.From.Y);
+		const FVector2D HalfForward = Forward * Rect.Radius;
+		const FVector2D HalfSide = Side * Rect.Radius;
+		const FVector2D Corners[4] = { C + HalfForward + HalfSide, C - HalfForward + HalfSide,
+			C - HalfForward - HalfSide, C + HalfForward - HalfSide };
+		for (int32 Corner = 0; Corner < 4; ++Corner)
+		{
+			const FVector2D& A = Corners[Corner];
+			const FVector2D& B = Corners[(Corner + 1) & 3];
+			DrawDebugLine(GetWorld(), FVector(A.X, A.Y, Rect.From.Z), FVector(B.X, B.Y, Rect.From.Z),
+				Rect.Color, false, 0.f, 0, 1.5f);
+		}
+	}
+}
+
+void UBattleDebugSubsystem::RecordCorpse(const FVector& GroundPosCm, float YawDeg)
+{
+	constexpr int32 MaxCorpses = 512;
+	if (CorpseMarks.Num() >= MaxCorpses)
+	{
+		CorpseMarks.RemoveAt(0, CorpseMarks.Num() - MaxCorpses + 1);
+	}
+	FCorpseMark Mark;
+	Mark.PosCm = GroundPosCm;
+	Mark.YawDeg = YawDeg;
+	CorpseMarks.Add(Mark);
 }
 
 TStatId UBattleDebugSubsystem::GetStatId() const

@@ -79,6 +79,7 @@ void UAssignPairsProcessor::Execute(FMassEntityManager& EntityManager, FMassExec
 	UUnitRegistrySubsystem* Registry = World ? World->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
 	UBattleRngSubsystem* Rng = World ? World->GetSubsystem<UBattleRngSubsystem>() : nullptr;
 	UMassEntitySubsystem* Entities = World ? World->GetSubsystem<UMassEntitySubsystem>() : nullptr;
+	UBattleDebugSubsystem* DebugSub = World ? World->GetSubsystem<UBattleDebugSubsystem>() : nullptr;
 	if (!Registry || GCCombatAssign.GetValueOnGameThread() == 0)
 	{
 		return; // flags-off: no pairs form, no combat targets move (byte-identical)
@@ -374,13 +375,14 @@ void UAssignPairsProcessor::Execute(FMassEntityManager& EntityManager, FMassExec
 	AssignContext.SectorScratch = &SectorScratch;
 	const double AssignStart = FPlatformTime::Seconds();
 	FCombatSolver::RunAssignPass(Seekers, Defenders, Records, Tally, AssignContext);
-	if (UBattleDebugSubsystem* Debug = World->GetSubsystem<UBattleDebugSubsystem>())
+	if (DebugSub)
 	{
-		Debug->RecordAssignMs((FPlatformTime::Seconds() - AssignStart) * 1000.0);
+		DebugSub->RecordAssignMs((FPlatformTime::Seconds() - AssignStart) * 1000.0);
 	}
 
 	// ---- Write back: pair fragments + ring points (A12 press ring). ----
 	{
+		const bool bDebugOverlay = DebugSub && DebugSub->IsOverlayShown();
 		int32 SeekerCursor = 0; // into the seam-mutated Seekers (chunk order preserved)
 		SeekerQuery.ForEachEntityChunk(Context, [&](FMassExecutionContext& Context)
 		{
@@ -489,7 +491,24 @@ void UAssignPairsProcessor::Execute(FMassEntityManager& EntityManager, FMassExec
 					Out.bRingValid = 0;
 				}
 
-				// Charge knockback (spec §4.9): the worker-side connect seeds
+					// Task 10 debug pass (B.2 pairing rows): the red attack line to
+				// the paired entity (the write-back has the transforms + the
+				// fresh pair in one place).
+				if (bDebugOverlay && Out.Target.IsValid())
+				{
+					FMassEntityView TargetView(Entities->GetMutableEntityManager(), Out.Target);
+					if (const FTransformFragment* TargetTransform = TargetView.GetFragmentDataPtr<FTransformFragment>())
+					{
+						const FVector TargetP = TargetTransform->GetTransform().GetTranslation();
+						FBattleOverlayLine AttackLine;
+						AttackLine.From = FVector(MyPosM.X * 100.f, MyPosM.Y * 100.f, 30.f);
+						AttackLine.To = FVector(TargetP.X, TargetP.Y, 30.f);
+						AttackLine.Color = FColor(255, 30, 30);
+						DebugSub->EnqueueOverlayLine(AttackLine);
+					}
+				}
+
+			// Charge knockback (spec §4.9): the worker-side connect seeds
 				// ImpactSpeed; THIS game-thread pass applies the one-shot
 				// bounded displacement to the victim's transform along the
 				// attacker's velocity heading -- BEFORE the worker phase (no
@@ -512,9 +531,9 @@ void UAssignPairsProcessor::Execute(FMassEntityManager& EntityManager, FMassExec
 								Pos.X += Heading.X * ImpulseM * 100.f;
 								Pos.Y += Heading.Y * ImpulseM * 100.f;
 								TargetTransform->GetMutableTransform().SetTranslation(Pos);
-								if (UBattleDebugSubsystem* Debug = World->GetSubsystem<UBattleDebugSubsystem>())
+								if (DebugSub)
 								{
-									Debug->RecordKnockback();
+									DebugSub->RecordKnockback();
 								}
 								UE_LOG(LogMassBattle, Display,
 									TEXT("EXEC_RESULT ChargeKnockback Attacker=%u:%u Victim=%u:%u Impulse=%.2fm Heading=(%.2f,%.2f)"),

@@ -25,14 +25,27 @@ struct FBattleFrameMetrics
 	UPROPERTY() double RegistryHash32 = 0.0; // placeholder carrier; Task 10 widens
 };
 
-/** One queued overlay line (world space, centimeters). LadderLevel > 0 draws
- *  a small box marker at the midpoint (A3 unstuck hook). */
+/** Overlay shape kinds (task 10 debug pass). Segment is the phase-1
+ *  primitive; Circle/Rect expand into segments in the game-thread drain
+ *  (workers enqueue ONE primitive, the draw cost lands on the game thread). */
+enum class EBattleOverlayShape : uint8
+{
+	Segment = 0,
+	Circle = 1,   // From = center, Radius = radius (planar, ground Z)
+	Rect = 2      // From = center, Radius = half-extent, YawDeg = facing
+};
+
+/** One queued overlay primitive (world space, centimeters). LadderLevel > 0
+ *  draws a small box marker at the midpoint (A3 unstuck hook). */
 struct FBattleOverlayLine
 {
 	FVector From = FVector::ZeroVector;
 	FVector To = FVector::ZeroVector;
 	FColor Color = FColor::White;
 	int32 LadderLevel = 0;
+	EBattleOverlayShape Shape = EBattleOverlayShape::Segment;
+	float Radius = 0.f;   // Circle radius / Rect half-extent (cm)
+	float YawDeg = 0.f;   // Rect facing
 };
 
 UCLASS()
@@ -72,6 +85,14 @@ public:
 	void EnqueueEngagementLine(FUnitHandle Attacker, FUnitHandle Defender, int32 Mode,
 		int32 DesiredPressure, int32 AssignedAttackers);
 	bool IsOverlayShown() const;
+
+	/** Task 10 debug pass: corpse ledger. MassBattle corpses are destroyed
+	 *  right after the death signal (ADR-15 path), so the classic MassRTS
+	 *  ground rectangle needs a debug-side ledger of the LAST transform,
+	 *  captured here at the death signal (game thread, entity still alive).
+	 *  Capped FIFO -- diagnostic state, never sim-authoritative. */
+	void RecordCorpse(const FVector& GroundPosCm, float YawDeg);
+	int32 GetCorpseCount() const { return CorpseMarks.Num(); }
 
 	// -- Phase 2 combat diagnostics (task 7; worker-writers, atomics) --
 	void RecordCombatRoll(bool bLanded) { ++CombatRolls; if (bLanded) { ++CombatRollsLanded; } }
@@ -134,6 +155,15 @@ private:
 	double TallyMs = 0.0;
 	double AssignMs = 0.0;
 	int32 PerfProbeTicks = -1;
+
+	/** Task 10 corpse ledger (capped FIFO; the overlay draws yaw-aligned
+	 *  rectangles). Game thread only (the death signal receiver). */
+	struct FCorpseMark
+	{
+		FVector PosCm = FVector::ZeroVector;
+		float YawDeg = 0.f;
+	};
+	TArray<FCorpseMark> CorpseMarks;
 	std::atomic<int32> CombatRolls{0};
 	std::atomic<int32> CombatRollsLanded{0};
 	std::atomic<int32> ChargeConnects{0};

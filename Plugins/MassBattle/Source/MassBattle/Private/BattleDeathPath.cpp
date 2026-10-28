@@ -1,4 +1,6 @@
 #include "BattleDeathPath.h"
+#include "BattleDebugSubsystem.h"
+#include "MassCommonFragments.h"
 #include "BattleFragments.h"
 #include "BattleGameplayTags.h"
 #include "BattleRegistry.h"
@@ -112,6 +114,7 @@ void UBattleDeathSignalReceiver::ConfigureQueries(const TSharedRef<FMassEntityMa
 {
 	// Driven by EntitySignals in SignalEntities, not by composition.
 	EntityQuery.AddRequirement<FOwnerUnitFragment>(EMassFragmentAccess::ReadOnly);
+		EntityQuery.AddRequirement<FTransformFragment>(EMassFragmentAccess::ReadOnly);
 }
 
 void UBattleDeathSignalReceiver::SignalEntities(FMassEntityManager& EntityManager, FMassExecutionContext& Context, FMassSignalNameLookup& EntitySignals)
@@ -125,11 +128,23 @@ void UBattleDeathSignalReceiver::SignalEntities(FMassEntityManager& EntityManage
 	EntityQuery.ForEachEntityChunk(Context, [Registry](FMassExecutionContext& Context)
 	{
 		const TConstArrayView<FOwnerUnitFragment> Owners = Context.GetFragmentView<FOwnerUnitFragment>();
+		const TConstArrayView<FTransformFragment> Transforms = Context.GetFragmentView<FTransformFragment>();
 		for (int32 i = 0; i < Context.GetNumEntities(); ++i)
 		{
 			const FMassEntityHandle Entity = Context.GetEntity(i);
 			const FUnitHandle Unit = Owners[i].Owner;
 			const int32 RosterIndex = Owners[i].RosterIndex;
+
+			// Task 10 corpse ledger (the MassRTS-style ground rectangles): the
+			// LAST transform, captured here while the entity is still alive --
+			// the destroy defers right after this signal. Diagnostic state
+			// only, never sim-authoritative.
+			if (UBattleDebugSubsystem* Debug = Context.GetWorld()->GetSubsystem<UBattleDebugSubsystem>())
+			{
+				const FVector Pos = Transforms[i].GetTransform().GetTranslation();
+				const float Yaw = Transforms[i].GetTransform().Rotator().Yaw;
+				Debug->RecordCorpse(FVector(Pos.X, Pos.Y, 0.f), Yaw);
+			}
 
 			// Registry roster update (authoritative bookkeeping, arch §5.2).
 			// RemoveSingle compacts the roster, so survivors after the removed

@@ -1,6 +1,7 @@
 #include "FormationSlotResolveProcessor.h"
 #include "BattleFragments.h"
 #include "BattleMovementFragments.h"
+#include "BattleCombatFragments.h"
 #include "BattleSlotAssigner.h"
 #include "BattleUnitLocomotion.h"
 #include "BattleGarrison.h"
@@ -117,6 +118,9 @@ void UFormationSlotResolveProcessor::ConfigureQueries(const TSharedRef<FMassEnti
 	ResolveQuery.AddRequirement<FSlotTargetFragment>(EMassFragmentAccess::ReadWrite);
 	ResolveQuery.AddRequirement<FTransformFragment>(EMassFragmentAccess::ReadOnly);
 	ResolveQuery.AddRequirement<FMassVelocityFragment>(EMassFragmentAccess::ReadOnly);
+	// Task 10 debug pass: the slot-circle colors ride the combat pair state
+	// (written by the assign pass, game thread -- read-only here, worker-safe).
+	ResolveQuery.AddRequirement<FCombatPairFragment>(EMassFragmentAccess::ReadOnly);
 	// Audit M8: death-window corpses are excluded from the movement chain --
 	// they must not be re-slotted or servoed toward targets while the
 	// destroy is in flight (the Phase 0 M1 standard).
@@ -620,23 +624,63 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 				Debug->EnqueueOverlayLine(Line);
 			}
 		}
-		// Phase 2 D2: final-slot ghost markers (violet crosses -- distinct
-		// channel from the slot-error lines) under the overlay + master
-		// switch: where the unit is converging, visible during the approach.
-		if (bFallIn && bFanIn && Debug)
+		// Task 10 debug pass (owner request; B.2 pairing/state rows): per-slot
+		// final circles (violet, where the unit converges) + per-entity
+		// movement-slot circles (state-colored: white moving, cyan seeking,
+		// yellow pressing, red striking, orange recovering) + the entity-to-
+		// slot line. All under the overlay master switch; volume note: ~10
+		// segments per entity per frame at full volume -- an opt-in tool.
+		if (Debug)
 		{
 			constexpr float Z = 20.f; // field paths are flat; ground Z
-			for (int32 Slot = 0; Slot < Formation.NumSlots; ++Slot)
+			// Final-slot circles (violet; per slot -- holes read as missing
+			// circles, which IS the casualty picture). Gated by bFanIn: the
+			// finals array is sized/filled only there (the old ghost-cross
+			// gate; indexing it otherwise is an empty-array read -- measured
+			// 2026-10-28 boot crash).
+			if (bFanIn)
 			{
-				const FVector2D G = FinalSlotPosM[Slot] * 100.f;
-				FBattleOverlayLine Ghost;
-				Ghost.From = FVector(G.X - 15.f, G.Y, Z);
-				Ghost.To = FVector(G.X + 15.f, G.Y, Z);
-				Ghost.Color = FColor(170, 0, 255);
-				Debug->EnqueueOverlayLine(Ghost);
-				Ghost.From = FVector(G.X, G.Y - 15.f, Z);
-				Ghost.To = FVector(G.X, G.Y + 15.f, Z);
-				Debug->EnqueueOverlayLine(Ghost);
+				for (int32 Slot = 0; Slot < Formation.NumSlots; ++Slot)
+				{
+					const FVector2D G = FinalSlotPosM[Slot] * 100.f;
+					FBattleOverlayLine Final;
+					Final.Shape = EBattleOverlayShape::Circle;
+					Final.From = FVector(G.X, G.Y, Z);
+					Final.Radius = 40.f;
+					Final.Color = FColor(170, 0, 255);
+					Debug->EnqueueOverlayLine(Final);
+				}
+			}
+			// Movement circles + entity-to-slot lines (per entity).
+			const auto Transforms = Context.GetFragmentView<FTransformFragment>();
+			const auto CombatPairs = Context.GetFragmentView<FCombatPairFragment>();
+			const auto StateColor = [](ECombatPairState State) -> FColor
+			{
+				switch (State)
+				{
+				case ECombatPairState::Seeking: return FColor(0, 200, 220);
+				case ECombatPairState::Pressing: return FColor(240, 220, 0);
+				case ECombatPairState::Striking: return FColor(255, 40, 40);
+				case ECombatPairState::Recovering: return FColor(255, 150, 40);
+				default: return FColor(220, 220, 220); // not in combat: white
+				}
+			};
+			for (int32 i = 0; i < Context.GetNumEntities(); ++i)
+			{
+				const FVector P = Transforms[i].GetTransform().GetTranslation();
+				const FVector2D Slot = Targets[i].TargetPos;
+				const FColor Color = StateColor(CombatPairs[i].State);
+				FBattleOverlayLine Circle;
+				Circle.Shape = EBattleOverlayShape::Circle;
+				Circle.From = FVector(Slot.X, Slot.Y, Z);
+				Circle.Radius = 40.f;
+				Circle.Color = Color;
+				Debug->EnqueueOverlayLine(Circle);
+				FBattleOverlayLine ToSlot;
+				ToSlot.From = FVector(P.X, P.Y, Z);
+				ToSlot.To = FVector(Slot.X, Slot.Y, Z);
+				ToSlot.Color = FColor(Color.R, Color.G, Color.B, 140);
+				Debug->EnqueueOverlayLine(ToSlot);
 			}
 		}
 		// Phase 2 B1: publish the unit's dress metric (game thread reads it
