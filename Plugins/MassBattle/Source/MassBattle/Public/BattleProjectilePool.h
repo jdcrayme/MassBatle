@@ -48,6 +48,15 @@ struct MASSBATTLE_API FBattleProjectilePool
 	int32 GetLiveCount() const { return LiveCount; }
 	int32 GetDrops() const { return Drops; }
 
+	/** The shared empty pool (the state hash's null-subsystem fold, spec
+	 *  §3.4): a zero-capacity static so the hash block reads a valid object
+	 *  before the subsystem initializes. */
+	static const FBattleProjectilePool& EmptyPool()
+	{
+		static FBattleProjectilePool Empty;
+		return Empty;
+	}
+
 	// -- SoA arrays (all sized Capacity; live entries only are meaningful) --
 
 	TArray<float> PosX;                 // meters

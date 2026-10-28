@@ -17,6 +17,8 @@
 #include "BattleFragments.h"
 #include "BattleCombatFragments.h"
 #include "BattleRangedFragments.h"
+#include "BattleProjectilePool.h"
+#include "BattleProjectileSubsystem.h"
 #include "BattleRngRegistry.h"
 #include "BattleEduParser.h"
 #include "Engine/Engine.h"
@@ -590,6 +592,59 @@ bool FCombat_HashTerms::RunTest(const FString& Parameters)
 		TestNotEqual(TEXT("mount HP mutation changes hash"), FBattleStateHash::Compute(World), Hash0);
 		Health.MountCurHP = OldMount;
 		TestEqual(TEXT("all reverts restore hash"), FBattleStateHash::Compute(World), Hash0);
+	}
+
+	// Phase 3 (spec ranged-stack §3.4): ranged terms on a ranged-row roster +
+	// the pool block. The archer row carries the fragment; the melee roster
+	// above proves the zero-fill stability (its hash already round-trips).
+	if (Rows.Num() > 2)
+	{
+		const FBattleSpawnResult UnitB = SpawnRow(World, Rows[2]); // Peasant Archers
+		TestTrue(TEXT("ranged row spawned"), UnitB.Unit.IsValid());
+		const TArray<FMassEntityHandle>* RosterB = Registry->FindRoster(UnitB.Unit);
+		if (TestNotNull(TEXT("ranged roster"), RosterB) && RosterB->Num() > 0)
+		{
+			const uint64 HashR = FBattleStateHash::Compute(World);
+			TestEqual(TEXT("ranged hash stable"), FBattleStateHash::Compute(World), HashR);
+
+			FMassEntityView ViewB(EntityManager, (*RosterB)[0]);
+			FRangedStateFragment& Ranged = ViewB.GetFragmentData<FRangedStateFragment>();
+
+			// Ammo mutation.
+			const int16 OldAmmo = Ranged.AmmoCount;
+			Ranged.AmmoCount = static_cast<int16>(OldAmmo - 1);
+			TestNotEqual(TEXT("ammo mutation changes hash"), FBattleStateHash::Compute(World), HashR);
+			Ranged.AmmoCount = OldAmmo;
+			// Reload mutation (above the 1e-2 quantum).
+			const float OldReload = Ranged.ReloadTimer;
+			Ranged.ReloadTimer = OldReload + 0.5f;
+			TestNotEqual(TEXT("reload mutation changes hash"), FBattleStateHash::Compute(World), HashR);
+			Ranged.ReloadTimer = OldReload;
+			// Shots fired mutation.
+			const uint16 OldShots = Ranged.ShotsFired;
+			Ranged.ShotsFired = OldShots + 1;
+			TestNotEqual(TEXT("shots fired mutation changes hash"), FBattleStateHash::Compute(World), HashR);
+			Ranged.ShotsFired = OldShots;
+			TestEqual(TEXT("ranged reverts restore hash"), FBattleStateHash::Compute(World), HashR);
+
+			// The pool block: an acquired entry mutates the hash; release does too.
+			UBattleProjectileSubsystem* Projectiles = World->GetSubsystem<UBattleProjectileSubsystem>();
+			if (TestNotNull(TEXT("projectile subsystem"), Projectiles))
+			{
+				Projectiles->ReserveForBattle();
+				uint32 Gen = 0;
+				const int32 Slot = Projectiles->GetMutablePool().Acquire(Gen);
+				TestTrue(TEXT("pool slot acquired"), Slot != FBattleProjectilePool::InvalidIndex);
+				Projectiles->GetMutablePool().PosX[Slot] = 42.5f;
+				Projectiles->GetMutablePool().PosZ[Slot] = 3.25f;
+				Projectiles->GetMutablePool().TTL[Slot] = 1.75f;
+				TestNotEqual(TEXT("pool entry changes hash"), FBattleStateHash::Compute(World), HashR);
+				Projectiles->GetMutablePool().PosX[Slot] = 43.0f;
+				TestNotEqual(TEXT("pool position mutation changes hash"), FBattleStateHash::Compute(World), HashR);
+				Projectiles->GetMutablePool().Release(Slot);
+				TestEqual(TEXT("pool release restores hash"), FBattleStateHash::Compute(World), HashR);
+			}
+		}
 	}
 
 	World->DestroyWorld(false);

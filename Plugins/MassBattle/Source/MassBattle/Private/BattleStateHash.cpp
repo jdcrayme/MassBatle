@@ -2,7 +2,9 @@
 #include "BattleFragments.h"
 #include "BattleMovementFragments.h"
 #include "BattleCombatFragments.h"
+#include "BattleRangedFragments.h"
 #include "BattleRegistry.h"
+#include "BattleProjectileSubsystem.h"
 #include "Hash/CityHash.h"
 #include "MassEntitySubsystem.h"
 #include "MassEntityManager.h"
@@ -169,7 +171,52 @@ uint64 FBattleStateHash::Compute(UWorld* World)
 			{
 				AppendU64(0);
 			}
+			// 8. Ranged terms (spec ranged-stack §3.4): appended AFTER the
+			// charge block, same sorted-handle pass, per entity. Ammo count,
+			// reload timer (1e-2 s), shots fired. Kind/RangeM/InitialAmmo
+			// are spawn-immutable and excluded (the base-stats precedent).
+			// Fixed term count with zero-fill when the fragment is absent
+			// (melee compositions) keeps the stream position-stable.
+			if (const FRangedStateFragment* Ranged = EntityView.GetFragmentDataPtr<FRangedStateFragment>())
+			{
+				AppendU64(static_cast<uint64>(static_cast<int16>(Ranged->AmmoCount)));
+				AppendU64(static_cast<uint64>(Quantize2(Ranged->ReloadTimer)));
+				AppendU64(static_cast<uint64>(Ranged->ShotsFired));
+			}
+			else
+			{
+				AppendU64(0);
+				AppendU64(0);
+				AppendU64(0);
+			}
 		}
+	}
+
+	// 9. Projectile pool block (spec ranged-stack §3.4, RC8): the live count,
+	//    then per live entry in INDEX order (deterministic by construction --
+	//    the pool's slot order is the free-list discipline, never a hash-map
+	//    order). Position/velocity at 1e-2 m and m/s, TTL at 1e-2 s. The
+	//    subsystem lands with the Phase 3 pipeline task; until it exists the
+	//    block folds zero (position-stable, flags-off baseline untouched).
+	const UBattleProjectileSubsystem* ProjectileSubsystem =
+		World ? World->GetSubsystem<UBattleProjectileSubsystem>() : nullptr;
+	const FBattleProjectilePool& Pool = ProjectileSubsystem
+		? ProjectileSubsystem->GetPool()
+		: FBattleProjectilePool::EmptyPool();
+	AppendU64(static_cast<uint64>(Pool.GetLiveCount()));
+	for (int32 Slot = 0; Slot < Pool.GetCapacity(); ++Slot)
+	{
+		if (!Pool.IsLive(Slot))
+		{
+			continue;
+		}
+		AppendU64(static_cast<uint64>(Quantize2(Pool.PosX[Slot])));
+		AppendU64(static_cast<uint64>(Quantize2(Pool.PosY[Slot])));
+		AppendU64(static_cast<uint64>(Quantize2(Pool.PosZ[Slot])));
+		AppendU64(static_cast<uint64>(Quantize2(Pool.VelX[Slot])));
+		AppendU64(static_cast<uint64>(Quantize2(Pool.VelY[Slot])));
+		AppendU64(static_cast<uint64>(Quantize2(Pool.VelZ[Slot])));
+		AppendU64(static_cast<uint64>(Quantize2(Pool.TTL[Slot])));
 	}
 
 	return CityHash64(reinterpret_cast<const char*>(Bytes.GetData()), static_cast<uint32>(Bytes.Num()));
