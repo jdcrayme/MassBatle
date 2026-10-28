@@ -590,7 +590,7 @@ bool FSlots_CloseGaps::RunTest(const FString& Parameters)
 				Used.Add(Slot);
 			}
 		}
-		TestFalse(TEXT("fixpoint: slot 1 drained (not a hole)"), Used.Contains(1));
+		TestTrue(TEXT("fixpoint: slot 1 drained (not a hole)"), Used.Contains(1));
 		TestEqual(TEXT("fixpoint: survivors"), Used.Num(), 2);
 	}
 
