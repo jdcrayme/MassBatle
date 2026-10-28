@@ -712,8 +712,6 @@ bool FCombatSmoke::RunTest(const FString& Parameters)
 	return true;
 }
 
-#endif // WITH_DEV_AUTOMATION_TESTS
-
 // ---------------------------------------------------------------------------
 // Phase 2 task 9: T2.8 determinism two-run.
 // ---------------------------------------------------------------------------
@@ -734,3 +732,5 @@ bool FDeterminismTwoRun::RunTest(const FString& Parameters)
 	ADD_LATENT_AUTOMATION_COMMAND(FRunBattleFuncTest(this, TEXT("DeterminismTwoRun"), TEXT("ADeterminismTwoRunTest")));
 	return true;
 }
+
+#endif // WITH_DEV_AUTOMATION_TESTS

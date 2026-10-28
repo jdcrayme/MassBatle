@@ -1059,22 +1059,12 @@ bool FTallyAssign::RunTest(const FString& Parameters)
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// T2.9 perf gate placeholder (task 9): the pairing pass budget.
-// Runs under the Battle.Perf filter (nightly/Gauntlet territory per B.0) --
-// matched by neither CI tier's filter string, so it changes no tier's count.
+// T2.9 perf gate: shipped by task 9 as the Battle.Combat.PerfStress fixture +
+// the measured AssignMs/TallyMs metrics against the checked-in baseline JSON.
+// (The permanently-failing Battle.Perf.Gate2 skeleton that preceded it was
+// removed by the 2026-10-28 audit: it failed any run matching Battle.Perf
+// forever, by design of nothing -- the gate had already landed.)
 // ---------------------------------------------------------------------------
-
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPerfGate2Skeleton,
-	"Battle.Perf.Gate2",
-	(EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter))
-
-bool FPerfGate2Skeleton::RunTest(const FString& Parameters)
-{
-	// T2.9 (task 9): tally + assign < 0.5 ms game thread @ 1k in contact;
-	// baseline JSON checked in, CI compares.
-	AddError(TEXT("skeleton: perf gate lands with task 9"));
-	return false;
-}
 
 
 
