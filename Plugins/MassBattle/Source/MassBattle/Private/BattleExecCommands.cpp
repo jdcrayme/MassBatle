@@ -59,6 +59,47 @@ namespace BattleExec
 			}
 		}
 	}
+	void EnableRangedPipeline()
+	{
+		// The session-on ranged gate list (the D-3 posture, completed by the
+		// phase-3 audit): Enable/Fire/Step/Skirmish default on in the plugin,
+		// but fixtures that reset a battle flip them explicitly so the session
+		// is honest regardless of the shipping defaults. ONE home for the list.
+		for (const TCHAR* Name : { TEXT("Battle.Ranged.Enable"), TEXT("Battle.Ranged.Fire"),
+				TEXT("Battle.Ranged.Step"), TEXT("Battle.Ranged.Skirmish") })
+		{
+			if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(Name))
+			{
+				C->Set(1, ECVF_SetByCode);
+			}
+		}
+	}
+	bool LoadGoldenEduRows(TArray<FEduUnit>& OutRows, FEduParseError& OutError)
+	{
+		// ONE home for the golden fixture's path + load + parse (the phase-3
+		// audit's B-3 completion; previously re-typed per command). OutError is
+		// set only by a parse failure -- an unreadable file leaves it unset and
+		// the caller's message distinguishes (the SpawnClash precedent).
+		const FString FixturePath = FPaths::ProjectContentDir() / TEXT("Data/EDU/golden_edu_v1.txt");
+		FString EduText;
+		return FFileHelper::LoadFileToString(EduText, *FixturePath)
+			&& FBattleEduParser::Parse(EduText, OutRows, OutError);
+	}
+	int32 FindEduRowIndexByDictionary(const TArray<FEduUnit>& Rows, const FString& Dictionary)
+	{
+		// ONE home for the dictionary-keyed row lookup (moved from the file-local
+		// SpawnClash helper by the phase-3 audit so the demo module and the ranged
+		// fixtures consume it too; row ORDER is fixture data, never a meaning).
+		for (int32 i = 0; i < Rows.Num(); ++i)
+		{
+			const FEduField* Dict = Rows[i].FindField(TEXT("dictionary"));
+			if (Dict && Dict->GetValue().Equals(Dictionary, ESearchCase::IgnoreCase))
+			{
+				return i;
+			}
+		}
+		return INDEX_NONE;
+	}
 	void DumpRegistry(const TArray<FString>& Args, UWorld* World)
 	{
 		UUnitRegistrySubsystem* Registry = GetRegistry(World);
@@ -765,22 +806,9 @@ namespace
 		uint8 TeamId = 0;
 	};
 
-	int32 FindEduRowIndexByDictionary(const TArray<FEduUnit>& Rows, const FString& Dictionary)
-	{
-		for (int32 i = 0; i < Rows.Num(); ++i)
-		{
-			const FEduField* Dict = Rows[i].FindField(TEXT("dictionary"));
-			if (Dict && Dict->GetValue().Equals(Dictionary, ESearchCase::IgnoreCase))
-			{
-				return i;
-			}
-		}
-		return INDEX_NONE;
-	}
-
 	FUnitHandle SpawnClashUnitExec(UWorld* World, const TArray<FEduUnit>& Rows, const FClashUnitSpec& Unit)
 	{
-		const int32 EduRow = FindEduRowIndexByDictionary(Rows, Unit.Dictionary);
+		const int32 EduRow = BattleExec::FindEduRowIndexByDictionary(Rows, Unit.Dictionary);
 		if (EduRow == INDEX_NONE)
 		{
 			UE_LOG(LogMassBattle, Display,
@@ -904,12 +932,9 @@ void CombatSpawnClash(const TArray<FString>& Args, UWorld* World)
 		*Channel, *Variant, Units.Num());
 
 	// Load the EDU once per command; rows are matched by dictionary name.
-	const FString FixturePath = FPaths::ProjectContentDir() / TEXT("Data/EDU/golden_edu_v1.txt");
-	FString EduText;
 	TArray<FEduUnit> Rows;
 	FEduParseError Err;
-	if (!FFileHelper::LoadFileToString(EduText, *FixturePath)
-		|| !FBattleEduParser::Parse(EduText, Rows, Err))
+	if (!BattleExec::LoadGoldenEduRows(Rows, Err))
 	{
 		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SpawnClash FAIL EDU fixture (%s)"),
 			Err.bFailed ? *Err.Message : TEXT("unreadable"));
@@ -967,12 +992,14 @@ void CombatPerfStress(const TArray<FString>& Args, UWorld* World)
 	// Two 500-man lines in contact (the B.6 1k stress shape): 25 files x 20
 	// ranks at 1.2 m -- the tile holds it; the front ranks interpenetrate the
 	// dilation and the cluster pass emits the engagement.
-	const FString FixturePath = FPaths::ProjectContentDir() / TEXT("Data/EDU/golden_edu_v1.txt");
-	FString EduText;
+	// Rows are matched by dictionary name (B-3): the T2.9 shape is 1,000
+	// levy bodies, not "whatever row sits at index 0 this quarter".
 	TArray<FEduUnit> Rows;
 	FEduParseError Err;
-	if (!FFileHelper::LoadFileToString(EduText, *FixturePath)
-		|| !FBattleEduParser::Parse(EduText, Rows, Err))
+	const int32 LevyRow = BattleExec::LoadGoldenEduRows(Rows, Err)
+		? BattleExec::FindEduRowIndexByDictionary(Rows, TEXT("Peasant_Levy"))
+		: INDEX_NONE;
+	if (LevyRow == INDEX_NONE)
 	{
 		UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT PerfStress FAIL EDU fixture"));
 		return;
@@ -994,8 +1021,8 @@ void CombatPerfStress(const TArray<FString>& Args, UWorld* World)
 		Spec.NumRanks = 20; // deep blocks: 25 x 20 = 500 per side
 		return UBattleSpawnLibrary::SpawnUnit(World, Spec, Stats).Unit;
 	};
-	const FUnitHandle A = SpawnLine(0, 500, FVector2D(-10.f, 0.f), 0.f);
-	const FUnitHandle B = SpawnLine(0, 500, FVector2D(10.f, 0.f), 180.f);
+	const FUnitHandle A = SpawnLine(LevyRow, 500, FVector2D(-10.f, 0.f), 0.f);
+	const FUnitHandle B = SpawnLine(LevyRow, 500, FVector2D(10.f, 0.f), 180.f);
 	Registry->IssueAttackUnitOrder(A, B);
 	if (UBattleDebugSubsystem* Debug = World->GetSubsystem<UBattleDebugSubsystem>())
 	{
@@ -1198,26 +1225,26 @@ void RangedSpawnVolley(const TArray<FString>& Args, UWorld* World)
 		return;
 	}
 
-	const FString FixturePath = FPaths::ProjectContentDir() / TEXT("Data/EDU/golden_edu_v1.txt");
-	FString EduText;
+	// Rows are matched by dictionary name (B-3): the fixture means "the
+	// archer row" and "the levy row", never their current indices.
 	TArray<FEduUnit> Rows;
 	FEduParseError Err;
-	if (!FFileHelper::LoadFileToString(EduText, *FixturePath) || !FBattleEduParser::Parse(EduText, Rows, Err) || Rows.Num() < 3)
+	const int32 ArcherRow = BattleExec::LoadGoldenEduRows(Rows, Err)
+		? BattleExec::FindEduRowIndexByDictionary(Rows, TEXT("Peasant_Archers"))
+		: INDEX_NONE;
+	const int32 LevyRow = (ArcherRow != INDEX_NONE)
+		? BattleExec::FindEduRowIndexByDictionary(Rows, TEXT("Peasant_Levy"))
+		: INDEX_NONE;
+	if (LevyRow == INDEX_NONE)
 	{
-		UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT SpawnVolley FAIL bad EDU fixture (%s)"), *Err.Message);
+		UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT SpawnVolley FAIL bad EDU fixture (%s)"),
+			Err.bFailed ? *Err.Message : TEXT("Peasant_Archers/Peasant_Levy rows missing"));
 		return;
 	}
 
 	Registry->ResetBattleState();
 	BattleExec::EnableDemoCombatPipeline();
-	for (const TCHAR* Name : { TEXT("Battle.Ranged.Enable"), TEXT("Battle.Ranged.Fire"),
-		TEXT("Battle.Ranged.Step"), TEXT("Battle.Ranged.Skirmish") })
-	{
-		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(Name))
-		{
-			C->Set(1, ECVF_SetByCode);
-		}
-	}
+	BattleExec::EnableRangedPipeline();
 
 	auto SpawnAt = [&Rows, &World](int32 RowIdx, const FVector2D& PosM, float YawDeg, uint8 TeamId) -> FUnitHandle
 	{
@@ -1244,8 +1271,8 @@ void RangedSpawnVolley(const TArray<FString>& Args, UWorld* World)
 	// engages live: break / fire-while-retreating / resume). Evidence flows
 	// from the live sim: RangedFire / SkirmishRetreat / OutOfAmmo lines.
 	const bool bSkirmish = Args.Num() > 0 && Args[0] == TEXT("skirmish");
-	const FUnitHandle Archers = SpawnAt(2, FVector2D(-40.f, 0.f), 0.f, 0);
-	const FUnitHandle Target = SpawnAt(0, FVector2D(bSkirmish ? -10.f : 40.f, 0.f), 180.f, 1);
+	const FUnitHandle Archers = SpawnAt(ArcherRow, FVector2D(-40.f, 0.f), 0.f, 0);
+	const FUnitHandle Target = SpawnAt(LevyRow, FVector2D(bSkirmish ? -10.f : 40.f, 0.f), 180.f, 1);
 	if (!Archers.IsValid() || !Target.IsValid())
 	{
 		return;
@@ -1280,25 +1307,22 @@ void RangedPerfStress(const TArray<FString>& Args, UWorld* World)
 		UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT RangedPerfStress FAIL no world/registry"));
 		return;
 	}
-	const FString FixturePath = FPaths::ProjectContentDir() / TEXT("Data/EDU/golden_edu_v1.txt");
-	FString EduText;
+	// Rows are matched by dictionary name (B-3): 1,000 archers must not
+	// silently become 1,000 crossbows when the EDU is re-ordered (T6.1).
 	TArray<FEduUnit> Rows;
 	FEduParseError Err;
-	if (!FFileHelper::LoadFileToString(EduText, *FixturePath) || !FBattleEduParser::Parse(EduText, Rows, Err) || Rows.Num() < 3)
+	const int32 ArcherRow = BattleExec::LoadGoldenEduRows(Rows, Err)
+		? BattleExec::FindEduRowIndexByDictionary(Rows, TEXT("Peasant_Archers"))
+		: INDEX_NONE;
+	if (ArcherRow == INDEX_NONE)
 	{
-		UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT RangedPerfStress FAIL bad EDU fixture (%s)"), *Err.Message);
+		UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT RangedPerfStress FAIL bad EDU fixture (%s)"),
+			Err.bFailed ? *Err.Message : TEXT("Peasant_Archers row missing"));
 		return;
 	}
 	Registry->ResetBattleState();
 	BattleExec::EnableDemoCombatPipeline();
-	for (const TCHAR* Name : { TEXT("Battle.Ranged.Enable"), TEXT("Battle.Ranged.Fire"),
-		TEXT("Battle.Ranged.Step"), TEXT("Battle.Ranged.Skirmish") })
-	{
-		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(Name))
-		{
-			C->Set(1, ECVF_SetByCode);
-		}
-	}
+	BattleExec::EnableRangedPipeline();
 	// The fixture-session rank bump (disclosed): 20 ranks of shooters.
 	if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Ranged.VolleyRanks")))
 	{
@@ -1329,8 +1353,8 @@ void RangedPerfStress(const TArray<FString>& Args, UWorld* World)
 		Spec.TeamId = TeamId;
 		return UBattleSpawnLibrary::SpawnUnit(World, Spec, Stats).Unit;
 	};
-	const FUnitHandle A = SpawnLine(2, 500, FVector2D(-50.f, 0.f), 0.f, 0);
-	const FUnitHandle B = SpawnLine(2, 500, FVector2D(50.f, 0.f), 180.f, 1);
+	const FUnitHandle A = SpawnLine(ArcherRow, 500, FVector2D(-50.f, 0.f), 0.f, 0);
+	const FUnitHandle B = SpawnLine(ArcherRow, 500, FVector2D(50.f, 0.f), 180.f, 1);
 	if (!A.IsValid() || !B.IsValid())
 	{
 		UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT RangedPerfStress FAIL spawn"));

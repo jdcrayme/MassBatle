@@ -8,6 +8,8 @@
 #include "CoreMinimal.h"
 
 class UWorld;
+struct FEduUnit;
+struct FEduParseError;
 
 namespace BattleExec
 {
@@ -17,6 +19,20 @@ namespace BattleExec
 	// SpawnClash/PerfStress fixtures flip them on for their session. ONE home
 	// for the list + the flips -- call sites must not re-type the cvar names.
 	MASSBATTLE_API void EnableDemoCombatPipeline();
+
+	// -- Session-on ranged pipeline (the phase-3 audit's D-3 completion) --
+	// Same posture as the combat list: the four Battle.Ranged.* gates flip
+	// on for a session (defaults untouched, ECVF_SetByCode).
+	MASSBATTLE_API void EnableRangedPipeline();
+
+	// -- EDU fixture access (the phase-3 audit's B-3 completion) --
+	// ONE home for the golden fixture's path + load + parse (previously
+	// re-typed per command) and for the dictionary-keyed row lookup (row
+	// ORDER is fixture data; fixtures that mean "the archer row" must not
+	// hold a raw index -- re-ordering the EDU silently re-types the battle).
+	// Returns INDEX_NONE when the dictionary is absent from the fixture.
+	MASSBATTLE_API bool LoadGoldenEduRows(TArray<FEduUnit>& OutRows, FEduParseError& OutError);
+	MASSBATTLE_API int32 FindEduRowIndexByDictionary(const TArray<FEduUnit>& Rows, const FString& Dictionary);
 	// -- Task 4 (registry probes) --
 	MASSBATTLE_API void DumpRegistry(const TArray<FString>& Args, UWorld* World);
 	MASSBATTLE_API void StateHash(const TArray<FString>& Args, UWorld* World);

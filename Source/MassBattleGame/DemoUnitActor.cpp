@@ -12,6 +12,13 @@ void ADemoUnitActor::OnConstruction(const FTransform& Transform)
 {
 	Super::OnConstruction(Transform);
 
+	// ONE team notion on the authoring surface: the demo faction (EDemoTeam)
+	// drives the sim side (AUnitActor::TeamId stamps the spawn spec). An
+	// author who sets Team=Enemy but leaves TeamId at its default would tint
+	// the unit enemy while the ranged rules treat it as a friend -- the sync
+	// keeps the two from disagreeing (audit B-3).
+	TeamId = static_cast<uint8>(Team);
+
 	// Editor placement aid only; in-game the ISM capsules are the visual.
 	// Finite lifetime (refreshed on every construction/move/property change):
 	// persistent lines lingered in the viewport after PIE and the old global

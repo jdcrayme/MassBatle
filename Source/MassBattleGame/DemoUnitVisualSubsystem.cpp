@@ -90,11 +90,12 @@ int32 UDemoUnitVisualSubsystem::AdoptUnknownRegistryUnits(UUnitRegistrySubsystem
 		{
 			continue;
 		}
-		// Demo team convention: EDU row 0 = the Player faction, row 1+ =
-		// Enemy (the fixture's peasant/sergeant split maps onto it).
+		// Demo team convention: the SIDE the unit fights on (TeamId; team 0
+		// = the Player convention) drives the faction split -- EDU row order
+		// is fixture data, never a faction notion (audit B-3).
 		EDemoTeam Team = EDemoTeam::Enemy;
 		if (const FUnitSpawnSpec* Spec = Registry->FindUnitSpec(Handle);
-			Spec && Spec->EduRowIndex == 0)
+			Spec && Spec->TeamId == 0)
 		{
 			Team = EDemoTeam::Player;
 		}

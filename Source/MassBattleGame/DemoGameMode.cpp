@@ -165,23 +165,12 @@ void ADemoGameMode::SpawnScenarioAsset()
 		return;
 	}
 
-	const auto FindRow = [&Rows](const FName& Dictionary) -> int32
-	{
-		for (int32 i = 0; i < Rows.Num(); ++i)
-		{
-			const FEduField* Dict = Rows[i].FindField(TEXT("dictionary"));
-			if (Dict && Dict->GetValue().Equals(Dictionary.ToString(), ESearchCase::IgnoreCase))
-			{
-				return i;
-			}
-		}
-		return INDEX_NONE;
-	};
-
 	TArray<FUnitHandle> Spawned;
 	for (const FDemoScenarioSpawn& RowDef : ScenarioAsset->Spawns)
 	{
-		const int32 EduRow = FindRow(RowDef.Dictionary);
+		// ONE home for the dictionary lookup (the plugin's BattleExec helper;
+		// this lambda was its third re-typed copy -- audit B-3).
+		const int32 EduRow = BattleExec::FindEduRowIndexByDictionary(Rows, RowDef.Dictionary.ToString());
 		if (EduRow == INDEX_NONE)
 		{
 			UE_LOG(LogDemoBattle, Error, TEXT("EXEC_RESULT DemoScenario FAIL unknown EDU dictionary '%s'"),

@@ -1,5 +1,6 @@
 #include "BattleMovementSoakController.h"
 #include "BattleRanged.h"
+#include "BattleExecCommands.h"
 #include "BattleDebugSubsystem.h"
 #include "BattleProjectileSubsystem.h"
 #include "BattleEngagement.h"
@@ -155,13 +156,18 @@ void UBattleMovementSoakController::OnTick(float TimeDelta)
 		const bool bVolleySoak = FRangedCVars::SoakVolley();
 		const int32 TotalUnits = UnitsPerRow * UnitRows;
 		int32 ArcherUnits = 0;
+		// The archer row is matched by dictionary name (B-3): re-ordering the
+		// golden EDU must not re-type the soak's ranged mix.
+		const int32 ArcherRow = bVolleySoak
+			? BattleExec::FindEduRowIndexByDictionary(Rows, TEXT("Peasant_Archers"))
+			: INDEX_NONE;
 		for (int32 i = 0; i < TotalUnits; ++i)
 		{
 			const int32 Col = i % UnitsPerRow;
 			const int32 Row = i / UnitsPerRow;
-			const bool bArcher = bVolleySoak && (i % 4 == 3);
+			const bool bArcher = bVolleySoak && (ArcherRow != INDEX_NONE) && (i % 4 == 3);
 			FUnitSpawnSpec Spec;
-			Spec.EduRowIndex = bArcher ? FMath::Min(2, Rows.Num() - 1) : (i % Rows.Num());
+			Spec.EduRowIndex = bArcher ? ArcherRow : (i % Rows.Num());
 			Spec.SoldierCount = 40;
 			Spec.UnitName = FString::Printf(TEXT("Soak_%d"), i);
 			Spec.SpawnPos = FVector2D(-4500.f + Col * 3000.f, Row * 3000.f);
