@@ -1,0 +1,158 @@
+From db224b2b13bcba6ed3cd773d31141e4224078405 Mon Sep 17 00:00:00 2001
+From: Z User <z@container>
+Date: Thu, 29 Oct 2026 23:25:53 +0000
+Subject: [PATCH] phase3-audit: one home for the hash family multipliers (B-2
+ completion)
+
+The phase-2 audit unified the roll hash INTO FMeleeMath; phase 3 then
+grew two more homes -- BattleBallistics.cpp's file-local KnuthGold/KnuthMix
+(its own comment asked for this unification) and BattleTypes.h's
+BattleCanonicalEntityKey inline literals. All three now read
+BattleHashFamily (BattleTypes.h): GoldenRatio 2654435761u, MixA 40503u,
+MixB 2685821657u. Expressions unchanged at every site -- identical bits
+out by construction; the T2.1 golden and the dispersion goldens lock the
+same values they always did.
+
+MUST re-run on the UE machine: unit tier (T2.1 golden + the T3.1
+dispersion goldens -- expected green, zero drift; the mixed two-run
+blocker is unchanged by this rename).
+---
+ .../MassBattle/Private/BattleBallistics.cpp   | 16 +++++--------
+ .../Source/MassBattle/Private/BattleMelee.cpp | 19 +++++++--------
+ .../MassBattle/Public/BattleBallistics.h      |  5 ++--
+ .../Source/MassBattle/Public/BattleTypes.h    | 23 ++++++++++++++++---
+ 4 files changed, 39 insertions(+), 24 deletions(-)
+
+diff --git a/Plugins/MassBattle/Source/MassBattle/Private/BattleBallistics.cpp b/Plugins/MassBattle/Source/MassBattle/Private/BattleBallistics.cpp
+index e17f55b..6e6b7b3 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Private/BattleBallistics.cpp
++++ b/Plugins/MassBattle/Source/MassBattle/Private/BattleBallistics.cpp
+@@ -6,25 +6,21 @@
+ 
+ namespace
+ {
+-	// Knuth multiplicative hash constants -- the SAME family as
+-	// FMeleeMath::StaggeredPhaseOffset / CombatRoll01 (BattleMelee.cpp; the
+-	// B-2 one-home posture). Duplicated here with the cross-reference so the
+-	// seam stays free of BattleMelee includes; a future audit may unify the
+-	// constant's home in one header both seams include.
+-	constexpr uint32 KnuthGold = 2654435761u;
+-	constexpr uint32 KnuthMix = 40503u;
+-
++	// The deterministic hash family's multipliers live in ONE home:
++	// BattleTypes.h's BattleHashFamily (the B-2 rule; both seam files
++	// include BattleTypes.h). The mix helpers stay here -- they are this
++	// seam's own folds; the multipliers are the shared drift risk.
+ 	uint32 HashMix32(uint32 V)
+ 	{
+ 		V ^= V >> 16;
+-		V *= KnuthMix;
++		V *= BattleHashFamily::MixA;
+ 		V ^= V >> 13;
+ 		return V;
+ 	}
+ 
+ 	uint32 Hash01ToUint(uint32 A, uint32 B, uint32 C)
+ 	{
+-		uint32 H = KnuthGold;
++		uint32 H = BattleHashFamily::GoldenRatio;
+ 		H = HashMix32(H ^ A);
+ 		H = HashMix32(H ^ B);
+ 		H = HashMix32(H ^ C);
+diff --git a/Plugins/MassBattle/Source/MassBattle/Private/BattleMelee.cpp b/Plugins/MassBattle/Source/MassBattle/Private/BattleMelee.cpp
+index 21cef2f..7a86b6e 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Private/BattleMelee.cpp
++++ b/Plugins/MassBattle/Source/MassBattle/Private/BattleMelee.cpp
+@@ -63,8 +63,9 @@ namespace FMeleeMath
+ 
+ 	float StaggeredPhaseOffset(uint32 EntityHandleIndex, float AttackInterval)
+ 	{
+-		// Integer hash scatter (multiply-xor), deterministic per handle.
+-		uint32 H = EntityHandleIndex * 2654435761u;
++		// Integer hash scatter (multiply-xor), deterministic per handle. The
++		// multipliers live in BattleTypes.h's BattleHashFamily (ONE home, B-2).
++		uint32 H = EntityHandleIndex * BattleHashFamily::GoldenRatio;
+ 		H ^= H >> 16;
+ 		const float Frac = static_cast<float>(H & 0xFFFFu) / 65535.f;
+ 		return Frac * FMath::Max(0.f, AttackInterval);
+@@ -72,13 +73,13 @@ namespace FMeleeMath
+ 
+ 	float CombatRoll01(uint32 EntityIndex, uint32 EntitySerial, uint32 RollCount)
+ 	{
+-		// Same multiply-xor family as StaggeredPhaseOffset (the Knuth
+-		// golden-ratio multiplier has ONE home here). Inputs: the striker's
+-		// handle + the pair's own roll count (A13: no wall-clock, no
+-		// GFrameCounter -- two runs of one seed agree).
+-		const uint32 H = (EntityIndex * 2654435761u)
+-			^ (RollCount * 40503u)
+-			^ (EntitySerial * 2685821657u);
++		// Same multiply-xor family as StaggeredPhaseOffset; the multipliers'
++		// ONE home is BattleTypes.h's BattleHashFamily (B-2). Inputs: the
++		// striker's handle + the pair's own roll count (A13: no wall-clock,
++		// no GFrameCounter -- two runs of one seed agree).
++		const uint32 H = (EntityIndex * BattleHashFamily::GoldenRatio)
++			^ (RollCount * BattleHashFamily::MixA)
++			^ (EntitySerial * BattleHashFamily::MixB);
+ 		return static_cast<float>(H & 0xFFFFFFu) / 16777215.f;
+ 	}
+ 
+diff --git a/Plugins/MassBattle/Source/MassBattle/Public/BattleBallistics.h b/Plugins/MassBattle/Source/MassBattle/Public/BattleBallistics.h
+index 3be3684..f6dea5a 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Public/BattleBallistics.h
++++ b/Plugins/MassBattle/Source/MassBattle/Public/BattleBallistics.h
+@@ -60,8 +60,9 @@ namespace FBallisticsMath
+ 
+ 	/** Run-invariant shot seed: the hash of entity identity + the lifetime
+ 	 *  shot count (never GFrameCounter -- the A13 rule; same Knuth family as
+-	 *  FMeleeMath::CombatRoll01 / StaggeredPhaseOffset, the B-2 one-home
+-	 *  posture -- a future audit may unify the constant's home). */
++	 *  FMeleeMath::CombatRoll01 / StaggeredPhaseOffset -- the multipliers'
++	 *  ONE home is BattleTypes.h's BattleHashFamily, unified by the
++	 *  phase-3 audit). */
+ 	MASSBATTLE_API uint32 ShotSeed(uint32 EntityIndex, uint32 EntitySerial, uint16 ShotsFired);
+ 
+ 	/** Semi-implicit Euler step (the IntegrateProcessor family): position
+diff --git a/Plugins/MassBattle/Source/MassBattle/Public/BattleTypes.h b/Plugins/MassBattle/Source/MassBattle/Public/BattleTypes.h
+index 6b83d7d..2f51d05 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Public/BattleTypes.h
++++ b/Plugins/MassBattle/Source/MassBattle/Public/BattleTypes.h
+@@ -29,6 +29,23 @@ inline uint32 GetTypeHash(const FUnitHandle& Handle)
+ 	return HashCombine(::GetTypeHash(Handle.Index), ::GetTypeHash(Handle.Serial));
+ }
+ 
++/** The deterministic hash family's multipliers (ONE home, the B-2 rule):
++ *  every seed-derived draw in the project multiplies with these -- the melee
++ *  staggers/rolls (FMeleeMath), the ballistics shot seeds (FBallisticsMath),
++ *  and the A13 canonical entity keys below. Same values everywhere; a
++ *  per-file retyped 2654435761u drifts silently and the two-run equality
++ *  (RC8) is the property that silently dies. Rename, never a re-mix: the
++ *  expressions at each site are unchanged, only their constant's home. */
++namespace BattleHashFamily
++{
++	/** Knuth golden-ratio multiplier (2654435761u). */
++	constexpr uint32 GoldenRatio = 2654435761u;
++	/** First auxiliary mix (40503u). */
++	constexpr uint32 MixA = 40503u;
++	/** Second auxiliary mix (2685821657u). */
++	constexpr uint32 MixB = 2685821657u;
++}
++
+ /** A13 canonical per-entity identity (Phase 3, RC8): a deterministic
+  *  function of the owning unit + the roster slot -- INVARIANT across
+  *  entity-slot churn. Mass reuses slots with new generations after a battle
+@@ -38,9 +55,9 @@ inline uint32 GetTypeHash(const FUnitHandle& Handle)
+  *  stagger/seed/roll call sites feed these instead of handle parts. */
+ inline uint32 BattleCanonicalEntityKey(const FUnitHandle& Unit, int32 RosterIndex)
+ {
+-	uint32 H = Unit.Index * 2654435761u;
+-	H ^= Unit.Serial * 40503u;
+-	H ^= static_cast<uint32>(RosterIndex) * 2685821657u;
++	uint32 H = Unit.Index * BattleHashFamily::GoldenRatio;
++	H ^= Unit.Serial * BattleHashFamily::MixA;
++	H ^= static_cast<uint32>(RosterIndex) * BattleHashFamily::MixB;
+ 	H ^= H >> 15;
+ 	return H;
+ }
+-- 
+2.47.3
+

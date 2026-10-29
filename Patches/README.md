@@ -90,3 +90,36 @@ green, unit tier 75/75 -- two more defect classes surfaced and were fixed on
 main (F-K7 compile, F-K8 runtime test defects). Full record:
 `Docs/phases/phase-3/kickoff-verification.md` (fixes F-K1..K8) +
 `Docs/phases/phase-3/progress.md`.
+
+## Phase-3 cumulative audit (2026-10-30)
+
+Branch: `audit/phase3-redo` (from `main` @ `86d1a1f`).
+Findings register: `Docs/phases/phase-3/audit.md`.
+
+Scope: the phase-3 ranged-stack run, the PR-sweep landing, and every
+ranged-facing surface they touched. The pattern finding: phase 3 re-scattered
+each constant family the phase-2 audit had unified (body radius, hash-family
+multipliers, EDU row indices in fixtures) -- plus the demo's faction split
+keyed on EDU row order. All unified again, this time into homes in headers
+every seam already includes. Value-neutral by construction; identical bits.
+
+| # | Patch | Groups | Must re-run on the UE machine |
+|---|-------|--------|-------------------------------|
+| 17 | `0017-...body-geometry.patch` | B-1 | unit tier (T3.1-T3.3 goldens use 1.6f; zero drift expected) |
+| 18 | `0018-...hash-family.patch` | B-2 | unit tier (T2.1 + T3.1 goldens; DeterminismTwoRun unchanged) |
+| 19 | `0019-...contact-angle.patch` | B-6 | unit + func tier (impact sectors + ring points) |
+| 20 | `0020-...fixture-honesty.patch` | B-3, B-4, A-1 | full unit + func tier; SpawnVolley/PerfStress; one SoakVolley nightly; PIE (adopt-path tinting) |
+| 21 | `0021-...fire-pass.patch` | C-1, C-6, C-7, B-8 | full unit + func tier (same EXEC_RESULT lines expected) |
+| 22 | `0022-...test-cvar-list.patch` | C-3 | func tier (S6/Skirmish green; DeterminismTwoRun keeps its blocker) |
+| 23 | `0023-...docs.patch` | docs | none (docs only) |
+
+PR writeups (editor/machine-gated; NOT in the patch series):
+
+- `PRs/PR-10-ranged-config-assets.md` (BuildT0Configs authors 4 assets, the repo holds 2)
+- `PRs/PR-11-level-authoring-row-references.md` (dictionary-keyed level authoring + the demo-map TeamId eyeball)
+
+Authoring note, recorded for the next session: the editing surface in this
+environment expands tabs to spaces on write (the kickoff's F-K class, again).
+The audit's first three commits were caught by numstat review and redone via
+scripted byte-exact splicing; every exported patch above was verified to
+apply cleanly, in order, on a pristine `main` tree.

@@ -1,0 +1,1777 @@
+From b266dfa6b58d61ff14edfc2bb4f5977aeeda79c8 Mon Sep 17 00:00:00 2001
+From: Z User <z@container>
+Date: Thu, 29 Oct 2026 23:37:25 +0000
+Subject: [PATCH] phase3-audit: docs -- the findings register + PR writeups +
+ the patch-series map
+
+- Docs/phases/phase-3/audit.md: the cumulative findings register (A-1,
+  B-1..B-8, C-1..C-7, D-1..D-5 + the checked-healthy list), the fix
+  table, the PR map, and the evidence conventions (including this
+  session's tab-expansion lesson, the kickoff's F-K class again).
+- Patches/PRs/PR-10-ranged-config-assets.md (BuildT0Configs authors 4,
+  the repo holds 2; includes the drop-the-rows alternative for the owner).
+- Patches/PRs/PR-11-level-authoring-row-references.md (dictionary-keyed
+  level authoring + the demo-map TeamId eyeball; A-1's remainder).
+- Patches/README.md + Docs/README.md: the audit series map + status.
+
+Docs only; no re-run needed.
+---
+ Docs/README.md                                |   3 +-
+ Docs/phases/phase-3/audit.md                  | 149 +++++++
+ ...e-home-for-the-soldier-body-geometry.patch | 210 ++++++++++
+ ...home-for-the-hash-family-multipliers.patch | 158 +++++++
+ ...he-ContactAngle-deg-byte-conversions.patch | 104 +++++
+ ...udit-fixture-honesty-exec-demo-dedup.patch | 392 ++++++++++++++++++
+ ...plifications-named-mechanism-margins.patch | 291 +++++++++++++
+ ...d-session-on-cvar-list-in-the-test-m.patch | 205 +++++++++
+ Patches/PRs/PR-10-ranged-config-assets.md     |  56 +++
+ .../PR-11-level-authoring-row-references.md   |  54 +++
+ Patches/README.md                             |  32 ++
+ 11 files changed, 1653 insertions(+), 1 deletion(-)
+ create mode 100644 Docs/phases/phase-3/audit.md
+ create mode 100644 Patches/0017-phase3-audit-one-home-for-the-soldier-body-geometry.patch
+ create mode 100644 Patches/0018-phase3-audit-one-home-for-the-hash-family-multipliers.patch
+ create mode 100644 Patches/0019-phase3-audit-one-home-for-the-ContactAngle-deg-byte-conversions.patch
+ create mode 100644 Patches/0020-phase3-audit-fixture-honesty-exec-demo-dedup.patch
+ create mode 100644 Patches/0021-phase3-audit-fire-pass-simplifications-named-mechanism-margins.patch
+ create mode 100644 Patches/0022-phase3-audit-one-home-for-the-ranged-session-on-cvar-list-in-the-test-m.patch
+ create mode 100644 Patches/PRs/PR-10-ranged-config-assets.md
+ create mode 100644 Patches/PRs/PR-11-level-authoring-row-references.md
+
+diff --git a/Docs/README.md b/Docs/README.md
+index 96f3c5a..b1be1e2 100644
+--- a/Docs/README.md
++++ b/Docs/README.md
+@@ -24,6 +24,7 @@
+ | CI state | Per-commit gate + Jenkins `massbattle-gate` green; nightly runs smoke + T1.8 movement soak on the staged build (garrison-phase run green; baseline committed; the engagement soak variant rides the next staged run) |
+ | **Next** | Phase 3 -- ranged stack: **Tasks 0-8 executed 2026-10-28/29** (build + unit tier 79/79 incl. nine `Battle.Unit.Ranged.*` suites; T3.6 perf gate PASS -- 0.236 ms @ 1,091 in flight < 0.3 ms; S6_Volley + SkirmishBehavior in the PR gate; save v2; soak variant; the B.7 entry). TWO disclosed blockers: the mixed clash+volley two-run equality (mm-scale servo transient, dossier in `Tools/CI/det_*.log`) and the pre-existing movement-soak dress-gate failure on the staged path (attributed via stash run; phase-2 territory). Report at `Docs/phases/phase-3/report.md`; progress at `Docs/phases/phase-3/progress.md`. Also pending: the ADR-27..31 owner applications + the ADR-28 arch-row amendment, the D3 movement fold-in checklist (`Docs/phases/phase-2/report.md` §6), and the S4_ShieldWall/S5_Mob melt decision (phase-2 dossier). |
+ | **PR sweep (2026-10-29)** | The audit's open PRs executed: PR-3, PR-2, PR-1, PR-8 visual pass, PR-4 (its dedicated-knockback-processor premise A/B-falsified -- landed as a seam function at the unchanged write-back call site), PR-8's editor assets + the authored IMC/scenario/mesh assets; PR-5 was already `2230eb5`. Landing record in `Patches/README.md`; per-PR status sections in `Patches/PRs/PR-*.md`. Tiers: unit 80/80 (new `Battle.Unit.Combat.AssignIntents`), func 19/23 (the four known). Owner-scoped residuals: interactive keybind pass, PIE corner-click eyeball, per-map scenario-asset assignment via the editor UI, the arrow-mass screenshot. |
++| **Phase-3 cumulative audit (2026-10-30)** | COMPLETE (static pass). Findings register: `Docs/phases/phase-3/audit.md`. The one-line verdict: the architecture held (ranged is a fire-control pass over the spine; impacts land through the melee machinery), but phase 3 re-scattered every constant family the phase-2 audit had unified -- body radius, hash-family multipliers, EDU row indices in fixtures, plus the demo faction keyed on EDU row order (A-1). All re-unified into one-home constants in headers every seam includes; value-neutral, identical bits. Patch series `Patches/0017..0022` on branch `audit/phase3-redo` (from `main` @ `86d1a1f`); every commit carries its MUST-re-run note. PRs 10-11 filed for the editor/machine-gated remainder (ranged config assets; dictionary-keyed level authoring + the demo-map TeamId eyeball). Open blockers carried unchanged (the mixed two-run mm residual; the staged soak dress gate). |
+ 
+ **Deferred items carried into Phase 2** (from A4 dispositions + report §4): shipping split of test deps — **DONE in Phase 1** (`MassBattleTest` DeveloperTool module) · `.uproject` `TargetAllowList` pruning of MCP toolset plugins (owner call, still deferred) · EDU floats >2 decimals remain rounded (documented rule) · soak-map cook-list entry — **DONE in Phase 1** (`MapsToCook` + `Content/Data` staging) · re-baseline `entity_spawn_80_us` on the nightly hardware path (T2.9).
+ 
+@@ -48,7 +49,7 @@
+ | `Docs/phases/phase-0/` | brief · progress · report · audit (foundation run + post-run audit) | **Archive** (report §7 = Phase 1 entry point) |
+ | `Docs/phases/phase-1/` | brief · progress · report · audit + the rolled-in garrison run (`brief-garrison` · `progress-garrison` · `report-garrison`) | **Archive** (report §4 + report-garrison §4 = Phase 2 entry points) |
+ | `Docs/phases/phase-2/` | Movement-cleanup run: brief · progress · report (**Archive**). Engagement-solver run: `brief-engagement` · `progress-engagement` · `report-engagement` (**Archive**). Post-run audit: `audit-engagement` (2026-10-28) + first-pass verification record: `audit-engagement-verification` (2026-10-28) | |
+-| `Docs/phases/phase-3/` | Ranged-stack run: brief · kickoff-verification (fixes F-K1..K8) · progress (Tasks 0-8) · report (2026-10-29) | **Archive** (the phase-4 entry point is the report's section 5) |
++| `Docs/phases/phase-3/` | Ranged-stack run: brief · kickoff-verification (fixes F-K1..K8) · progress (Tasks 0-8) · report (2026-10-29) · **audit** (2026-10-30, cumulative; findings A-1/B-1..B-8/C-1..C-7/D-1..D-5, patches `0017..0022`, PRs 10-11) | **Archive** (the phase-4 entry point is the report's section 5) |
+ | `Docs/reviews/plan-review-findings.md` | 2026-10-23 plan review: errors E1–E6, risks R1–R13, improvements I1–I7, evidence + citations | **Archive** (referenced by live specs) |
+ 
+ Repo files outside `Docs/` you will be pointed at: `Tools/CI/README.md`, `Tools/CI/JENKINS.md`, `Tools/CI/run_tests.bat` / `nightly.bat` / `compare_baseline.py`, `Baselines/perf/README.md`, `Jenkinsfile`.
+diff --git a/Docs/phases/phase-3/audit.md b/Docs/phases/phase-3/audit.md
+new file mode 100644
+index 0000000..2454a08
+--- /dev/null
++++ b/Docs/phases/phase-3/audit.md
+@@ -0,0 +1,149 @@
++# Phase 3 Audit -- Ranged Stack (cumulative)
++
++| | |
++|---|---|
++| **Date** | 2026-10-30 |
++| **Auditor** | Senior-dev audit pass (independent of the implementation run) |
++| **Subject** | HEAD `86d1a1f` -- the phase-3 ranged-stack run (Tasks 0-8, commits `3ee518e..6cffbe6`), the PR-sweep landing (`45faecd..44a1f9d`), and the ranged-facing surfaces they touched in the demo module and the test tier |
++| **Method** | Full read of the ranged pipeline (both seams, both processors, the pool/subsystem, registry + save + state-hash ranged terms, ExecBridge, debug overlay, soak variant, the scenario actors) against the spec's RC-table. Static review only: no engine build in this environment; compile-sanity by symbol/include check, value-neutrality argued per change (identical bits out). |
++| **Deliverables** | (a) this findings register; (b) six commits on branch `audit/phase3-redo` + `.patch` files `Patches/0017..0022`; (c) PR writeups `Patches/PRs/PR-10` + `PR-11` for the editor/machine-gated remainder. |
++
++---
++
++## 0. Verdict
++
++The architecture claim held exactly as written: ranged really is a fire-control pass over the
++existing spine plus a pooled SoA store, and the arrow really lands through the melee machinery
++(one quantizer, one death path, zero new GAS attributes, zero new shared fragments). The
++canonical-identity work (A13/RC8) that landed from the determinism blocker is the best code in
++the phase -- five real defects found and fixed by one honest test.
++
++The rot is the same genus as phase 2's, one generation later: **every constant the phase-2 audit
++unified got re-scattered by the new code that copied the pattern instead of consuming the home**
++-- the 40 cm body radius (phase 2's B-1) re-typed in three new ranged files plus one raw literal,
++the Knuth hash multipliers (phase 2's B-2) re-typed in two new homes, the EDU row-index fixture
++anti-pattern (phase 2's B-3) re-introduced in EVERY new fixture surface, and -- the worst of them --
++the demo's faction split keyed on `EduRowIndex == 0`. Three of these carried comments claiming the
++drift was the convention ("one named constant per seam"; "a future audit may unify"). It was not;
++this audit is that future audit, and the unifications are now in.
++
++Nothing here required redesign. Every fix is a rename to one home, a dictionary key, or a
++deletion. The test tier needed NO removals this time -- the C-6 lesson (no permanently-failing
++stubs) was respected, and the ranged suites are disjoint; the redundancy found was name-list
++duplication in the scenario actors, not coverage overlap.
++
++---
++
++## 1. Findings register
++
++Severity: **A** = correctness (fix now) · **B** = maintainability/data-drift (fix now, cheap) ·
++**C** = cleanliness (fix now, trivial) · **D** = deferred (needs owner/editor/machine; PR filed).
++
++### A-tier (correctness)
++
++| ID | Sev | File(s) | Finding |
++|---|---|---|---|
++| **A-1** | Med | `DemoUnitActor.h` (`Team`), `AUnitActor.h:110` (`TeamId`), `DemoUnitVisualSubsystem.cpp:93-100` | **Two team notions on one authoring surface, uncoupled -- and the adopt path keyed on the wrong one.** The demo actor exposes `EDemoTeam Team` (visual faction, drives selection/tinting) AND the plugin actor's `uint8 TeamId` (sim side, drives the ranged friendly rules + skirmish threats). Nothing connected them: a level author who sets `Team=Enemy` but leaves `TeamId` at its default 0 gets an enemy-TINTED unit that the ranged rules treat as a FRIEND (holds fire to protect it, never retreats from it) -- silent, wrong, and invisible to every test (the demo map's placed units are a binary .umap). Worse, `AdoptUnknownRegistryUnits` derived the demo faction from `Spec->EduRowIndex == 0` -- EDU row ORDER as a faction notion, the exact anti-pattern phase 2's B-3 killed in the fixtures: re-order the golden EDU and the demo's faction split silently inverts. Fix (patched): OnConstruction syncs `TeamId = (uint8)Team` (ONE notion on the authoring surface); the adopt path reads `Spec->TeamId` (the side, not the row). The demo map's placed units must still be eyeballed in PIE -- PR-11 carries it (a .umap cannot be audited statically). |
++
++### B-tier (magic numbers / data-in-code / duplication)
++
++| ID | Sev | File(s) | Finding |
++|---|---|---|---|
++| **B-1** | High | `BattleRanged.cpp:162` vs `BattleEngagement.h:95` vs `ProjectileStepProcessor.cpp:72-73` vs `RangedFireProcessor.cpp:329` | **The 40 cm body radius re-scattered, with a comment claiming that was the rule.** Phase 2's audit fixed this as ONE home (`FCombatSolver::Contact::BodyRadiusM`, "keep it HERE -- a per-file retyped 0.4f drifts silently"); phase 3 then wrote three MORE homes: `VolleyBodyRadiusM` in the ranged seam (its comment: "B-1 family: one named constant per seam" -- a misreading that legitimizes the drift), file-local `BodyRadiusM`/`BodyTopM` in the step processor, and a raw `2.f * 0.4f` in the fire pass's blocker query. All copies agreed TODAY (0.4 everywhere) -- the failure mode is the silent desync on the next edit. Fix (patched): ONE home `BattleBody` in BattleTypes.h (the file every seam includes): `RadiusM 0.4 / EyeHeightM 1.6 / TopM 1.8 / AimCenterM 1.0`; `Contact::BodyRadiusM` becomes an alias; the eye height (was a re-typed `1.6f` in the header default AND the fire pass) and the aim-center height (was `+ 1.0f`) join it. Values identical everywhere; rename, not re-derivation. |
++| **B-2** | High | `BattleBallistics.cpp:9-15` vs `BattleMelee.cpp:64-85` vs `BattleTypes.h:39-46` | **The hash-family multipliers in THREE homes -- two of which asked for this fix in their own comments.** Phase 2's B-2 moved the roll hash INTO FMeleeMath ("one home for the Knuth multipliers"); phase 3 then grew two more homes: BattleBallistics.cpp's file-local `KnuthGold`/`KnuthMix` ("a future audit may unify the constant's home") and BattleCanonicalEntityKey's inline literals. The two [0,1) folds even differ subtly (`/16777215.f` vs `/0x01000000u`) -- not a bug today (different functions), but a copy-paste trap. Fix (patched): ONE home `BattleHashFamily` in BattleTypes.h (`GoldenRatio 2654435761u, MixA 40503u, MixB 2685821657u`); all three sites consume it. Expressions unchanged; identical bits out; T2.1 + T3.1 goldens lock the same values they always did. |
++| **B-3** | High | `BattleExecCommands.cpp` (SpawnVolley/RangedPerfStress/CombatPerfStress), `BattleMovementSoakController.cpp:164`, `DemoGameMode.cpp:168-179` | **The EDU row-index anti-pattern re-introduced in every new fixture surface.** Phase 2's B-3 fixed SpawnClash to dictionary-keyed lookups ("row indices are the worst part: anyone re-ordering the EDU silently turns the knights-vs-peasants mob into peasants-vs-peasants"); phase 3 then wrote `SpawnAt(2, ...)` / `SpawnLine(2, ...)` / `Min(2, Rows.Num()-1)` (the archer row as a raw index) in both ranged fixtures, the soak's volley mix, and CombatPerfStress (`SpawnLine(0, ...)`, pre-existing). The T6.1 constants audit WILL touch the golden EDU -- with an index-held fixture, re-ordering it silently turns the 1,000-archer perf gate into 1,000 crossbows (different flight times) or 1,000 levy (no fire at all). Fix (patched): `BattleExec::FindEduRowIndexByDictionary` promoted to the public API; every fixture resolves by dictionary name (`Peasant_Archers`, `Peasant_Levy`); the soak and the demo's third re-typed matcher (the FindRow lambda) consume the same helper. |
++| **B-4** | Med | `BattleExecCommands.cpp` (2x), vs `BattleExecCommands.cpp:48` | **The ranged session-on flip list re-typed in both ranged fixtures** -- the exact duplication class phase 2's D-3 killed with `EnableDemoCombatPipeline()`. Same file also re-types the fixture path + load + parse block six times. Fix (patched): `BattleExec::EnableRangedPipeline()` + `LoadGoldenEduRows()`; SpawnClash's own block consumes the loader too. |
++| **B-6** | Med | `ProjectileStepProcessor.cpp:245-248` vs `AssignPairsProcessor.cpp:440` | **The ContactAngle deg<->byte converters inline in processors.** The step pass's deg->byte quantization is a five-line expression in the impact hot path; the assign pass holds the inverse scale (`* 360.f / 255.f`). Both live beside the sectorizer that consumes them. Fix (patched): `FCombatSolver::ContactAngleFromDegrees` / `DegreesFromContactAngle`; formulas verbatim. |
++| **B-7** | Low | `BattleRanged.h:48-56` vs `BattleRanged.cpp:114-141` | **The profile table has two homes** (the struct's member defaults describe the Arrow row; the switch re-states it). Runtime consumers only call `GetProjectileProfile`, so the defaults are near-dead -- but a future edit to one silently disagrees with the other. Not patched (the switch fully overrides both real kinds; collapsing the Arrow case onto the defaults buys one line and costs explicitness). Recorded so T6.1's constants swap touches BOTH sites deliberately. |
++| **B-8** | Low | `RangedFireProcessor.cpp:497/520` vs `BattleRanged.cpp` (ComputeAmmoFraction) | **The fraction denominator re-derived twice in the fire pass** (overlay bar + GAS mirror), each with its own `Max(1, ...)` guard, while the seam's `ComputeAmmoFraction` is the authority. Fix (patched): both sites call the seam. |
++
++### C-tier (cleanliness)
++
++| ID | Sev | File(s) | Finding |
++|---|---|---|---|
++| **C-1** | Med | `RangedFireProcessor.cpp:85-104` | **The A14 GAS mirror scanned all actors PER UNIT PER TICK** (`TActorIterator` inside the per-unit loop -- O(units x actors) on the game thread every firing tick). Fix (patched): ONE sweep per pass into a `TMap<FUnitHandle, TWeakObjectPtr<AUnitActor>>` scratch (EC9), reset per pass; the mirror reads the map. |
++| **C-3** | Low | `BattleFuncTestActor.cpp` (S6/Skirmish/DeterminismTwoRun Set+RestoreCvars) | **The ranged session-on cvar list re-typed as local arrays in three scenario classes** (6 copies of the 4-name list). Fix (patched): `RangedSetCvars`/`RangedRestoreCvars` beside the existing `ClashSetCvars` helper; three classes consume. |
++| **C-6** | Med | `BattleRanged.cpp:184-186` vs `RangedFireProcessor.cpp:327-329` | **The arced impact-zone formula derived twice** (the seam's hold-fire zone count; the fire pass's blocker query -- same cone math, re-typed). Fix (patched): `ImpactZoneRadiusForDist` in the seam; the query reads it plus a named pad (`BlockerQueryPadM`). |
++| **C-7** | Low | `RangedFireProcessor.cpp:437` (`+ 2.f`), `BattleRanged.cpp:222/226` (`0.3f` x2), `RangedFireProcessor.cpp:328-329` (`+ 2.f` x2), `BattleProjectileSubsystem.cpp:9` (`Max(16, ...)`) | **Unnamed mechanism margins** -- the TTL safety net, the LOS clearance (typed twice in the seam), the blocker-query pad (typed twice), the pool reserve floor. All patched to named constants with doc-comments (`FRangedConstants::TtlSafetyMarginS`, `FBallisticsConstants::LosClearanceM`, `BlockerQueryPadM`, `MinPoolReserve`). |
++| **C-4** | Low | `BattleSpawnLibrary.cpp:177` | `StatsPayload.ArmorAdd = Row.Armor * 0.0f;` -- an expression that is always 0.0 written as a multiplication. Pre-phase-3 (phase 2's landing). Not patched (cosmetic; the comment beside it explains the intent). Recorded for the next spawn-path touch. |
++| **C-5** | Carried | `BattleSpawnLibrary.cpp` (fixup) | **The spawn payload never stamps `FBaseStatsFragment.{Lethality, Shield}`** -- disclosed by the phase-3 run itself (task 5.6, "T6.1 owns completion"). Carried unchanged; T6.1's constants audit is the owning task. |
++
++### D-tier (deferred -- editor/machine/owner; PRs filed)
++
++| ID | Sev | Target | Finding |
++|---|---|---|---|
++| **D-1** | Med | `Content/MassBattle/Data/Units/` | **`BuildT0Configs` authors four config assets; only two are in the repo.** The command's table was extended for rows 2/3 (Peasant Archers, Mercenary Crossbowmen) but `M_Battle_PeasantArchers` / `M_Battle_MercenaryCrossbowmen` .uassets were never committed -- the code and the asset tree disagree, and the next `BuildT0Configs` run would silently re-author them with drift. PR-10. |
++| **D-2** | Med | `ADemoUnitActor` authoring surface + `L_MassBattle_Demo01` | **Level-authored units reference EDU rows by INDEX** (`EduRowIndex` int property) -- the level-authoring equivalent of B-3, plus A-1's remainder: the demo map's placed units need a PIE eyeball to confirm their `TeamId`s match their factions (a .umap cannot be audited statically). PR-11. |
++| **D-3** | Carried | `Tools/CI/det_*.log`, the staged nightly | **The two open blockers stay open**: the mixed two-run mm-scale divergence (next step: hex-float tracing of the servo's DesiredVel accumulation at ticks 11-14; `det_trace8.log` has the shape) and the pre-existing staged movement-soak dress-gate failure (phase-2 dossier territory). Both already scheduled by the phase-3 report §4-5; not re-litigated here. |
++| **D-4** | Carried | `RangedFireProcessor.cpp` (mirror) | **The A14 GAS mirror's interim writer** (the fire pass, gated on the Debug pointer) -- disclosed by the run; UnitSync owns the sync path at Phase 4+. The per-pass cost fix landed (C-1); the HOME move is Phase 4's. No PR. |
++| **D-5** | Low | `MassBattleTest` (8 files) | **The golden-EDU fixture path re-typed across the test module** (8 local `LoadFixture`-ish blocks). The plugin-side dedup landed (`LoadGoldenEduRows`); the test-side churn was deliberately left -- test-local fixture loading is a legitimate pattern, and touching 8 test files without a machine run is risk without payoff. Follow-up for whoever next edits those files. |
++
++### Explicitly checked and found healthy (no action)
++
++- **Flags-off identity**: both ranged gates read the cvars top-of-pass and return before any
++  state; the step pass's empty-pool early-out and the fire pass's no-ranged-units skip are real
++  (R-R8 verified at every call site).
++- **The canonical-identity work (A13/RC8)**: `BattleCanonicalEntityKey/Count` feeding every
++  hash-family draw, the sorted-order pass maps, the pool's index-order iteration -- the five
++  defect fixes from the determinism blocker are genuine hardening, not test-chasing. The residual
++  mm-scale transient is movement-side and honestly disclosed.
++- **The killed-ledger's lifecycle** (`GKilledLedger`): considered for a "clear per pass" fix and
++  REJECTED -- the deferred FDeadTag is flush-invisible while the last-tick hash still addresses
++  the corpse, so cross-tick persistence within a volley is load-bearing; it clears at pool-empty
++  (bounded by kills-per-battle; new-battle handles get new serials, so stale entries never
++  alias). Left as-is deliberately.
++- **State-hash term layout**: the ranged block's position-stable zero-fill and the pool block's
++  index order are exactly per spec §3.4; melee-only hashes unchanged by construction.
++- **The pool's fail-closed contract**: Acquire's drop path, Release's generation bump, the
++  battle-start-only reserve -- all as ADR-27 wrote them.
++- **Redundant-test scan**: the nine `Battle.Unit.Ranged.*` suites are disjoint (Ballistics vs LOS
++  vs Pool vs AmmoAccounting vs VolleySelection vs SkirmishMath vs PoolStep vs FirePass vs
++  Impacts); no superseded stub shipped this phase (the phase-2 C-6 lesson held); the scenario
++  tier's asserts are sampled with evidence lines, not restatements.
++- **A12 discipline**: `ServoProcessor`/`UnitLocomotion` gained zero ranged consumption -- verified
++  by grep, not by the spec's word.
++
++---
++
++## 2. Fixes applied in this audit (branch `audit/phase3-redo`)
++
++Each fix group is one commit; `.patch` exports under `Patches/0017..0022`. Every commit message
++carries its MUST-re-run note (AGENTS §2).
++
++| # | Patch | Groups | Risk | What it touches |
++|---|-------|--------|------|-----------------|
++| 17 | `one home for the soldier body geometry` | B-1 | None (same values, one source) | BattleTypes.h (+`BattleBody`), BattleEngagement.h (alias), BattleRanged.h/.cpp, RangedFireProcessor.cpp, ProjectileStepProcessor.cpp (+named `FlyoverQueryMarginM`) |
++| 18 | `one home for the hash family multipliers` | B-2 | None (identical bits out) | BattleTypes.h (+`BattleHashFamily`), BattleMelee.cpp, BattleBallistics.h/.cpp |
++| 19 | `one home for the ContactAngle conversions` | B-6 | None (formulas verbatim) | BattleEngagement.h/.cpp, AssignPairsProcessor.cpp, ProjectileStepProcessor.cpp |
++| 20 | `fixture honesty + exec/demo dedup` | B-3, B-4, A-1 (code half) | Behavior-visible only in demo tinting (adopt reads TeamId) | BattleExecCommands.h/.cpp, BattleMovementSoakController.cpp, DemoGameMode.cpp, DemoUnitVisualSubsystem.cpp, DemoUnitActor.cpp |
++| 21 | `fire-pass simplifications + named margins` | C-1, C-6, C-7, B-8 | Per-pass cost only (same writes, fewer scans) | BattleRanged.h/.cpp (+`FRangedConstants`, `ImpactZoneRadiusForDist`), BattleBallistics.h (+`LosClearanceM`), RangedFireProcessor.cpp, BattleProjectileSubsystem.cpp |
++| 22 | `ranged session-on cvar list, one home (tests)` | C-3 | None (same sets flipped) | BattleFuncTestActor.cpp |
++
++Commits are ordered so any prefix compiles; the whole set is value-neutral except patch 20's
++demo-tinting change (units adopted by the visuals now tint by their SIDE, which is the honest
++reading) and patch 21's per-pass amortization (same mirror writes, one sweep).
++
++## 3. What needs editor/machine access (PR writeups, `Patches/PRs/`)
++
++| PR | Title | Why it can't land from here |
++|----|-------|----------------------------|
++| **PR-10** | Author + commit the ranged config assets (D-1) | Needs the editor (BuildT0Configs run) + a binary .uasset commit |
++| **PR-11** | Dictionary-keyed level authoring + the demo-map TeamId eyeball (D-2, A-1 remainder) | Needs the actor property change verified in PIE + the map re-saved; a .umap cannot be audited or edited statically |
++
++Both carry motivation, exact files, the change sketch, the evidence to gather, and the roll-back
++story, per the series format.
++
++## 4. Evidence conventions
++
++- All file:line references are against HEAD `86d1a1f` (pre-audit); post-audit references are to
++  the `audit/phase3-redo` commits.
++- "Identical values/bits" claims are structural: the substituted expressions read the same
++  numbers from the same inputs through the same operations (renames of constants, aliases, and
++  verbatim-formula moves). The golden tier (T2.1, T3.1-T3.3) must still be re-run on the machine
++  per each patch's commit note -- no behavior claim above rests on static review alone.
++- **Session lesson recorded (the kickoff's F-K class, again): the file-editing surface in this
++  environment silently expands tabs to spaces on write.** It bit this audit's first three
++  commits (whole-file reindent diffs; caught by numstat review, redone byte-exact via scripted
++  splicing that fails loudly on anchor mismatch). Every patch in `0017..0022` was verified to
++  apply cleanly, in order, on a pristine `main` tree, with brace balance and no leftover
++  references to the removed constants.
+diff --git a/Patches/0017-phase3-audit-one-home-for-the-soldier-body-geometry.patch b/Patches/0017-phase3-audit-one-home-for-the-soldier-body-geometry.patch
+new file mode 100644
+index 0000000..12f878d
+--- /dev/null
++++ b/Patches/0017-phase3-audit-one-home-for-the-soldier-body-geometry.patch
+@@ -0,0 +1,210 @@
++From 526a67807275ae27c7a0626ff6d274d3bef74d8d Mon Sep 17 00:00:00 2001
++From: Z User <z@container>
++Date: Thu, 29 Oct 2026 23:25:24 +0000
++Subject: [PATCH] phase3-audit: one home for the soldier body geometry (A-1)
++
++BattleTypes.h gains namespace BattleBody {RadiusM 0.4, EyeHeightM 1.6,
++TopM 1.8, AimCenterM 1.0} -- the file every seam already includes.
++Consumers: Contact::BodyRadiusM (BattleEngagement.h) becomes an alias;
++the ranged seam drops VolleyBodyRadiusM (BattleRanged.cpp) and the raw
++2.f * 0.4f blocker-query literal (RangedFireProcessor.cpp); the step
++processor drops its file-local BodyRadiusM/BodyTopM and gains a named
++FlyoverQueryMarginM (was the raw 0.7f). Values identical everywhere --
++this is a rename, not a re-derivation. Same bits out by construction.
++
++MUST re-run on the UE machine: unit tier (T3.1-T3.3 use 1.6f goldens;
++expected green, zero drift -- the values are unchanged).
++---
++ .../MassBattle/Private/BattleRanged.cpp       |  7 +++----
++ .../Private/ProjectileStepProcessor.cpp       | 19 +++++++++++--------
++ .../Private/RangedFireProcessor.cpp           |  6 +++---
++ .../MassBattle/Public/BattleEngagement.h      | 12 +++++++-----
++ .../Source/MassBattle/Public/BattleRanged.h   |  2 +-
++ .../Source/MassBattle/Public/BattleTypes.h    | 18 ++++++++++++++++++
++ 6 files changed, 43 insertions(+), 21 deletions(-)
++
++diff --git a/Plugins/MassBattle/Source/MassBattle/Private/BattleRanged.cpp b/Plugins/MassBattle/Source/MassBattle/Private/BattleRanged.cpp
++index 787bf76..24f9b54 100644
++--- a/Plugins/MassBattle/Source/MassBattle/Private/BattleRanged.cpp
+++++ b/Plugins/MassBattle/Source/MassBattle/Private/BattleRanged.cpp
++@@ -158,8 +158,6 @@ namespace
++ 		const float Clamped = FMath::Clamp(T, 0.f, 1.f);
++ 		return FVector2D::Distance(Point, A + AB * Clamped);
++ 	}
++-
++-	constexpr float VolleyBodyRadiusM = 0.4f; // the 40 cm body radius (B-1 family: one named constant per seam)
++ }
++ 
++ int32 SelectVolleyShots(
++@@ -195,8 +193,9 @@ int32 SelectVolleyShots(
++ 	const bool bArcedHold = Profile.bIndirect && FriendsInZone > FriendlyImpactTolerance;
++ 
++ 	// Flat-lane corridor (A7): any friendly body inside the corridor holds
++-	// fire. Corridor half-width = 2 body radii + hit radius.
++-	const float CorridorHalfM = 2.f * VolleyBodyRadiusM + Profile.HitRadiusM;
+++	// fire. Corridor half-width = 2 body radii + hit radius (one home:
+++	// BattleTypes.h's BattleBody, the B-1 rule).
+++	const float CorridorHalfM = 2.f * BattleBody::RadiusM + Profile.HitRadiusM;
++ 
++ 	int32 ShotCount = 0;
++ 	for (FVolleyShooterView& Shooter : InOutShooters)
++diff --git a/Plugins/MassBattle/Source/MassBattle/Private/ProjectileStepProcessor.cpp b/Plugins/MassBattle/Source/MassBattle/Private/ProjectileStepProcessor.cpp
++index b2a5c16..3b5cf9b 100644
++--- a/Plugins/MassBattle/Source/MassBattle/Private/ProjectileStepProcessor.cpp
+++++ b/Plugins/MassBattle/Source/MassBattle/Private/ProjectileStepProcessor.cpp
++@@ -67,10 +67,13 @@ namespace
++ 	// keeps corpses addressable -- this ledger is the no-double-kill guard.
++ 	TSet<FMassEntityHandle> GKilledLedger;
++ 
++-	// Body geometry for the height gates (the B-1 family: named constants;
++-	// values mirror the hash entry's 40 cm body radius and the ~1.8 m body).
++-	constexpr float BodyRadiusM = 0.4f;
++-	constexpr float BodyTopM = 1.8f;
+++	// Body geometry for the height gates: ONE home (BattleTypes.h's
+++	// BattleBody) -- the same 40 cm radius the contact ring and the ranged
+++	// corridors read. FlyoverQueryMarginM: how far above body top the
+++	// mid-segment must sit before the pass skips the impact query entirely
+++	// (R-R2's cheap gate; conservative by design -- the candidate gate
+++	// itself uses no margin).
+++	constexpr float FlyoverQueryMarginM = 0.7f;
++ 
++ 	/** Point-to-segment distance, 2D (the swept-segment corridor test). */
++ 	float SegmentDist2D(const FVector2D& Point, const FVector2D& A, const FVector2D& B)
++@@ -160,13 +163,13 @@ void RunProjectileStepPass(UWorld* World, float DeltaSeconds)
++ 		const FVector2D Mid = (Pre + Post) * 0.5f;
++ 		const float HalfSeg = FVector2D::Distance(Pre, Post) * 0.5f;
++ 		const float GroundMid = Grid.SampleHeight(Mid);
++-		if (MidZ > GroundMid + BodyTopM + 0.7f)
+++		if (MidZ > GroundMid + BattleBody::TopM + FlyoverQueryMarginM)
++ 		{
++ 			continue; // above every body: no query (the R-R2 early-out)
++ 		}
++ 
++ 		const FProjectileProfile Profile = GetProjectileProfile(static_cast<EBattleProjectileKind>(Pool.Kind[Slot]));
++-		const float CorridorM = HalfSeg + Profile.HitRadiusM + BodyRadiusM;
+++		const float CorridorM = HalfSeg + Profile.HitRadiusM + BattleBody::RadiusM;
++ 		GHitEntries.Reset();
++ 		GHitPositions.Reset();
++ 		if (Hash)
++@@ -202,7 +205,7 @@ void RunProjectileStepPass(UWorld* World, float DeltaSeconds)
++ 				continue;
++ 			}
++ 			const float Dist = SegmentDist2D(GHitPositions[i], Pre, Post);
++-			if (Dist > Profile.HitRadiusM + BodyRadiusM)
+++			if (Dist > Profile.HitRadiusM + BattleBody::RadiusM)
++ 			{
++ 				continue;
++ 			}
++@@ -211,7 +214,7 @@ void RunProjectileStepPass(UWorld* World, float DeltaSeconds)
++ 			const float T = FMath::Clamp(FVector2D::DotProduct(GHitPositions[i] - Pre, SegAB) / SegLenSq, 0.f, 1.f);
++ 			const float ZAtT = FMath::Lerp(GPreZ[Slot], Pool.PosZ[Slot], T);
++ 			const float GroundI = Grid.SampleHeight(GHitPositions[i]);
++-			if (ZAtT > GroundI + BodyTopM)
+++			if (ZAtT > GroundI + BattleBody::TopM)
++ 			{
++ 				continue; // passes overhead
++ 			}
++diff --git a/Plugins/MassBattle/Source/MassBattle/Private/RangedFireProcessor.cpp b/Plugins/MassBattle/Source/MassBattle/Private/RangedFireProcessor.cpp
++index 718b091..69c2216 100644
++--- a/Plugins/MassBattle/Source/MassBattle/Private/RangedFireProcessor.cpp
+++++ b/Plugins/MassBattle/Source/MassBattle/Private/RangedFireProcessor.cpp
++@@ -258,7 +258,7 @@ void RunRangedFirePass(UWorld* World, float DeltaSeconds)
++ 				Shooter.Unit = Handle;
++ 				Shooter.RosterIndex = RosterIdx++;
++ 				Shooter.PosM = FVector2D(P.X, P.Y) * 0.01f;
++-				Shooter.EyeZM = 1.6f; // A6 placeholder launch height
+++				Shooter.EyeZM = BattleBody::EyeHeightM; // A6 placeholder launch height (one home: BattleTypes.h)
++ 				Shooter.Kind = Ranged->Kind;
++ 				Shooter.RangeM = Ranged->RangeM;
++ 				Shooter.Ammo = Ranged->AmmoCount;
++@@ -313,7 +313,7 @@ void RunRangedFirePass(UWorld* World, float DeltaSeconds)
++ 		const FProjectileProfile Profile = GetProjectileProfile(GShooters[0].Kind);
++ 		FVolleyTargetView Target;
++ 		Target.PosM = *TargetAnchor;
++-		Target.ZM = Grid.SampleHeight(*TargetAnchor) + 1.0f; // body-center aim
+++		Target.ZM = Grid.SampleHeight(*TargetAnchor) + BattleBody::AimCenterM; // body-center aim (one home)
++ 		Target.Unit = TargetUnit;
++ 
++ 		// -- Friendly blockers through the spatial hash (A7's sanctioned
++@@ -326,7 +326,7 @@ void RunRangedFirePass(UWorld* World, float DeltaSeconds)
++ 			const float DistM = FVector2D::Distance(GShooters[0].PosM, Target.PosM);
++ 			const float QueryRadiusM = Profile.bIndirect
++ 				? DistM * FMath::Tan(FMath::DegreesToRadians(FMath::Max(Profile.DispersionDeg, 0.01f))) + Profile.HitRadiusM + 2.f
++-				: DistM * 0.5f + 2.f * 0.4f + Profile.HitRadiusM + 2.f;
+++				: DistM * 0.5f + 2.f * BattleBody::RadiusM + Profile.HitRadiusM + 2.f;
++ 			const FVector2D QueryCenterM = Profile.bIndirect
++ 				? Target.PosM
++ 				: (*TargetAnchor + GShooters[0].PosM) * 0.5f;
++diff --git a/Plugins/MassBattle/Source/MassBattle/Public/BattleEngagement.h b/Plugins/MassBattle/Source/MassBattle/Public/BattleEngagement.h
++index 801c6e5..6590fdc 100644
++--- a/Plugins/MassBattle/Source/MassBattle/Public/BattleEngagement.h
+++++ b/Plugins/MassBattle/Source/MassBattle/Public/BattleEngagement.h
++@@ -83,16 +83,18 @@ struct FCombatAttackerView
++ 
++ namespace FCombatSolver
++ {
++-	// -- Body geometry (ONE home for the 40 cm soldier body radius, fact 1.9) --
+++	// -- Body geometry (ONE home: BattleTypes.h's BattleBody) --
++ 	//
++ 	// Consumers: the cluster pass's OBB dilation, the assign pass's contact
++-	// ring, and the servo's avoidance/touch radii all re-derive the same
++-	// body size. Keep it HERE (beside FAssignContext, which carries it into
++-	// the seam) -- a per-file retyped 0.4f drifts silently (B-1).
+++	// ring, the servo's avoidance/touch radii, and (phase 3) the ranged
+++	// lane/impact corridors all read the same body size. The home is
+++	// BattleBody::RadiusM in BattleTypes.h (the file every seam includes);
+++	// this alias keeps the combat-facing name. A per-file retyped 0.4f
+++	// drifts silently (B-1; phase 3's ranged seam re-scattered it, audit A-1).
++ 	namespace Contact
++ 	{
++ 		/** Soldier body radius, meters (fact 1.9: FAgentRadiusFragment 40 cm). */
++-		constexpr float BodyRadiusM = 0.4f;
+++		constexpr float BodyRadiusM = BattleBody::RadiusM;
++ 	}
++ 
++ 	// -- ContactAngle conventions (ONE value, TWO consumers, spec §4.5) --
++diff --git a/Plugins/MassBattle/Source/MassBattle/Public/BattleRanged.h b/Plugins/MassBattle/Source/MassBattle/Public/BattleRanged.h
++index 9b84955..d40b596 100644
++--- a/Plugins/MassBattle/Source/MassBattle/Public/BattleRanged.h
+++++ b/Plugins/MassBattle/Source/MassBattle/Public/BattleRanged.h
++@@ -67,7 +67,7 @@ struct FVolleyShooterView
++ 	FUnitHandle Unit;
++ 	int32 RosterIndex = -1;   // canonical identity input (A13, RC8)
++ 	FVector2D PosM = FVector2D::ZeroVector;   // planar position, meters
++-	float EyeZM = 1.6f;                       // launch height, meters
+++	float EyeZM = BattleBody::EyeHeightM;              // launch height, meters (one home: BattleTypes.h)
++ 	EBattleProjectileKind Kind = EBattleProjectileKind::None;
++ 	float RangeM = 0.f;                       // weapon range, meters (fragment-stamped)
++ 	int16 Ammo = 0;
++diff --git a/Plugins/MassBattle/Source/MassBattle/Public/BattleTypes.h b/Plugins/MassBattle/Source/MassBattle/Public/BattleTypes.h
++index def3d82..6b83d7d 100644
++--- a/Plugins/MassBattle/Source/MassBattle/Public/BattleTypes.h
+++++ b/Plugins/MassBattle/Source/MassBattle/Public/BattleTypes.h
++@@ -53,6 +53,24 @@ inline uint32 BattleCanonicalCount(int32 RosterIndex, uint32 Count)
++ 	return (static_cast<uint32>(RosterIndex) << 16) | (Count & 0xFFFFu);
++ }
++ 
+++/** Soldier body geometry (ONE home, fact 1.9's 40 cm body + the phase-3
+++ *  ranged heights): every body-size read in the project consumes these --
+++ *  the engagement contact radius (aliased as FCombatSolver::Contact::
+++ *  BodyRadiusM), the ranged lane/impact corridors, and the height gates.
+++ *  A per-file retyped 0.4f/1.6f/1.8f drifts silently (the phase-2 audit's
+++ *  B-1 lesson, re-scattered by phase 3's ranged seam -- this audit's A-1). */
+++namespace BattleBody
+++{
+++	/** Body radius, meters (fact 1.9: FAgentRadiusFragment 40 cm). */
+++	constexpr float RadiusM = 0.4f;
+++	/** Launch/eye height, meters (the ranged fire pass's A6 placeholder). */
+++	constexpr float EyeHeightM = 1.6f;
+++	/** Body top, meters (the impact height gates' body ceiling). */
+++	constexpr float TopM = 1.8f;
+++	/** Aim-point height above ground, meters (the volley target's body center). */
+++	constexpr float AimCenterM = 1.0f;
+++}
+++
++ /** Weapon reach class (spec §4.5: >= Spear grants the second-rank budget
++  *  bonus; arch §9.1 spear reach). Mapped from the EDU stat_pri tech type at
++  *  spawn (task 2 step 1); the class SET and mapping are A6 placeholders the
++-- 
++2.47.3
++
+diff --git a/Patches/0018-phase3-audit-one-home-for-the-hash-family-multipliers.patch b/Patches/0018-phase3-audit-one-home-for-the-hash-family-multipliers.patch
+new file mode 100644
+index 0000000..3e4bc56
+--- /dev/null
++++ b/Patches/0018-phase3-audit-one-home-for-the-hash-family-multipliers.patch
+@@ -0,0 +1,158 @@
++From db224b2b13bcba6ed3cd773d31141e4224078405 Mon Sep 17 00:00:00 2001
++From: Z User <z@container>
++Date: Thu, 29 Oct 2026 23:25:53 +0000
++Subject: [PATCH] phase3-audit: one home for the hash family multipliers (B-2
++ completion)
++
++The phase-2 audit unified the roll hash INTO FMeleeMath; phase 3 then
++grew two more homes -- BattleBallistics.cpp's file-local KnuthGold/KnuthMix
++(its own comment asked for this unification) and BattleTypes.h's
++BattleCanonicalEntityKey inline literals. All three now read
++BattleHashFamily (BattleTypes.h): GoldenRatio 2654435761u, MixA 40503u,
++MixB 2685821657u. Expressions unchanged at every site -- identical bits
++out by construction; the T2.1 golden and the dispersion goldens lock the
++same values they always did.
++
++MUST re-run on the UE machine: unit tier (T2.1 golden + the T3.1
++dispersion goldens -- expected green, zero drift; the mixed two-run
++blocker is unchanged by this rename).
++---
++ .../MassBattle/Private/BattleBallistics.cpp   | 16 +++++--------
++ .../Source/MassBattle/Private/BattleMelee.cpp | 19 +++++++--------
++ .../MassBattle/Public/BattleBallistics.h      |  5 ++--
++ .../Source/MassBattle/Public/BattleTypes.h    | 23 ++++++++++++++++---
++ 4 files changed, 39 insertions(+), 24 deletions(-)
++
++diff --git a/Plugins/MassBattle/Source/MassBattle/Private/BattleBallistics.cpp b/Plugins/MassBattle/Source/MassBattle/Private/BattleBallistics.cpp
++index e17f55b..6e6b7b3 100644
++--- a/Plugins/MassBattle/Source/MassBattle/Private/BattleBallistics.cpp
+++++ b/Plugins/MassBattle/Source/MassBattle/Private/BattleBallistics.cpp
++@@ -6,25 +6,21 @@
++ 
++ namespace
++ {
++-	// Knuth multiplicative hash constants -- the SAME family as
++-	// FMeleeMath::StaggeredPhaseOffset / CombatRoll01 (BattleMelee.cpp; the
++-	// B-2 one-home posture). Duplicated here with the cross-reference so the
++-	// seam stays free of BattleMelee includes; a future audit may unify the
++-	// constant's home in one header both seams include.
++-	constexpr uint32 KnuthGold = 2654435761u;
++-	constexpr uint32 KnuthMix = 40503u;
++-
+++	// The deterministic hash family's multipliers live in ONE home:
+++	// BattleTypes.h's BattleHashFamily (the B-2 rule; both seam files
+++	// include BattleTypes.h). The mix helpers stay here -- they are this
+++	// seam's own folds; the multipliers are the shared drift risk.
++ 	uint32 HashMix32(uint32 V)
++ 	{
++ 		V ^= V >> 16;
++-		V *= KnuthMix;
+++		V *= BattleHashFamily::MixA;
++ 		V ^= V >> 13;
++ 		return V;
++ 	}
++ 
++ 	uint32 Hash01ToUint(uint32 A, uint32 B, uint32 C)
++ 	{
++-		uint32 H = KnuthGold;
+++		uint32 H = BattleHashFamily::GoldenRatio;
++ 		H = HashMix32(H ^ A);
++ 		H = HashMix32(H ^ B);
++ 		H = HashMix32(H ^ C);
++diff --git a/Plugins/MassBattle/Source/MassBattle/Private/BattleMelee.cpp b/Plugins/MassBattle/Source/MassBattle/Private/BattleMelee.cpp
++index 21cef2f..7a86b6e 100644
++--- a/Plugins/MassBattle/Source/MassBattle/Private/BattleMelee.cpp
+++++ b/Plugins/MassBattle/Source/MassBattle/Private/BattleMelee.cpp
++@@ -63,8 +63,9 @@ namespace FMeleeMath
++ 
++ 	float StaggeredPhaseOffset(uint32 EntityHandleIndex, float AttackInterval)
++ 	{
++-		// Integer hash scatter (multiply-xor), deterministic per handle.
++-		uint32 H = EntityHandleIndex * 2654435761u;
+++		// Integer hash scatter (multiply-xor), deterministic per handle. The
+++		// multipliers live in BattleTypes.h's BattleHashFamily (ONE home, B-2).
+++		uint32 H = EntityHandleIndex * BattleHashFamily::GoldenRatio;
++ 		H ^= H >> 16;
++ 		const float Frac = static_cast<float>(H & 0xFFFFu) / 65535.f;
++ 		return Frac * FMath::Max(0.f, AttackInterval);
++@@ -72,13 +73,13 @@ namespace FMeleeMath
++ 
++ 	float CombatRoll01(uint32 EntityIndex, uint32 EntitySerial, uint32 RollCount)
++ 	{
++-		// Same multiply-xor family as StaggeredPhaseOffset (the Knuth
++-		// golden-ratio multiplier has ONE home here). Inputs: the striker's
++-		// handle + the pair's own roll count (A13: no wall-clock, no
++-		// GFrameCounter -- two runs of one seed agree).
++-		const uint32 H = (EntityIndex * 2654435761u)
++-			^ (RollCount * 40503u)
++-			^ (EntitySerial * 2685821657u);
+++		// Same multiply-xor family as StaggeredPhaseOffset; the multipliers'
+++		// ONE home is BattleTypes.h's BattleHashFamily (B-2). Inputs: the
+++		// striker's handle + the pair's own roll count (A13: no wall-clock,
+++		// no GFrameCounter -- two runs of one seed agree).
+++		const uint32 H = (EntityIndex * BattleHashFamily::GoldenRatio)
+++			^ (RollCount * BattleHashFamily::MixA)
+++			^ (EntitySerial * BattleHashFamily::MixB);
++ 		return static_cast<float>(H & 0xFFFFFFu) / 16777215.f;
++ 	}
++ 
++diff --git a/Plugins/MassBattle/Source/MassBattle/Public/BattleBallistics.h b/Plugins/MassBattle/Source/MassBattle/Public/BattleBallistics.h
++index 3be3684..f6dea5a 100644
++--- a/Plugins/MassBattle/Source/MassBattle/Public/BattleBallistics.h
+++++ b/Plugins/MassBattle/Source/MassBattle/Public/BattleBallistics.h
++@@ -60,8 +60,9 @@ namespace FBallisticsMath
++ 
++ 	/** Run-invariant shot seed: the hash of entity identity + the lifetime
++ 	 *  shot count (never GFrameCounter -- the A13 rule; same Knuth family as
++-	 *  FMeleeMath::CombatRoll01 / StaggeredPhaseOffset, the B-2 one-home
++-	 *  posture -- a future audit may unify the constant's home). */
+++	 *  FMeleeMath::CombatRoll01 / StaggeredPhaseOffset -- the multipliers'
+++	 *  ONE home is BattleTypes.h's BattleHashFamily, unified by the
+++	 *  phase-3 audit). */
++ 	MASSBATTLE_API uint32 ShotSeed(uint32 EntityIndex, uint32 EntitySerial, uint16 ShotsFired);
++ 
++ 	/** Semi-implicit Euler step (the IntegrateProcessor family): position
++diff --git a/Plugins/MassBattle/Source/MassBattle/Public/BattleTypes.h b/Plugins/MassBattle/Source/MassBattle/Public/BattleTypes.h
++index 6b83d7d..2f51d05 100644
++--- a/Plugins/MassBattle/Source/MassBattle/Public/BattleTypes.h
+++++ b/Plugins/MassBattle/Source/MassBattle/Public/BattleTypes.h
++@@ -29,6 +29,23 @@ inline uint32 GetTypeHash(const FUnitHandle& Handle)
++ 	return HashCombine(::GetTypeHash(Handle.Index), ::GetTypeHash(Handle.Serial));
++ }
++ 
+++/** The deterministic hash family's multipliers (ONE home, the B-2 rule):
+++ *  every seed-derived draw in the project multiplies with these -- the melee
+++ *  staggers/rolls (FMeleeMath), the ballistics shot seeds (FBallisticsMath),
+++ *  and the A13 canonical entity keys below. Same values everywhere; a
+++ *  per-file retyped 2654435761u drifts silently and the two-run equality
+++ *  (RC8) is the property that silently dies. Rename, never a re-mix: the
+++ *  expressions at each site are unchanged, only their constant's home. */
+++namespace BattleHashFamily
+++{
+++	/** Knuth golden-ratio multiplier (2654435761u). */
+++	constexpr uint32 GoldenRatio = 2654435761u;
+++	/** First auxiliary mix (40503u). */
+++	constexpr uint32 MixA = 40503u;
+++	/** Second auxiliary mix (2685821657u). */
+++	constexpr uint32 MixB = 2685821657u;
+++}
+++
++ /** A13 canonical per-entity identity (Phase 3, RC8): a deterministic
++  *  function of the owning unit + the roster slot -- INVARIANT across
++  *  entity-slot churn. Mass reuses slots with new generations after a battle
++@@ -38,9 +55,9 @@ inline uint32 GetTypeHash(const FUnitHandle& Handle)
++  *  stagger/seed/roll call sites feed these instead of handle parts. */
++ inline uint32 BattleCanonicalEntityKey(const FUnitHandle& Unit, int32 RosterIndex)
++ {
++-	uint32 H = Unit.Index * 2654435761u;
++-	H ^= Unit.Serial * 40503u;
++-	H ^= static_cast<uint32>(RosterIndex) * 2685821657u;
+++	uint32 H = Unit.Index * BattleHashFamily::GoldenRatio;
+++	H ^= Unit.Serial * BattleHashFamily::MixA;
+++	H ^= static_cast<uint32>(RosterIndex) * BattleHashFamily::MixB;
++ 	H ^= H >> 15;
++ 	return H;
++ }
++-- 
++2.47.3
++
+diff --git a/Patches/0019-phase3-audit-one-home-for-the-ContactAngle-deg-byte-conversions.patch b/Patches/0019-phase3-audit-one-home-for-the-ContactAngle-deg-byte-conversions.patch
+new file mode 100644
+index 0000000..6ca5d60
+--- /dev/null
++++ b/Patches/0019-phase3-audit-one-home-for-the-ContactAngle-deg-byte-conversions.patch
+@@ -0,0 +1,104 @@
++From 606c707844f7e26a758faaf938ff8a539de87191 Mon Sep 17 00:00:00 2001
++From: Z User <z@container>
++Date: Thu, 29 Oct 2026 23:26:06 +0000
++Subject: [PATCH] phase3-audit: one home for the ContactAngle deg<->byte
++ conversions (B-6)
++
++The 0-255 byte convention had TWO inline converters living in
++processors: the step pass's deg->byte quantization (a five-line
++expression in the impact hot path) and the assign pass's inverse
++byte->deg scale. Both now read FCombatSolver::ContactAngleFromDegrees /
++DegreesFromContactAngle, beside the sectorizer they feed -- the scale
++255/360 and its inverse are named once, so a future deg-native consumer
++cannot re-derive a drifting copy. Formulas verbatim; identical values.
++
++MUST re-run on the UE machine: unit tier + Battle.Func.S6_Volley /
++CombatSmoke / ChargeMechanics (impact sectors and ring points are the
++consumers -- expected green, identical values).
++---
++ .../Private/AssignPairsProcessor.cpp           |  2 +-
++ .../MassBattle/Private/BattleEngagement.cpp    | 18 ++++++++++++++++++
++ .../Private/ProjectileStepProcessor.cpp        |  3 +--
++ .../MassBattle/Public/BattleEngagement.h       | 10 ++++++++++
++ 4 files changed, 30 insertions(+), 3 deletions(-)
++
++diff --git a/Plugins/MassBattle/Source/MassBattle/Private/AssignPairsProcessor.cpp b/Plugins/MassBattle/Source/MassBattle/Private/AssignPairsProcessor.cpp
++index 4937a2d..2fe6542 100644
++--- a/Plugins/MassBattle/Source/MassBattle/Private/AssignPairsProcessor.cpp
+++++ b/Plugins/MassBattle/Source/MassBattle/Private/AssignPairsProcessor.cpp
++@@ -437,7 +437,7 @@ void UAssignPairsProcessor::Execute(FMassEntityManager& EntityManager, FMassExec
++ 				if (S.Target.IsValid())
++ 				{
++ 					RingDef = FCombatSolver::FindDefender(Defenders, S.Target);
++-					RingAngleDeg = static_cast<float>(S.ContactAngle) * (360.f / 255.f);
+++					RingAngleDeg = FCombatSolver::DegreesFromContactAngle(S.ContactAngle);
++ 					bRing = RingDef != nullptr;
++ 				}
++ 				else
++diff --git a/Plugins/MassBattle/Source/MassBattle/Private/BattleEngagement.cpp b/Plugins/MassBattle/Source/MassBattle/Private/BattleEngagement.cpp
++index 9f8a935..b61b785 100644
++--- a/Plugins/MassBattle/Source/MassBattle/Private/BattleEngagement.cpp
+++++ b/Plugins/MassBattle/Source/MassBattle/Private/BattleEngagement.cpp
++@@ -162,6 +162,24 @@ namespace FCombatSolver
++ 		return static_cast<uint8>(Center & 0xFF);
++ 	}
++ 
+++	uint8 ContactAngleFromDegrees(float AngleDeg)
+++	{
+++		// The 0-255 quantizer's deg->byte edge, named once (the phase-3
+++		// audit's B-6): negative inputs wrap to [0,360); the & 255 guards
+++		// the exact-circle edge (360 deg would round to 256). Consumers:
+++		// the projectile incoming angle (step pass) and any future
+++		// deg-native writer.
+++		return static_cast<uint8>(static_cast<int32>(
+++			FMath::RoundToDouble((AngleDeg < 0.f ? AngleDeg + 360.f : AngleDeg) * (255.0 / 360.0))) & 255);
+++	}
+++
+++	float DegreesFromContactAngle(uint8 ContactAngle)
+++	{
+++		// The inverse scale; the assign pass's ring-point math reads it
+++		// (byte -> degrees, clockwise from the defender's facing).
+++		return static_cast<float>(ContactAngle) * (360.f / 255.f);
+++	}
+++
++ 	int32 SlotBudget(const FCombatDefenderView& Defender, float Coverage, const FCombatAttackerView& Attacker)
++ 	{
++ 		const float Lerped = FMath::Lerp(static_cast<float>(FCombatCVars::MaxMobSlots()),
++diff --git a/Plugins/MassBattle/Source/MassBattle/Private/ProjectileStepProcessor.cpp b/Plugins/MassBattle/Source/MassBattle/Private/ProjectileStepProcessor.cpp
++index 3b5cf9b..c8c6988 100644
++--- a/Plugins/MassBattle/Source/MassBattle/Private/ProjectileStepProcessor.cpp
+++++ b/Plugins/MassBattle/Source/MassBattle/Private/ProjectileStepProcessor.cpp
++@@ -247,8 +247,7 @@ void RunProjectileStepPass(UWorld* World, float DeltaSeconds)
++ 		const FVector2D Incoming = -FVector2D(Pool.VelX[Slot], Pool.VelY[Slot]).GetSafeNormal(); // toward the shooter
++ 		const float AngleDeg = FMath::UnwindDegrees(
++ 			FMath::RadiansToDegrees(FMath::Atan2(Incoming.Y, Incoming.X)) - VictimYaw);
++-		const uint8 ContactAngle = static_cast<uint8>(static_cast<int32>(
++-			FMath::RoundToDouble((AngleDeg < 0.f ? AngleDeg + 360.f : AngleDeg) * (255.0 / 360.0))) & 255);
+++		const uint8 ContactAngle = FCombatSolver::ContactAngleFromDegrees(AngleDeg);
++ 		const int32 Sector = FCombatSolver::SectorIndexFromAngle(ContactAngle, SectorCount);
++ 
++ 		const float Defense = VictimStats->MeleeDefense * FMeleeMath::SkillArcMult(Sector, SectorCount)
++diff --git a/Plugins/MassBattle/Source/MassBattle/Public/BattleEngagement.h b/Plugins/MassBattle/Source/MassBattle/Public/BattleEngagement.h
++index 6590fdc..4766a8c 100644
++--- a/Plugins/MassBattle/Source/MassBattle/Public/BattleEngagement.h
+++++ b/Plugins/MassBattle/Source/MassBattle/Public/BattleEngagement.h
++@@ -115,6 +115,16 @@ namespace FCombatSolver
++ 	 *  SectorIndexFromAngle). */
++ 	MASSBATTLE_API uint8 SectorCenterAngle(int32 SectorIndex, int32 SectorCount);
++ 
+++	/** Deg -> the 0-255 ContactAngle byte: negative inputs wrap to
+++	 *  [0,360), scaled by 255/360, rounded, & 255 (the exact-circle guard).
+++	 *  ONE home for the quantizer's deg-native edge (phase-3 audit B-6):
+++	 *  the projectile incoming angle (step pass) and the ring-point math's
+++	 *  inverse (below) read it; nothing re-derives the scale. */
+++	MASSBATTLE_API uint8 ContactAngleFromDegrees(float AngleDeg);
+++
+++	/** The inverse scale (byte -> degrees, clockwise from the facing). */
+++	MASSBATTLE_API float DegreesFromContactAngle(uint8 ContactAngle);
+++
++ 	/** Per-defender attack-slot budget (spec §4.5, arch §7.3 verbatim):
++ 	 *  lerp(MaxMobSlots, FormedSlots, Coverage) rounded to nearest, +
++ 	 *  SecondRankBonus for spear-class attackers, clamped >= 1. T2.2 bound
++-- 
++2.47.3
++
+diff --git a/Patches/0020-phase3-audit-fixture-honesty-exec-demo-dedup.patch b/Patches/0020-phase3-audit-fixture-honesty-exec-demo-dedup.patch
+new file mode 100644
+index 0000000..f809236
+--- /dev/null
++++ b/Patches/0020-phase3-audit-fixture-honesty-exec-demo-dedup.patch
+@@ -0,0 +1,392 @@
++From 7ab24dd738e6de5a3897ac75e40eb1f18f115d0c Mon Sep 17 00:00:00 2001
++From: Z User <z@container>
++Date: Thu, 29 Oct 2026 23:28:44 +0000
++Subject: [PATCH] phase3-audit: fixture honesty + exec/demo dedup (B-3
++ completion, D-3 completion)
++
++The phase-2 audit's B-3 fix made SpawnClash dictionary-keyed; phase 3
++then re-introduced raw EDU row indices in every NEW fixture surface:
++RangedSpawnVolley (2/0), RangedPerfStress (2), the soak's archer mix
++(Min(2, ...)), CombatPerfStress (0, pre-existing), and -- worst -- the
++demo visuals' AdoptUnknownRegistryUnits keyed the demo FACTION on
++EduRowIndex == 0. All now resolve rows by dictionary name through one
++public helper (BattleExec::FindEduRowIndexByDictionary, promoted from
++SpawnClash's file-local copy); the demo adopt reads the SIDE (TeamId),
++and ADemoUnitActor syncs TeamId from its demo faction so an author's
++visual faction and the sim's friend/enemy split cannot disagree.
++
++Same file: LoadGoldenEduRows owns the fixture path+load+parse (was
++re-typed 6x in the exec file + once in the demo); EnableRangedPipeline
++owns the 4-cvar ranged session-on list (was re-typed in both ranged
++fixtures); DemoGameMode's FindRow lambda (the third re-typed dictionary
++matcher) is deleted.
++
++MUST re-run on the UE machine: full unit + func tier (fixture paths
++touched); Battle.Ranged.SpawnVolley/PerfStress + one SoakVolley nightly
++(evidence lines unchanged in shape); PIE on the demo map (adopt-path
++tinting is the only behavior-visible change: units spawned via exec
++fixtures now tint by their TeamId).
++---
++ .../MassBattle/Private/BattleExecCommands.cpp | 130 +++++++++++-------
++ .../MassBattle/Public/BattleExecCommands.h    |  16 +++
++ .../Private/BattleMovementSoakController.cpp  |  10 +-
++ Source/MassBattleGame/DemoGameMode.cpp        |  17 +--
++ Source/MassBattleGame/DemoUnitActor.cpp       |   7 +
++ .../DemoUnitVisualSubsystem.cpp               |   7 +-
++ 6 files changed, 115 insertions(+), 72 deletions(-)
++
++diff --git a/Plugins/MassBattle/Source/MassBattle/Private/BattleExecCommands.cpp b/Plugins/MassBattle/Source/MassBattle/Private/BattleExecCommands.cpp
++index 5ac4a1a..c39384c 100644
++--- a/Plugins/MassBattle/Source/MassBattle/Private/BattleExecCommands.cpp
+++++ b/Plugins/MassBattle/Source/MassBattle/Private/BattleExecCommands.cpp
++@@ -59,6 +59,47 @@ namespace BattleExec
++ 			}
++ 		}
++ 	}
+++	void EnableRangedPipeline()
+++	{
+++		// The session-on ranged gate list (the D-3 posture, completed by the
+++		// phase-3 audit): Enable/Fire/Step/Skirmish default on in the plugin,
+++		// but fixtures that reset a battle flip them explicitly so the session
+++		// is honest regardless of the shipping defaults. ONE home for the list.
+++		for (const TCHAR* Name : { TEXT("Battle.Ranged.Enable"), TEXT("Battle.Ranged.Fire"),
+++				TEXT("Battle.Ranged.Step"), TEXT("Battle.Ranged.Skirmish") })
+++		{
+++			if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(Name))
+++			{
+++				C->Set(1, ECVF_SetByCode);
+++			}
+++		}
+++	}
+++	bool LoadGoldenEduRows(TArray<FEduUnit>& OutRows, FEduParseError& OutError)
+++	{
+++		// ONE home for the golden fixture's path + load + parse (the phase-3
+++		// audit's B-3 completion; previously re-typed per command). OutError is
+++		// set only by a parse failure -- an unreadable file leaves it unset and
+++		// the caller's message distinguishes (the SpawnClash precedent).
+++		const FString FixturePath = FPaths::ProjectContentDir() / TEXT("Data/EDU/golden_edu_v1.txt");
+++		FString EduText;
+++		return FFileHelper::LoadFileToString(EduText, *FixturePath)
+++			&& FBattleEduParser::Parse(EduText, OutRows, OutError);
+++	}
+++	int32 FindEduRowIndexByDictionary(const TArray<FEduUnit>& Rows, const FString& Dictionary)
+++	{
+++		// ONE home for the dictionary-keyed row lookup (moved from the file-local
+++		// SpawnClash helper by the phase-3 audit so the demo module and the ranged
+++		// fixtures consume it too; row ORDER is fixture data, never a meaning).
+++		for (int32 i = 0; i < Rows.Num(); ++i)
+++		{
+++			const FEduField* Dict = Rows[i].FindField(TEXT("dictionary"));
+++			if (Dict && Dict->GetValue().Equals(Dictionary, ESearchCase::IgnoreCase))
+++			{
+++				return i;
+++			}
+++		}
+++		return INDEX_NONE;
+++	}
++ 	void DumpRegistry(const TArray<FString>& Args, UWorld* World)
++ 	{
++ 		UUnitRegistrySubsystem* Registry = GetRegistry(World);
++@@ -765,22 +806,9 @@ namespace
++ 		uint8 TeamId = 0;
++ 	};
++ 
++-	int32 FindEduRowIndexByDictionary(const TArray<FEduUnit>& Rows, const FString& Dictionary)
++-	{
++-		for (int32 i = 0; i < Rows.Num(); ++i)
++-		{
++-			const FEduField* Dict = Rows[i].FindField(TEXT("dictionary"));
++-			if (Dict && Dict->GetValue().Equals(Dictionary, ESearchCase::IgnoreCase))
++-			{
++-				return i;
++-			}
++-		}
++-		return INDEX_NONE;
++-	}
++-
++ 	FUnitHandle SpawnClashUnitExec(UWorld* World, const TArray<FEduUnit>& Rows, const FClashUnitSpec& Unit)
++ 	{
++-		const int32 EduRow = FindEduRowIndexByDictionary(Rows, Unit.Dictionary);
+++		const int32 EduRow = BattleExec::FindEduRowIndexByDictionary(Rows, Unit.Dictionary);
++ 		if (EduRow == INDEX_NONE)
++ 		{
++ 			UE_LOG(LogMassBattle, Display,
++@@ -904,12 +932,9 @@ void CombatSpawnClash(const TArray<FString>& Args, UWorld* World)
++ 		*Channel, *Variant, Units.Num());
++ 
++ 	// Load the EDU once per command; rows are matched by dictionary name.
++-	const FString FixturePath = FPaths::ProjectContentDir() / TEXT("Data/EDU/golden_edu_v1.txt");
++-	FString EduText;
++ 	TArray<FEduUnit> Rows;
++ 	FEduParseError Err;
++-	if (!FFileHelper::LoadFileToString(EduText, *FixturePath)
++-		|| !FBattleEduParser::Parse(EduText, Rows, Err))
+++	if (!BattleExec::LoadGoldenEduRows(Rows, Err))
++ 	{
++ 		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SpawnClash FAIL EDU fixture (%s)"),
++ 			Err.bFailed ? *Err.Message : TEXT("unreadable"));
++@@ -967,12 +992,14 @@ void CombatPerfStress(const TArray<FString>& Args, UWorld* World)
++ 	// Two 500-man lines in contact (the B.6 1k stress shape): 25 files x 20
++ 	// ranks at 1.2 m -- the tile holds it; the front ranks interpenetrate the
++ 	// dilation and the cluster pass emits the engagement.
++-	const FString FixturePath = FPaths::ProjectContentDir() / TEXT("Data/EDU/golden_edu_v1.txt");
++-	FString EduText;
+++	// Rows are matched by dictionary name (B-3): the T2.9 shape is 1,000
+++	// levy bodies, not "whatever row sits at index 0 this quarter".
++ 	TArray<FEduUnit> Rows;
++ 	FEduParseError Err;
++-	if (!FFileHelper::LoadFileToString(EduText, *FixturePath)
++-		|| !FBattleEduParser::Parse(EduText, Rows, Err))
+++	const int32 LevyRow = BattleExec::LoadGoldenEduRows(Rows, Err)
+++		? BattleExec::FindEduRowIndexByDictionary(Rows, TEXT("Peasant_Levy"))
+++		: INDEX_NONE;
+++	if (LevyRow == INDEX_NONE)
++ 	{
++ 		UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT PerfStress FAIL EDU fixture"));
++ 		return;
++@@ -994,8 +1021,8 @@ void CombatPerfStress(const TArray<FString>& Args, UWorld* World)
++ 		Spec.NumRanks = 20; // deep blocks: 25 x 20 = 500 per side
++ 		return UBattleSpawnLibrary::SpawnUnit(World, Spec, Stats).Unit;
++ 	};
++-	const FUnitHandle A = SpawnLine(0, 500, FVector2D(-10.f, 0.f), 0.f);
++-	const FUnitHandle B = SpawnLine(0, 500, FVector2D(10.f, 0.f), 180.f);
+++	const FUnitHandle A = SpawnLine(LevyRow, 500, FVector2D(-10.f, 0.f), 0.f);
+++	const FUnitHandle B = SpawnLine(LevyRow, 500, FVector2D(10.f, 0.f), 180.f);
++ 	Registry->IssueAttackUnitOrder(A, B);
++ 	if (UBattleDebugSubsystem* Debug = World->GetSubsystem<UBattleDebugSubsystem>())
++ 	{
++@@ -1198,26 +1225,26 @@ void RangedSpawnVolley(const TArray<FString>& Args, UWorld* World)
++ 		return;
++ 	}
++ 
++-	const FString FixturePath = FPaths::ProjectContentDir() / TEXT("Data/EDU/golden_edu_v1.txt");
++-	FString EduText;
+++	// Rows are matched by dictionary name (B-3): the fixture means "the
+++	// archer row" and "the levy row", never their current indices.
++ 	TArray<FEduUnit> Rows;
++ 	FEduParseError Err;
++-	if (!FFileHelper::LoadFileToString(EduText, *FixturePath) || !FBattleEduParser::Parse(EduText, Rows, Err) || Rows.Num() < 3)
++-	{
++-		UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT SpawnVolley FAIL bad EDU fixture (%s)"), *Err.Message);
+++	const int32 ArcherRow = BattleExec::LoadGoldenEduRows(Rows, Err)
+++		? BattleExec::FindEduRowIndexByDictionary(Rows, TEXT("Peasant_Archers"))
+++		: INDEX_NONE;
+++	const int32 LevyRow = (ArcherRow != INDEX_NONE)
+++		? BattleExec::FindEduRowIndexByDictionary(Rows, TEXT("Peasant_Levy"))
+++		: INDEX_NONE;
+++	if (LevyRow == INDEX_NONE)
+++	{
+++		UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT SpawnVolley FAIL bad EDU fixture (%s)"),
+++			Err.bFailed ? *Err.Message : TEXT("Peasant_Archers/Peasant_Levy rows missing"));
++ 		return;
++ 	}
++ 
++ 	Registry->ResetBattleState();
++ 	BattleExec::EnableDemoCombatPipeline();
++-	for (const TCHAR* Name : { TEXT("Battle.Ranged.Enable"), TEXT("Battle.Ranged.Fire"),
++-		TEXT("Battle.Ranged.Step"), TEXT("Battle.Ranged.Skirmish") })
++-	{
++-		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(Name))
++-		{
++-			C->Set(1, ECVF_SetByCode);
++-		}
++-	}
+++	BattleExec::EnableRangedPipeline();
++ 
++ 	auto SpawnAt = [&Rows, &World](int32 RowIdx, const FVector2D& PosM, float YawDeg, uint8 TeamId) -> FUnitHandle
++ 	{
++@@ -1244,8 +1271,8 @@ void RangedSpawnVolley(const TArray<FString>& Args, UWorld* World)
++ 	// engages live: break / fire-while-retreating / resume). Evidence flows
++ 	// from the live sim: RangedFire / SkirmishRetreat / OutOfAmmo lines.
++ 	const bool bSkirmish = Args.Num() > 0 && Args[0] == TEXT("skirmish");
++-	const FUnitHandle Archers = SpawnAt(2, FVector2D(-40.f, 0.f), 0.f, 0);
++-	const FUnitHandle Target = SpawnAt(0, FVector2D(bSkirmish ? -10.f : 40.f, 0.f), 180.f, 1);
+++	const FUnitHandle Archers = SpawnAt(ArcherRow, FVector2D(-40.f, 0.f), 0.f, 0);
+++	const FUnitHandle Target = SpawnAt(LevyRow, FVector2D(bSkirmish ? -10.f : 40.f, 0.f), 180.f, 1);
++ 	if (!Archers.IsValid() || !Target.IsValid())
++ 	{
++ 		return;
++@@ -1280,25 +1307,22 @@ void RangedPerfStress(const TArray<FString>& Args, UWorld* World)
++ 		UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT RangedPerfStress FAIL no world/registry"));
++ 		return;
++ 	}
++-	const FString FixturePath = FPaths::ProjectContentDir() / TEXT("Data/EDU/golden_edu_v1.txt");
++-	FString EduText;
+++	// Rows are matched by dictionary name (B-3): 1,000 archers must not
+++	// silently become 1,000 crossbows when the EDU is re-ordered (T6.1).
++ 	TArray<FEduUnit> Rows;
++ 	FEduParseError Err;
++-	if (!FFileHelper::LoadFileToString(EduText, *FixturePath) || !FBattleEduParser::Parse(EduText, Rows, Err) || Rows.Num() < 3)
+++	const int32 ArcherRow = BattleExec::LoadGoldenEduRows(Rows, Err)
+++		? BattleExec::FindEduRowIndexByDictionary(Rows, TEXT("Peasant_Archers"))
+++		: INDEX_NONE;
+++	if (ArcherRow == INDEX_NONE)
++ 	{
++-		UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT RangedPerfStress FAIL bad EDU fixture (%s)"), *Err.Message);
+++		UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT RangedPerfStress FAIL bad EDU fixture (%s)"),
+++			Err.bFailed ? *Err.Message : TEXT("Peasant_Archers row missing"));
++ 		return;
++ 	}
++ 	Registry->ResetBattleState();
++ 	BattleExec::EnableDemoCombatPipeline();
++-	for (const TCHAR* Name : { TEXT("Battle.Ranged.Enable"), TEXT("Battle.Ranged.Fire"),
++-		TEXT("Battle.Ranged.Step"), TEXT("Battle.Ranged.Skirmish") })
++-	{
++-		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(Name))
++-		{
++-			C->Set(1, ECVF_SetByCode);
++-		}
++-	}
+++	BattleExec::EnableRangedPipeline();
++ 	// The fixture-session rank bump (disclosed): 20 ranks of shooters.
++ 	if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Ranged.VolleyRanks")))
++ 	{
++@@ -1329,8 +1353,8 @@ void RangedPerfStress(const TArray<FString>& Args, UWorld* World)
++ 		Spec.TeamId = TeamId;
++ 		return UBattleSpawnLibrary::SpawnUnit(World, Spec, Stats).Unit;
++ 	};
++-	const FUnitHandle A = SpawnLine(2, 500, FVector2D(-50.f, 0.f), 0.f, 0);
++-	const FUnitHandle B = SpawnLine(2, 500, FVector2D(50.f, 0.f), 180.f, 1);
+++	const FUnitHandle A = SpawnLine(ArcherRow, 500, FVector2D(-50.f, 0.f), 0.f, 0);
+++	const FUnitHandle B = SpawnLine(ArcherRow, 500, FVector2D(50.f, 0.f), 180.f, 1);
++ 	if (!A.IsValid() || !B.IsValid())
++ 	{
++ 		UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT RangedPerfStress FAIL spawn"));
++diff --git a/Plugins/MassBattle/Source/MassBattle/Public/BattleExecCommands.h b/Plugins/MassBattle/Source/MassBattle/Public/BattleExecCommands.h
++index 87640a2..e22fda9 100644
++--- a/Plugins/MassBattle/Source/MassBattle/Public/BattleExecCommands.h
+++++ b/Plugins/MassBattle/Source/MassBattle/Public/BattleExecCommands.h
++@@ -8,6 +8,8 @@
++ #include "CoreMinimal.h"
++ 
++ class UWorld;
+++struct FEduUnit;
+++struct FEduParseError;
++ 
++ namespace BattleExec
++ {
++@@ -17,6 +19,20 @@ namespace BattleExec
++ 	// SpawnClash/PerfStress fixtures flip them on for their session. ONE home
++ 	// for the list + the flips -- call sites must not re-type the cvar names.
++ 	MASSBATTLE_API void EnableDemoCombatPipeline();
+++
+++	// -- Session-on ranged pipeline (the phase-3 audit's D-3 completion) --
+++	// Same posture as the combat list: the four Battle.Ranged.* gates flip
+++	// on for a session (defaults untouched, ECVF_SetByCode).
+++	MASSBATTLE_API void EnableRangedPipeline();
+++
+++	// -- EDU fixture access (the phase-3 audit's B-3 completion) --
+++	// ONE home for the golden fixture's path + load + parse (previously
+++	// re-typed per command) and for the dictionary-keyed row lookup (row
+++	// ORDER is fixture data; fixtures that mean "the archer row" must not
+++	// hold a raw index -- re-ordering the EDU silently re-types the battle).
+++	// Returns INDEX_NONE when the dictionary is absent from the fixture.
+++	MASSBATTLE_API bool LoadGoldenEduRows(TArray<FEduUnit>& OutRows, FEduParseError& OutError);
+++	MASSBATTLE_API int32 FindEduRowIndexByDictionary(const TArray<FEduUnit>& Rows, const FString& Dictionary);
++ 	// -- Task 4 (registry probes) --
++ 	MASSBATTLE_API void DumpRegistry(const TArray<FString>& Args, UWorld* World);
++ 	MASSBATTLE_API void StateHash(const TArray<FString>& Args, UWorld* World);
++diff --git a/Plugins/MassBattle/Source/MassBattleTest/Private/BattleMovementSoakController.cpp b/Plugins/MassBattle/Source/MassBattleTest/Private/BattleMovementSoakController.cpp
++index 2230fb1..1bfe7d1 100644
++--- a/Plugins/MassBattle/Source/MassBattleTest/Private/BattleMovementSoakController.cpp
+++++ b/Plugins/MassBattle/Source/MassBattleTest/Private/BattleMovementSoakController.cpp
++@@ -1,5 +1,6 @@
++ #include "BattleMovementSoakController.h"
++ #include "BattleRanged.h"
+++#include "BattleExecCommands.h"
++ #include "BattleDebugSubsystem.h"
++ #include "BattleProjectileSubsystem.h"
++ #include "BattleEngagement.h"
++@@ -155,13 +156,18 @@ void UBattleMovementSoakController::OnTick(float TimeDelta)
++ 		const bool bVolleySoak = FRangedCVars::SoakVolley();
++ 		const int32 TotalUnits = UnitsPerRow * UnitRows;
++ 		int32 ArcherUnits = 0;
+++		// The archer row is matched by dictionary name (B-3): re-ordering the
+++		// golden EDU must not re-type the soak's ranged mix.
+++		const int32 ArcherRow = bVolleySoak
+++			? BattleExec::FindEduRowIndexByDictionary(Rows, TEXT("Peasant_Archers"))
+++			: INDEX_NONE;
++ 		for (int32 i = 0; i < TotalUnits; ++i)
++ 		{
++ 			const int32 Col = i % UnitsPerRow;
++ 			const int32 Row = i / UnitsPerRow;
++-			const bool bArcher = bVolleySoak && (i % 4 == 3);
+++			const bool bArcher = bVolleySoak && (ArcherRow != INDEX_NONE) && (i % 4 == 3);
++ 			FUnitSpawnSpec Spec;
++-			Spec.EduRowIndex = bArcher ? FMath::Min(2, Rows.Num() - 1) : (i % Rows.Num());
+++			Spec.EduRowIndex = bArcher ? ArcherRow : (i % Rows.Num());
++ 			Spec.SoldierCount = 40;
++ 			Spec.UnitName = FString::Printf(TEXT("Soak_%d"), i);
++ 			Spec.SpawnPos = FVector2D(-4500.f + Col * 3000.f, Row * 3000.f);
++diff --git a/Source/MassBattleGame/DemoGameMode.cpp b/Source/MassBattleGame/DemoGameMode.cpp
++index 55a4ca6..e706fb8 100644
++--- a/Source/MassBattleGame/DemoGameMode.cpp
+++++ b/Source/MassBattleGame/DemoGameMode.cpp
++@@ -165,23 +165,12 @@ void ADemoGameMode::SpawnScenarioAsset()
++ 		return;
++ 	}
++ 
++-	const auto FindRow = [&Rows](const FName& Dictionary) -> int32
++-	{
++-		for (int32 i = 0; i < Rows.Num(); ++i)
++-		{
++-			const FEduField* Dict = Rows[i].FindField(TEXT("dictionary"));
++-			if (Dict && Dict->GetValue().Equals(Dictionary.ToString(), ESearchCase::IgnoreCase))
++-			{
++-				return i;
++-			}
++-		}
++-		return INDEX_NONE;
++-	};
++-
++ 	TArray<FUnitHandle> Spawned;
++ 	for (const FDemoScenarioSpawn& RowDef : ScenarioAsset->Spawns)
++ 	{
++-		const int32 EduRow = FindRow(RowDef.Dictionary);
+++		// ONE home for the dictionary lookup (the plugin's BattleExec helper;
+++		// this lambda was its third re-typed copy -- audit B-3).
+++		const int32 EduRow = BattleExec::FindEduRowIndexByDictionary(Rows, RowDef.Dictionary.ToString());
++ 		if (EduRow == INDEX_NONE)
++ 		{
++ 			UE_LOG(LogDemoBattle, Error, TEXT("EXEC_RESULT DemoScenario FAIL unknown EDU dictionary '%s'"),
++diff --git a/Source/MassBattleGame/DemoUnitActor.cpp b/Source/MassBattleGame/DemoUnitActor.cpp
++index cdc7377..3d3dcd0 100644
++--- a/Source/MassBattleGame/DemoUnitActor.cpp
+++++ b/Source/MassBattleGame/DemoUnitActor.cpp
++@@ -12,6 +12,13 @@ void ADemoUnitActor::OnConstruction(const FTransform& Transform)
++ {
++ 	Super::OnConstruction(Transform);
++ 
+++	// ONE team notion on the authoring surface: the demo faction (EDemoTeam)
+++	// drives the sim side (AUnitActor::TeamId stamps the spawn spec). An
+++	// author who sets Team=Enemy but leaves TeamId at its default would tint
+++	// the unit enemy while the ranged rules treat it as a friend -- the sync
+++	// keeps the two from disagreeing (audit B-3).
+++	TeamId = static_cast<uint8>(Team);
+++
++ 	// Editor placement aid only; in-game the ISM capsules are the visual.
++ 	// Finite lifetime (refreshed on every construction/move/property change):
++ 	// persistent lines lingered in the viewport after PIE and the old global
++diff --git a/Source/MassBattleGame/DemoUnitVisualSubsystem.cpp b/Source/MassBattleGame/DemoUnitVisualSubsystem.cpp
++index 9ce3f18..ca2e169 100644
++--- a/Source/MassBattleGame/DemoUnitVisualSubsystem.cpp
+++++ b/Source/MassBattleGame/DemoUnitVisualSubsystem.cpp
++@@ -90,11 +90,12 @@ int32 UDemoUnitVisualSubsystem::AdoptUnknownRegistryUnits(UUnitRegistrySubsystem
++ 		{
++ 			continue;
++ 		}
++-		// Demo team convention: EDU row 0 = the Player faction, row 1+ =
++-		// Enemy (the fixture's peasant/sergeant split maps onto it).
+++		// Demo team convention: the SIDE the unit fights on (TeamId; team 0
+++		// = the Player convention) drives the faction split -- EDU row order
+++		// is fixture data, never a faction notion (audit B-3).
++ 		EDemoTeam Team = EDemoTeam::Enemy;
++ 		if (const FUnitSpawnSpec* Spec = Registry->FindUnitSpec(Handle);
++-			Spec && Spec->EduRowIndex == 0)
+++			Spec && Spec->TeamId == 0)
++ 		{
++ 			Team = EDemoTeam::Player;
++ 		}
++-- 
++2.47.3
++
+diff --git a/Patches/0021-phase3-audit-fire-pass-simplifications-named-mechanism-margins.patch b/Patches/0021-phase3-audit-fire-pass-simplifications-named-mechanism-margins.patch
+new file mode 100644
+index 0000000..723f798
+--- /dev/null
++++ b/Patches/0021-phase3-audit-fire-pass-simplifications-named-mechanism-margins.patch
+@@ -0,0 +1,291 @@
++From f2f58e5a580b9ba49de7563b6e32d4206381b270 Mon Sep 17 00:00:00 2001
++From: Z User <z@container>
++Date: Thu, 29 Oct 2026 23:33:37 +0000
++Subject: [PATCH] phase3-audit: fire-pass simplifications + named mechanism
++ margins (C-tier)
++
++RangedFireProcessor.cpp:
++- The A14 GAS mirror (interim writer, UnitSync owns it Phase 4+) now does
++  ONE TActorIterator sweep per pass into a cached unit->actor map -- was a
++  per-unit scan, O(units x actors) per tick on the game thread.
++- The blocker-query radius reads the seam's ONE impact-zone formula
++  (ImpactZoneRadiusForDist, new in BattleRanged) plus a named pad -- was a
++  re-typed derivation of the same cone math.
++- The overlay bar + mirror fractions read the seam's ComputeAmmoFraction --
++  was two hand-rolled divisions with their own Max(1,...) guards.
++- The skirmish facing fetch reads State->Roster (already in hand) instead
++  of a redundant registry FindRoster.
++- The pool TTL write reads FRangedConstants::TtlSafetyMarginS (was 2.f).
++
++BattleRanged.h/.cpp: FRangedConstants::TtlSafetyMarginS + the
++ImpactZoneRadiusForDist helper (ONE formula for the seam's zone count and
++the fire pass's query); the two 0.3f LOS-clearance sites read
++FBallisticsConstants::LosClearanceM (BattleBallistics.h). The pool
++reserve floor is named (BattleProjectileSubsystem.cpp, was Max(16, ...)).
++
++Values identical at every site; the mirror's per-pass cost is the only
++behavior-adjacent change (same writes, fewer scans).
++
++MUST re-run on the UE machine: full unit + func tier (the fire pass feeds
++S6/Skirmish/PerfStress; expected green, same EXEC_RESULT lines).
++---
++ .../Private/BattleProjectileSubsystem.cpp     |  9 ++-
++ .../MassBattle/Private/BattleRanged.cpp       | 25 +++++---
++ .../Private/RangedFireProcessor.cpp           | 60 ++++++++++++-------
++ .../MassBattle/Public/BattleBallistics.h      |  4 ++
++ .../Source/MassBattle/Public/BattleRanged.h   | 15 +++++
++ 5 files changed, 83 insertions(+), 30 deletions(-)
++
++diff --git a/Plugins/MassBattle/Source/MassBattle/Private/BattleProjectileSubsystem.cpp b/Plugins/MassBattle/Source/MassBattle/Private/BattleProjectileSubsystem.cpp
++index e93fcee..9f41dbd 100644
++--- a/Plugins/MassBattle/Source/MassBattle/Private/BattleProjectileSubsystem.cpp
+++++ b/Plugins/MassBattle/Source/MassBattle/Private/BattleProjectileSubsystem.cpp
++@@ -4,9 +4,16 @@
++ #include "BattleProjectileSubsystem.h"
++ #include "BattleRanged.h"
++ 
+++namespace
+++{
+++	/** Floor for the cvar read: a pool smaller than this cannot serve even a
+++	 *  pair of volleys; the cvar is the tuning knob, this is the sanity bound. */
+++	constexpr int32 MinPoolReserve = 16;
+++}
+++
++ void UBattleProjectileSubsystem::ReserveForBattle()
++ {
++-	Pool.Reserve(FMath::Max(16, FRangedCVars::PoolCapacity()));
+++	Pool.Reserve(FMath::Max(MinPoolReserve, FRangedCVars::PoolCapacity()));
++ }
++ 
++ void UBattleProjectileSubsystem::ResetForBattle()
++diff --git a/Plugins/MassBattle/Source/MassBattle/Private/BattleRanged.cpp b/Plugins/MassBattle/Source/MassBattle/Private/BattleRanged.cpp
++index 24f9b54..91a453b 100644
++--- a/Plugins/MassBattle/Source/MassBattle/Private/BattleRanged.cpp
+++++ b/Plugins/MassBattle/Source/MassBattle/Private/BattleRanged.cpp
++@@ -140,6 +140,15 @@ FProjectileProfile GetProjectileProfile(EBattleProjectileKind Kind)
++ 	return P;
++ }
++ 
+++float ImpactZoneRadiusForDist(float HorizDistM, const FProjectileProfile& Profile)
+++{
+++	// A7's arced hold-fire estimate: the dispersion cone scaled to the
+++	// horizontal distance, plus the hit radius (ONE home; the fire pass's
+++	// blocker query pads this -- never re-derive it).
+++	const float ConeRad = FMath::DegreesToRadians(FMath::Max(Profile.DispersionDeg, 0.01f));
+++	return HorizDistM * FMath::Tan(ConeRad) + Profile.HitRadiusM;
+++}
+++
++ // -- Seam bodies (the task-0 stubs replaced; T3.3-locked) --
++ 
++ namespace
++@@ -176,12 +185,12 @@ int32 SelectVolleyShots(
++ 	const float MinRangeM = FRangedCVars::MinRangeM();
++ 	const float GravityMps2 = FBallisticsConstants::GravityMps2 * Profile.GravityScale;
++ 
++-	// Arced impact-zone estimate (A7): the dispersion cone scaled to the
++-	// horizontal distance, plus the hit radius. Friends inside -> hold when
++-	// the count exceeds the tolerance.
++-	const float HorizDist = FVector2D::Distance(InOutShooters.Num() > 0 ? InOutShooters[0].PosM : FVector2D::ZeroVector, Target.PosM);
++-	const float ConeRad = FMath::DegreesToRadians(FMath::Max(Profile.DispersionDeg, 0.01f));
++-	const float ImpactZoneRadiusM = (InOutShooters.Num() > 0 ? HorizDist : 0.f) * FMath::Tan(ConeRad) + Profile.HitRadiusM;
+++	// Arced impact-zone estimate (A7), ONE formula (the seam helper): the
+++	// fire pass's blocker query reads the same estimate padded. Friends
+++	// inside -> hold when the count exceeds the tolerance.
+++	const float ImpactZoneRadiusM = InOutShooters.Num() > 0
+++		? ImpactZoneRadiusForDist(FVector2D::Distance(InOutShooters[0].PosM, Target.PosM), Profile)
+++		: 0.f;
++ 	int32 FriendsInZone = 0;
++ 	for (const FVector2D& Friend : FriendlyLaneBlockersM)
++ 	{
++@@ -218,11 +227,11 @@ int32 SelectVolleyShots(
++ 		{
++ 			const FVector2D Dir = (Target.PosM - Shooter.PosM).GetSafeNormal();
++ 			const FVector2D FrontageEnd = Shooter.PosM + Dir * FRangedCVars::FrontageClearM();
++-			bClear = FBallisticsMath::MarchClear(Grid, Shooter.PosM, Shooter.EyeZM, FrontageEnd, Shooter.EyeZM, 0.3f);
+++			bClear = FBallisticsMath::MarchClear(Grid, Shooter.PosM, Shooter.EyeZM, FrontageEnd, Shooter.EyeZM, FBallisticsConstants::LosClearanceM);
++ 		}
++ 		else
++ 		{
++-			bClear = FBallisticsMath::MarchClear(Grid, Shooter.PosM, Shooter.EyeZM, Target.PosM, Target.ZM, 0.3f);
+++			bClear = FBallisticsMath::MarchClear(Grid, Shooter.PosM, Shooter.EyeZM, Target.PosM, Target.ZM, FBallisticsConstants::LosClearanceM);
++ 			if (bClear)
++ 			{
++ 				for (const FVector2D& Friend : FriendlyLaneBlockersM)
++diff --git a/Plugins/MassBattle/Source/MassBattle/Private/RangedFireProcessor.cpp b/Plugins/MassBattle/Source/MassBattle/Private/RangedFireProcessor.cpp
++index 69c2216..0ee8cdf 100644
++--- a/Plugins/MassBattle/Source/MassBattle/Private/RangedFireProcessor.cpp
+++++ b/Plugins/MassBattle/Source/MassBattle/Private/RangedFireProcessor.cpp
++@@ -60,7 +60,9 @@ namespace
++ 	TArray<FVector2D> GHashPositions;
++ 	TMap<FUnitHandle, FVector2D> GAnchorsM;
++ 	TMap<FUnitHandle, FUnitHandle> GEnemyOf;
++-
+++	/** Blocker-query pad, meters: the hash circle is a strict superset of the
+++	 *  rule's geometry (the seam's zone estimate / the flat corridor bound). */
+++	constexpr float BlockerQueryPadM = 2.f;
++ 	/** Formation anchor of a unit, meters (its first roster entity's shared
++ 	 *  fragment); false when the unit has no live formation chunk. */
++ 	bool FindUnitAnchorM(FMassEntityManager& EM, const TArray<FMassEntityHandle>& Roster, FVector2D& OutAnchorM)
++@@ -79,27 +81,39 @@ namespace
++ 		return true;
++ 	}
++ 
+++	/** Per-pass unit->actor cache (EC9): ONE actor sweep per fire pass --
+++	 *  the previous per-unit TActorIterator scan was O(units x actors) per
+++	 *  tick on the game thread. Reset at pass start; filled lazily on the
+++	 *  first mirror call. */
+++	TMap<FUnitHandle, TWeakObjectPtr<AUnitActor>> GActorsByUnit;
+++
++ 	/** A14 UI mirror: the registry owns the fraction's authority; the unit
++ 	 *  actor's AmmoPool attribute mirrors it for HUD reads. No actor (unit
++ 	 *  tier worlds) -> no-op. */
++ 	void MirrorAmmoPoolToGas(UWorld* InWorld, const FUnitHandle& InHandle, float Fraction)
++ 	{
++-		for (TActorIterator<AUnitActor> It(InWorld); It; ++It)
+++		if (GActorsByUnit.Num() == 0)
++ 		{
++-			AUnitActor* Actor = *It;
++-			if (Actor->GetUnitHandle() != InHandle)
++-			{
++-				continue;
++-			}
++-			if (UAbilitySystemComponent* ASC = Actor->GetAbilitySystemComponent())
+++			for (TActorIterator<AUnitActor> It(InWorld); It; ++It)
++ 			{
++-				const FGameplayAttribute Attribute = UUnitAttributeSet::FindAttributeByName(TEXT("AmmoPool"));
++-				if (Attribute.IsValid())
+++				if (It->GetUnitHandle().IsValid())
++ 				{
++-					ASC->SetNumericAttributeBase(Attribute, FMath::Clamp(Fraction, 0.f, 1.f));
+++					GActorsByUnit.Add(It->GetUnitHandle(), TWeakObjectPtr<AUnitActor>(*It));
++ 				}
++ 			}
++-			break;
+++		}
+++		AUnitActor* Actor = GActorsByUnit.FindRef(InHandle).Get();
+++		if (!Actor)
+++		{
+++			return;
+++		}
+++		if (UAbilitySystemComponent* ASC = Actor->GetAbilitySystemComponent())
+++		{
+++			const FGameplayAttribute Attribute = UUnitAttributeSet::FindAttributeByName(TEXT("AmmoPool"));
+++			if (Attribute.IsValid())
+++			{
+++				ASC->SetNumericAttributeBase(Attribute, FMath::Clamp(Fraction, 0.f, 1.f));
+++			}
++ 		}
++ 	}
++ }
++@@ -132,7 +146,7 @@ void RunRangedFirePass(UWorld* World, float DeltaSeconds)
++ 
++ 	GAnchorsM.Reset();
++ 	GEnemyOf.Reset();
++-
+++	GActorsByUnit.Reset(); // per-pass: ONE sweep serves every mirror call
++ 	// Pass-level maps (sorted order -> deterministic first-wins): unit
++ 	// anchors (the skirmish geometry + the volley aim point) and the
++ 	// engagement-record enemy (the A11 target fallback).
++@@ -202,11 +216,13 @@ void RunRangedFirePass(UWorld* World, float DeltaSeconds)
++ 					? (*MyAnchor - EnemyAnchorM) / FMath::Max(NearestEnemyDistM, 1e-3f)
++ 					: FVector2D(0.f, 1.f);
++ 				const FVector2D RetreatAnchorM = *MyAnchor + AwayDir * (BreakDist * 2.f);
+++				// Facing from the SAME formation shared fragment the anchor
+++				// read (no second registry lookup -- State->Roster IS the roster).
++ 				float FacingYaw = 0.f;
++-				if (const TArray<FMassEntityHandle>* Roster = Registry->FindRoster(Handle))
+++				if (State->Roster.Num() > 0)
++ 				{
++ 					if (const FUnitFormationSharedFragment* Formation =
++-						EM.GetSharedFragmentDataPtr<FUnitFormationSharedFragment>((*Roster)[0]))
+++						EM.GetSharedFragmentDataPtr<FUnitFormationSharedFragment>(State->Roster[0]))
++ 					{
++ 						FacingYaw = Formation->FacingYaw;
++ 					}
++@@ -324,9 +340,11 @@ void RunRangedFirePass(UWorld* World, float DeltaSeconds)
++ 		if (Hash)
++ 		{
++ 			const float DistM = FVector2D::Distance(GShooters[0].PosM, Target.PosM);
+++			// The blocker QUERY radius: the arced impact-zone estimate (the
+++			// seam's ONE formula, padded) or the flat corridor's midpoint bound.
++ 			const float QueryRadiusM = Profile.bIndirect
++-				? DistM * FMath::Tan(FMath::DegreesToRadians(FMath::Max(Profile.DispersionDeg, 0.01f))) + Profile.HitRadiusM + 2.f
++-				: DistM * 0.5f + 2.f * BattleBody::RadiusM + Profile.HitRadiusM + 2.f;
+++				? ImpactZoneRadiusForDist(DistM, Profile) + BlockerQueryPadM
+++				: DistM * 0.5f + 2.f * BattleBody::RadiusM + Profile.HitRadiusM + BlockerQueryPadM;
++ 			const FVector2D QueryCenterM = Profile.bIndirect
++ 				? Target.PosM
++ 				: (*TargetAnchor + GShooters[0].PosM) * 0.5f;
++@@ -434,7 +452,7 @@ void RunRangedFirePass(UWorld* World, float DeltaSeconds)
++ 			Pool.VelY[Slot] = Shot.LaunchDir.Y * Profile.MuzzleSpeedMps;
++ 			Pool.VelZ[Slot] = Shot.LaunchDir.Z * Profile.MuzzleSpeedMps;
++ 			Pool.GravityScale[Slot] = Profile.GravityScale;
++-			Pool.TTL[Slot] = Shot.FlightTimeS + 2.f; // safety net past impact
+++			Pool.TTL[Slot] = Shot.FlightTimeS + FRangedConstants::TtlSafetyMarginS; // release backstop past impact
++ 			Pool.Kind[Slot] = static_cast<uint8>(Shot.Kind);
++ 			Pool.GenerationArray[Slot] = Generation;
++ 			Pool.OwnerUnit[Slot] = Shot.Unit;
++@@ -495,7 +513,7 @@ void RunRangedFirePass(UWorld* World, float DeltaSeconds)
++ 			if (UnitAnchorM)
++ 			{
++ 				const float Fraction = FMath::Clamp(
++-					static_cast<float>(AmmoSum) / FMath::Max(1, State->RangedInitialAmmo * State->InitialRosterSize), 0.f, 1.f);
+++					ComputeAmmoFraction(AmmoSum, State->RangedInitialAmmo, State->InitialRosterSize), 0.f, 1.f);
++ 				const float BarH = 2.5f * Fraction;
++ 				FBattleOverlayLine Bar;
++ 				Bar.Shape = EBattleOverlayShape::Segment;
++@@ -517,8 +535,8 @@ void RunRangedFirePass(UWorld* World, float DeltaSeconds)
++ 		}
++ 		if (Debug)
++ 		{
++-			MirrorAmmoPoolToGas(World, Handle, static_cast<float>(AmmoSum)
++-				/ static_cast<float>(FMath::Max(1, State->RangedInitialAmmo * State->InitialRosterSize)));
+++			MirrorAmmoPoolToGas(World, Handle,
+++				ComputeAmmoFraction(AmmoSum, State->RangedInitialAmmo, State->InitialRosterSize));
++ 		}
++ 
++ 		if (Debug)
++diff --git a/Plugins/MassBattle/Source/MassBattle/Public/BattleBallistics.h b/Plugins/MassBattle/Source/MassBattle/Public/BattleBallistics.h
++index f6dea5a..c672732 100644
++--- a/Plugins/MassBattle/Source/MassBattle/Public/BattleBallistics.h
+++++ b/Plugins/MassBattle/Source/MassBattle/Public/BattleBallistics.h
++@@ -22,6 +22,10 @@ namespace FBallisticsConstants
++ 	/** Numerical guards. */
++ 	constexpr float DistanceEpsilonM = 1e-4f;
++ 	constexpr float ConeEpsilonDeg = 1e-4f;
+++	/** Default LOS clearance above terrain, meters (the march's occlusion
+++	 *  margin -- the ranged fire-rule call sites read this; was the
+++	 *  re-typed 0.3f, phase-3 audit). */
+++	constexpr float LosClearanceM = 0.3f;
++ }
++ 
++ /** Launch solution for one shot (spec §4.1). */
++diff --git a/Plugins/MassBattle/Source/MassBattle/Public/BattleRanged.h b/Plugins/MassBattle/Source/MassBattle/Public/BattleRanged.h
++index d40b596..303dc6f 100644
++--- a/Plugins/MassBattle/Source/MassBattle/Public/BattleRanged.h
+++++ b/Plugins/MassBattle/Source/MassBattle/Public/BattleRanged.h
++@@ -58,6 +58,21 @@ struct MASSBATTLE_API FProjectileProfile
++ /** The profile table (one row per EBattleProjectileKind != None). */
++ MASSBATTLE_API FProjectileProfile GetProjectileProfile(EBattleProjectileKind Kind);
++ 
+++/** Fire-pass mechanism constants (named once; the A6 TUNABLES stay in the
+++ *  CVAR block -- these are mechanism margins, not tuning knobs). */
+++namespace FRangedConstants
+++{
+++	/** TTL safety margin past the solved flight time, seconds (the pool
+++	 *  write's release backstop; ground hits end flight earlier). */
+++	constexpr float TtlSafetyMarginS = 2.f;
+++}
+++
+++/** A7's arced impact-zone estimate (ONE formula, two consumers): the
+++ *  dispersion cone scaled to the horizontal distance, plus the hit radius.
+++ *  The seam's hold-fire zone count and the fire pass's blocker QUERY (which
+++ *  pads it) read the same number -- previously two re-typed derivations. */
+++MASSBATTLE_API float ImpactZoneRadiusForDist(float HorizDistM, const FProjectileProfile& Profile);
+++
++ /** Volley pass input: one ranged entity's fire-relevant view (spec §4.4).
++  *  Plain mirror assembled by the processor in roster order -- the seam never
++  *  touches fragments or worlds. */
++-- 
++2.47.3
++
+diff --git a/Patches/0022-phase3-audit-one-home-for-the-ranged-session-on-cvar-list-in-the-test-m.patch b/Patches/0022-phase3-audit-one-home-for-the-ranged-session-on-cvar-list-in-the-test-m.patch
+new file mode 100644
+index 0000000..fbd1485
+--- /dev/null
++++ b/Patches/0022-phase3-audit-one-home-for-the-ranged-session-on-cvar-list-in-the-test-m.patch
+@@ -0,0 +1,205 @@
++From 265dcc21fa00e66c7ded00f9dbb53f9b4743b97e Mon Sep 17 00:00:00 2001
++From: Z User <z@container>
++Date: Thu, 29 Oct 2026 23:34:51 +0000
++Subject: [PATCH] phase3-audit: one home for the ranged session-on cvar list in
++ the test module (C-tier)
++
++The Battle.Ranged.{Enable,Fire,Step,Skirmish} list was re-typed as local
++arrays in three scenario classes (S6Volley, SkirmishBehavior,
++DeterminismTwoRun -- Set + Restore each). ONE helper pair
++(RangedSetCvars/RangedRestoreCvars) beside the existing ClashSetCvars owns
++the list; the three classes call it. Same sets flipped, same save/restore
++semantics -- pure dedup.
++
++MUST re-run on the UE machine: func tier (the three scenario classes are
++the consumers; S6/Skirmish expected green, DeterminismTwoRun keeps its
++disclosed blocker).
++---
++ .../Private/BattleFuncTestActor.cpp           | 101 +++++++-----------
++ 1 file changed, 38 insertions(+), 63 deletions(-)
++
++diff --git a/Plugins/MassBattle/Source/MassBattleTest/Private/BattleFuncTestActor.cpp b/Plugins/MassBattle/Source/MassBattleTest/Private/BattleFuncTestActor.cpp
++index 16cdb19..b1f4569 100644
++--- a/Plugins/MassBattle/Source/MassBattleTest/Private/BattleFuncTestActor.cpp
+++++ b/Plugins/MassBattle/Source/MassBattleTest/Private/BattleFuncTestActor.cpp
++@@ -4917,6 +4917,38 @@ namespace
++ 		}
++ 	}
++ 
+++	// The ranged session-on list (ONE home, the phase-3 audit's C-tier fix):
+++	// previously re-typed as local arrays in three scenario classes.
+++	constexpr const TCHAR* RangedCvars[] = {
+++		TEXT("Battle.Ranged.Enable"),
+++		TEXT("Battle.Ranged.Fire"),
+++		TEXT("Battle.Ranged.Step"),
+++		TEXT("Battle.Ranged.Skirmish"),
+++	};
+++
+++	void RangedSetCvars(int32 (&Saved)[4])
+++	{
+++		for (int32 i = 0; i < 4; ++i)
+++		{
+++			if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(RangedCvars[i]))
+++			{
+++				Saved[i] = C->GetInt();
+++				C->Set(1, ECVF_SetByCode);
+++			}
+++		}
+++	}
+++
+++	void RangedRestoreCvars(int32 (&Saved)[4])
+++	{
+++		for (int32 i = 0; i < 4; ++i)
+++		{
+++			if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(RangedCvars[i]))
+++			{
+++				C->Set(Saved[i], ECVF_SetByCode);
+++			}
+++		}
+++	}
+++
++ 	AUnitActor* ClashSpawnActor(UWorld* World, int32 EduRow, int32 Count, const FVector2D& PosM, float YawDeg)
++ 	{
++ 		FActorSpawnParameters Params;
++@@ -5630,17 +5662,7 @@ void ADeterminismTwoRunTest::SetCvars()
++ 			C->Set(1, ECVF_SetByCode);
++ 		}
++ 	}
++-	static const TCHAR* RangedNames[4] = {
++-		TEXT("Battle.Ranged.Enable"), TEXT("Battle.Ranged.Fire"),
++-		TEXT("Battle.Ranged.Step"), TEXT("Battle.Ranged.Skirmish") };
++-	for (int32 i = 0; i < 4; ++i)
++-	{
++-		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(RangedNames[i]))
++-		{
++-			SavedRanged[i] = C->GetInt();
++-			C->Set(1, ECVF_SetByCode);
++-		}
++-	}
+++	RangedSetCvars(SavedRanged);
++ }
++ 
++ void ADeterminismTwoRunTest::RestoreCvars()
++@@ -5652,16 +5674,7 @@ void ADeterminismTwoRunTest::RestoreCvars()
++ 			C->Set(SavedCvars[i], ECVF_SetByCode);
++ 		}
++ 	}
++-	static const TCHAR* RangedNames[4] = {
++-		TEXT("Battle.Ranged.Enable"), TEXT("Battle.Ranged.Fire"),
++-		TEXT("Battle.Ranged.Step"), TEXT("Battle.Ranged.Skirmish") };
++-	for (int32 i = 0; i < 4; ++i)
++-	{
++-		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(RangedNames[i]))
++-		{
++-			C->Set(SavedRanged[i], ECVF_SetByCode);
++-		}
++-	}
+++	RangedRestoreCvars(SavedRanged);
++ }
++ 
++ void ADeterminismTwoRunTest::Destroyed()
++@@ -5924,9 +5937,6 @@ void AS6VolleyTest::SetCvars()
++ 	static const TCHAR* CombatNames[5] = {
++ 		TEXT("Battle.Combat.SpatialHash"), TEXT("Battle.Combat.Clusters"),
++ 		TEXT("Battle.Combat.Tally"), TEXT("Battle.Combat.Assign"), TEXT("Battle.Combat.Resolve") };
++-	static const TCHAR* RangedNames[4] = {
++-		TEXT("Battle.Ranged.Enable"), TEXT("Battle.Ranged.Fire"),
++-		TEXT("Battle.Ranged.Step"), TEXT("Battle.Ranged.Skirmish") };
++ 	for (int32 i = 0; i < 5; ++i)
++ 	{
++ 		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(CombatNames[i]))
++@@ -5935,14 +5945,7 @@ void AS6VolleyTest::SetCvars()
++ 			C->Set(1, ECVF_SetByCode);
++ 		}
++ 	}
++-	for (int32 i = 0; i < 4; ++i)
++-	{
++-		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(RangedNames[i]))
++-		{
++-			SavedRanged[i] = C->GetInt();
++-			C->Set(1, ECVF_SetByCode);
++-		}
++-	}
+++	RangedSetCvars(SavedRanged);
++ 	// The drain phase needs 25 reload cycles; the A6 3 s cycle makes that a
++ 	// 75 s phase. The scenario runs at the 0.5 s cycle (saved/restored).
++ 	if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Ranged.ReloadInterval")))
++@@ -5957,9 +5960,6 @@ void AS6VolleyTest::RestoreCvars()
++ 	static const TCHAR* CombatNames[5] = {
++ 		TEXT("Battle.Combat.SpatialHash"), TEXT("Battle.Combat.Clusters"),
++ 		TEXT("Battle.Combat.Tally"), TEXT("Battle.Combat.Assign"), TEXT("Battle.Combat.Resolve") };
++-	static const TCHAR* RangedNames[4] = {
++-		TEXT("Battle.Ranged.Enable"), TEXT("Battle.Ranged.Fire"),
++-		TEXT("Battle.Ranged.Step"), TEXT("Battle.Ranged.Skirmish") };
++ 	for (int32 i = 0; i < 5; ++i)
++ 	{
++ 		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(CombatNames[i]))
++@@ -5967,13 +5967,7 @@ void AS6VolleyTest::RestoreCvars()
++ 			C->Set(SavedCombat[i], ECVF_SetByCode);
++ 		}
++ 	}
++-	for (int32 i = 0; i < 4; ++i)
++-	{
++-		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(RangedNames[i]))
++-		{
++-			C->Set(SavedRanged[i], ECVF_SetByCode);
++-		}
++-	}
+++	RangedRestoreCvars(SavedRanged);
++ 	if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Ranged.ReloadInterval")))
++ 	{
++ 		C->Set(SavedReload, ECVF_SetByCode);
++@@ -6523,9 +6517,6 @@ void ASkirmishBehaviorTest::SetCvars()
++ 	static const TCHAR* CombatNames[5] = {
++ 		TEXT("Battle.Combat.SpatialHash"), TEXT("Battle.Combat.Clusters"),
++ 		TEXT("Battle.Combat.Tally"), TEXT("Battle.Combat.Assign"), TEXT("Battle.Combat.Resolve") };
++-	static const TCHAR* RangedNames[4] = {
++-		TEXT("Battle.Ranged.Enable"), TEXT("Battle.Ranged.Fire"),
++-		TEXT("Battle.Ranged.Step"), TEXT("Battle.Ranged.Skirmish") };
++ 	for (int32 i = 0; i < 5; ++i)
++ 	{
++ 		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(CombatNames[i]))
++@@ -6534,14 +6525,7 @@ void ASkirmishBehaviorTest::SetCvars()
++ 			C->Set(1, ECVF_SetByCode);
++ 		}
++ 	}
++-	for (int32 i = 0; i < 4; ++i)
++-	{
++-		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(RangedNames[i]))
++-		{
++-			SavedRanged[i] = C->GetInt();
++-			C->Set(1, ECVF_SetByCode);
++-		}
++-	}
+++	RangedSetCvars(SavedRanged);
++ 	if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Ranged.ReloadInterval")))
++ 	{
++ 		SavedReload = C->GetFloat();
++@@ -6554,9 +6538,6 @@ void ASkirmishBehaviorTest::RestoreCvars()
++ 	static const TCHAR* CombatNames[5] = {
++ 		TEXT("Battle.Combat.SpatialHash"), TEXT("Battle.Combat.Clusters"),
++ 		TEXT("Battle.Combat.Tally"), TEXT("Battle.Combat.Assign"), TEXT("Battle.Combat.Resolve") };
++-	static const TCHAR* RangedNames[4] = {
++-		TEXT("Battle.Ranged.Enable"), TEXT("Battle.Ranged.Fire"),
++-		TEXT("Battle.Ranged.Step"), TEXT("Battle.Ranged.Skirmish") };
++ 	for (int32 i = 0; i < 5; ++i)
++ 	{
++ 		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(CombatNames[i]))
++@@ -6564,13 +6545,7 @@ void ASkirmishBehaviorTest::RestoreCvars()
++ 			C->Set(SavedCombat[i], ECVF_SetByCode);
++ 		}
++ 	}
++-	for (int32 i = 0; i < 4; ++i)
++-	{
++-		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(RangedNames[i]))
++-		{
++-			C->Set(SavedRanged[i], ECVF_SetByCode);
++-		}
++-	}
+++	RangedRestoreCvars(SavedRanged);
++ 	if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Ranged.ReloadInterval")))
++ 	{
++ 		C->Set(SavedReload, ECVF_SetByCode);
++-- 
++2.47.3
++
+diff --git a/Patches/PRs/PR-10-ranged-config-assets.md b/Patches/PRs/PR-10-ranged-config-assets.md
+new file mode 100644
+index 0000000..979e2f2
+--- /dev/null
++++ b/Patches/PRs/PR-10-ranged-config-assets.md
+@@ -0,0 +1,56 @@
++# PR-10: Author + commit the ranged config assets (D-1)
++
++| | |
++|---|---|
++| **Finds** | Audit phase-3 D-1: `BattleExec::BuildT0Configs` (BattleExecCommands.cpp) authors FOUR `M_Battle_*` config assets from its table; only two exist in `Content/MassBattle/Data/Units/` (`M_Battle_PeasantLevy`, `M_Battle_SergeantSpearmen`). Rows 2/3 (`M_Battle_PeasantArchers`, `M_Battle_MercenaryCrossbowmen`) were added to the authoring table by the phase-3 kickoff extension but the assets were never committed |
++| **Blocks on** | The editor on the reference machine (the command is WITH_EDITOR; assets are binary .uasset), then a git commit of the binaries |
++| **Owner** | Whether the config-asset channel (the A5 authoring route) is worth keeping at all -- see the alternative below |
++
++## Motivation
++
++The code and the asset tree currently disagree. `BuildT0Configs`'s table says four rows; the repo
++holds two. Anyone re-running the command re-authors the missing two from the table's hard-coded
++stats -- which duplicate the EDU fixture's values a THIRD time (they exist in
++`golden_edu_v1.txt` and in `FBattleRowStats::FromEdu`). The audit patched the exec fixtures to
++dictionary-keyed EDU lookups; the config-asset channel is the one remaining surface where row
++stats live in C++ instead of data.
++
++## Proposed change
++
++1. On the UE machine: run `Battle.BuildT0Configs` in the editor world (it is `WITH_EDITOR`-only).
++2. Verify the four assets exist and their `EduRowIndex` links resolve (rows 2/3 = the ranged rows;
++   `Trait->Kind = Arrow/Bolt`, `RangedRangeM 120/160`, `AmmoPerMan 25/18` per the table).
++3. Commit `Content/MassBattle/Data/Units/M_Battle_PeasantArchers.uasset` and
++   `M_Battle_MercenaryCrossbowmen.uasset` (binary; the commit message should carry the
++   `BuildT0Configs` revision that authored them).
++
++### Alternative the owner should weigh (recommended)
++
++Delete the rows from the authoring table instead, IF the config-asset channel has no consumer.
++Check first: `Battle.Unit.Data.EntityConfigIntegrity` and any `UMassEntityConfigAsset` loads. If
++nothing consumes the assets, the honest fix is to drop rows 2/3 from `BuildT0Configs` (the
++C++ archetype route is the spawn path; the assets are the A5 authoring experiment) rather than
++to commit binaries nobody reads. Either way the code and the tree must agree.
++
++## Files
++
++- Edit (option A): `Content/MassBattle/Data/Units/M_Battle_PeasantArchers.uasset` (new, binary)
++- Edit (option A): `Content/MassBattle/Data/Units/M_Battle_MercenaryCrossbowmen.uasset` (new, binary)
++- Edit (option B): `Plugins/MassBattle/Source/MassBattle/Private/BattleExecCommands.cpp`
++  (`BuildT0Configs`'s `FConfigSpec Specs[]` back to two rows; the ranged `else if` branches go)
++
++## Evidence to gather on the UE machine
++
++- Option A: `EXEC_RESULT BuildT0Configs DONE Authored=4` + the two assets loadable in the editor
++  (`LoadObject` probe or the content browser); unit tier green (the assets are outside the
++  automation filter).
++- Option B: `EXEC_RESULT BuildT0Configs DONE Authored=2` + `Battle.Unit.Data.EntityConfigIntegrity`
++  green + a grep that no code loads `M_Battle_PeasantArchers`.
++
++## Rollback
++
++Pure additive (option A) or a two-row table edit (option B); no sim behavior depends on either.
++
++## Status
++
++PENDING (filed by the phase-3 audit, 2026-10-30).
+diff --git a/Patches/PRs/PR-11-level-authoring-row-references.md b/Patches/PRs/PR-11-level-authoring-row-references.md
+new file mode 100644
+index 0000000..3bf35a8
+--- /dev/null
++++ b/Patches/PRs/PR-11-level-authoring-row-references.md
+@@ -0,0 +1,54 @@
++# PR-11: Dictionary-keyed level authoring + the demo-map TeamId eyeball (D-2, A-1 remainder)
++
++| | |
++|---|---|
++| **Finds** | Audit phase-3 A-1 (code half landed: `ADemoUnitActor::OnConstruction` now syncs `TeamId` from `Team`; the visuals' adopt path reads `Spec->TeamId`) + D-2: level-authored units still reference EDU rows by INDEX (`ADemoUnitActor` inherits `AUnitActor::EduRowIndex`, an int property), and the demo map's placed units are a binary .umap nobody can audit statically |
++| **Blocks on** | PIE on the reference machine (the map must be re-saved by the editor); the actor property change wants an eyeball pass |
++| **Owner** | The property shape (dictionary string vs int+validation); the map re-authoring is mechanical either way |
++
++## Motivation
++
++The phase-3 audit patched every RUNTIME fixture to dictionary-keyed EDU lookups (B-3), but the
++LEVEL authoring surface still binds units to rows by index: an author types `EduRowIndex = 2`
++into the details panel. Re-order the golden EDU (T6.1 will) and every placed unit on every map
++silently becomes a different troop type. The same authoring surface also had A-1's team trap
++(visual `Team` vs sim `TeamId`); the code-side sync landed with the audit, but the five units
++already placed on `L_MassBattle_Demo01` were authored BEFORE the sync -- their `TeamId` values
++must be verified in PIE, and a .umap cannot be inspected from a static patch.
++
++## Proposed change
++
++1. `ADemoUnitActor` (or `AUnitActor`): add an editor-visible `UnitDictionary` (FName) property.
++   When set, `SpawnEntities` resolves it through `BattleExec::FindEduRowIndexByDictionary`
++   (public since the audit's patch 20) and stamps `Spec.EduRowIndex`; the int property stays as
++   the fallback for CI/headless maps. Validate loudly on an unknown name (the B-3 posture:
++   fail, never silently re-type).
++2. Re-author `L_MassBattle_Demo01`'s five placed units: fill `UnitDictionary`
++   (e.g. `Peasant_Levy` / `Sergeant_Spearmen`), verify each unit's `Team` matches its intended
++   side, and let the audit's OnConstruction sync stamp `TeamId` from it.
++3. PIE eyeball: spawn the demo, order the player units to attack; confirm (a) the enemy-tinted
++   units are the ones the ranged rules treat as enemies (watch `RangedSkip Reason=Blockers`
++   flip sides), (b) `Battle.Ranged.Dump` fractions render on both sides.
++
++## Files
++
++- Edit: `Source/MassBattleGame/DemoUnitActor.h/.cpp` (the dictionary property + resolution)
++- Edit: `Plugins/MassBattle/Source/MassBattle/Private/UnitActor.cpp` (SpawnEntities consumes it)
++- Edit: `Content/MassBattle/Demo/Maps/L_MassBattle_Demo01.umap` (re-save; binary)
++
++## Evidence to gather on the UE machine
++
++- PIE: the M4 sample + the level units firing/holding per their factions; a screenshot of a
++  two-side volley (the PR-8 residual eyeball doubles as this pass).
++- Unit tier green (the property is editor-visible only; the automation maps place no units).
++- One `SoakVolley=1` nightly (the adopt path's TeamId read is exercised by exec-fixture units).
++
++## Rollback
++
++The dictionary property is additive with the int fallback; deleting it restores today's
++authoring. The map re-save is the only irreversible step (git-revertable like any .umap).
++
++## Status
++
++PENDING (filed by the phase-3 audit, 2026-10-30). The A-1 code half (OnConstruction sync +
++adopt-by-TeamId) already landed with the audit's patch 20.
+diff --git a/Patches/README.md b/Patches/README.md
+index 64ddfa7..0d59ce3 100644
+--- a/Patches/README.md
++++ b/Patches/README.md
+@@ -90,3 +90,35 @@ green, unit tier 75/75 -- two more defect classes surfaced and were fixed on
+ main (F-K7 compile, F-K8 runtime test defects). Full record:
+ `Docs/phases/phase-3/kickoff-verification.md` (fixes F-K1..K8) +
+ `Docs/phases/phase-3/progress.md`.
++
++## Phase-3 cumulative audit (2026-10-30)
++
++Branch: `audit/phase3-redo` (from `main` @ `86d1a1f`).
++Findings register: `Docs/phases/phase-3/audit.md`.
++
++Scope: the phase-3 ranged-stack run, the PR-sweep landing, and every
++ranged-facing surface they touched. The pattern finding: phase 3 re-scattered
++each constant family the phase-2 audit had unified (body radius, hash-family
++multipliers, EDU row indices in fixtures) -- plus the demo's faction split
++keyed on EDU row order. All unified again, this time into homes in headers
++every seam already includes. Value-neutral by construction; identical bits.
++
++| # | Patch | Groups | Must re-run on the UE machine |
++|---|-------|--------|-------------------------------|
++| 17 | `0017-...body-geometry.patch` | B-1 | unit tier (T3.1-T3.3 goldens use 1.6f; zero drift expected) |
++| 18 | `0018-...hash-family.patch` | B-2 | unit tier (T2.1 + T3.1 goldens; DeterminismTwoRun unchanged) |
++| 19 | `0019-...contact-angle.patch` | B-6 | unit + func tier (impact sectors + ring points) |
++| 20 | `0020-...fixture-honesty.patch` | B-3, B-4, A-1 | full unit + func tier; SpawnVolley/PerfStress; one SoakVolley nightly; PIE (adopt-path tinting) |
++| 21 | `0021-...fire-pass.patch` | C-1, C-6, C-7, B-8 | full unit + func tier (same EXEC_RESULT lines expected) |
++| 22 | `0022-...test-cvar-list.patch` | C-3 | func tier (S6/Skirmish green; DeterminismTwoRun keeps its blocker) |
++
++PR writeups (editor/machine-gated; NOT in the patch series):
++
++- `PRs/PR-10-ranged-config-assets.md` (BuildT0Configs authors 4 assets, the repo holds 2)
++- `PRs/PR-11-level-authoring-row-references.md` (dictionary-keyed level authoring + the demo-map TeamId eyeball)
++
++Authoring note, recorded for the next session: the editing surface in this
++environment expands tabs to spaces on write (the kickoff's F-K class, again).
++The audit's first three commits were caught by numstat review and redone via
++scripted byte-exact splicing; every exported patch above was verified to
++apply cleanly, in order, on a pristine `main` tree.
+-- 
+2.47.3
+

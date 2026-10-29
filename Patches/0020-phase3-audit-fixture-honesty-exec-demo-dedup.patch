@@ -1,0 +1,392 @@
+From 7ab24dd738e6de5a3897ac75e40eb1f18f115d0c Mon Sep 17 00:00:00 2001
+From: Z User <z@container>
+Date: Thu, 29 Oct 2026 23:28:44 +0000
+Subject: [PATCH] phase3-audit: fixture honesty + exec/demo dedup (B-3
+ completion, D-3 completion)
+
+The phase-2 audit's B-3 fix made SpawnClash dictionary-keyed; phase 3
+then re-introduced raw EDU row indices in every NEW fixture surface:
+RangedSpawnVolley (2/0), RangedPerfStress (2), the soak's archer mix
+(Min(2, ...)), CombatPerfStress (0, pre-existing), and -- worst -- the
+demo visuals' AdoptUnknownRegistryUnits keyed the demo FACTION on
+EduRowIndex == 0. All now resolve rows by dictionary name through one
+public helper (BattleExec::FindEduRowIndexByDictionary, promoted from
+SpawnClash's file-local copy); the demo adopt reads the SIDE (TeamId),
+and ADemoUnitActor syncs TeamId from its demo faction so an author's
+visual faction and the sim's friend/enemy split cannot disagree.
+
+Same file: LoadGoldenEduRows owns the fixture path+load+parse (was
+re-typed 6x in the exec file + once in the demo); EnableRangedPipeline
+owns the 4-cvar ranged session-on list (was re-typed in both ranged
+fixtures); DemoGameMode's FindRow lambda (the third re-typed dictionary
+matcher) is deleted.
+
+MUST re-run on the UE machine: full unit + func tier (fixture paths
+touched); Battle.Ranged.SpawnVolley/PerfStress + one SoakVolley nightly
+(evidence lines unchanged in shape); PIE on the demo map (adopt-path
+tinting is the only behavior-visible change: units spawned via exec
+fixtures now tint by their TeamId).
+---
+ .../MassBattle/Private/BattleExecCommands.cpp | 130 +++++++++++-------
+ .../MassBattle/Public/BattleExecCommands.h    |  16 +++
+ .../Private/BattleMovementSoakController.cpp  |  10 +-
+ Source/MassBattleGame/DemoGameMode.cpp        |  17 +--
+ Source/MassBattleGame/DemoUnitActor.cpp       |   7 +
+ .../DemoUnitVisualSubsystem.cpp               |   7 +-
+ 6 files changed, 115 insertions(+), 72 deletions(-)
+
+diff --git a/Plugins/MassBattle/Source/MassBattle/Private/BattleExecCommands.cpp b/Plugins/MassBattle/Source/MassBattle/Private/BattleExecCommands.cpp
+index 5ac4a1a..c39384c 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Private/BattleExecCommands.cpp
++++ b/Plugins/MassBattle/Source/MassBattle/Private/BattleExecCommands.cpp
+@@ -59,6 +59,47 @@ namespace BattleExec
+ 			}
+ 		}
+ 	}
++	void EnableRangedPipeline()
++	{
++		// The session-on ranged gate list (the D-3 posture, completed by the
++		// phase-3 audit): Enable/Fire/Step/Skirmish default on in the plugin,
++		// but fixtures that reset a battle flip them explicitly so the session
++		// is honest regardless of the shipping defaults. ONE home for the list.
++		for (const TCHAR* Name : { TEXT("Battle.Ranged.Enable"), TEXT("Battle.Ranged.Fire"),
++				TEXT("Battle.Ranged.Step"), TEXT("Battle.Ranged.Skirmish") })
++		{
++			if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(Name))
++			{
++				C->Set(1, ECVF_SetByCode);
++			}
++		}
++	}
++	bool LoadGoldenEduRows(TArray<FEduUnit>& OutRows, FEduParseError& OutError)
++	{
++		// ONE home for the golden fixture's path + load + parse (the phase-3
++		// audit's B-3 completion; previously re-typed per command). OutError is
++		// set only by a parse failure -- an unreadable file leaves it unset and
++		// the caller's message distinguishes (the SpawnClash precedent).
++		const FString FixturePath = FPaths::ProjectContentDir() / TEXT("Data/EDU/golden_edu_v1.txt");
++		FString EduText;
++		return FFileHelper::LoadFileToString(EduText, *FixturePath)
++			&& FBattleEduParser::Parse(EduText, OutRows, OutError);
++	}
++	int32 FindEduRowIndexByDictionary(const TArray<FEduUnit>& Rows, const FString& Dictionary)
++	{
++		// ONE home for the dictionary-keyed row lookup (moved from the file-local
++		// SpawnClash helper by the phase-3 audit so the demo module and the ranged
++		// fixtures consume it too; row ORDER is fixture data, never a meaning).
++		for (int32 i = 0; i < Rows.Num(); ++i)
++		{
++			const FEduField* Dict = Rows[i].FindField(TEXT("dictionary"));
++			if (Dict && Dict->GetValue().Equals(Dictionary, ESearchCase::IgnoreCase))
++			{
++				return i;
++			}
++		}
++		return INDEX_NONE;
++	}
+ 	void DumpRegistry(const TArray<FString>& Args, UWorld* World)
+ 	{
+ 		UUnitRegistrySubsystem* Registry = GetRegistry(World);
+@@ -765,22 +806,9 @@ namespace
+ 		uint8 TeamId = 0;
+ 	};
+ 
+-	int32 FindEduRowIndexByDictionary(const TArray<FEduUnit>& Rows, const FString& Dictionary)
+-	{
+-		for (int32 i = 0; i < Rows.Num(); ++i)
+-		{
+-			const FEduField* Dict = Rows[i].FindField(TEXT("dictionary"));
+-			if (Dict && Dict->GetValue().Equals(Dictionary, ESearchCase::IgnoreCase))
+-			{
+-				return i;
+-			}
+-		}
+-		return INDEX_NONE;
+-	}
+-
+ 	FUnitHandle SpawnClashUnitExec(UWorld* World, const TArray<FEduUnit>& Rows, const FClashUnitSpec& Unit)
+ 	{
+-		const int32 EduRow = FindEduRowIndexByDictionary(Rows, Unit.Dictionary);
++		const int32 EduRow = BattleExec::FindEduRowIndexByDictionary(Rows, Unit.Dictionary);
+ 		if (EduRow == INDEX_NONE)
+ 		{
+ 			UE_LOG(LogMassBattle, Display,
+@@ -904,12 +932,9 @@ void CombatSpawnClash(const TArray<FString>& Args, UWorld* World)
+ 		*Channel, *Variant, Units.Num());
+ 
+ 	// Load the EDU once per command; rows are matched by dictionary name.
+-	const FString FixturePath = FPaths::ProjectContentDir() / TEXT("Data/EDU/golden_edu_v1.txt");
+-	FString EduText;
+ 	TArray<FEduUnit> Rows;
+ 	FEduParseError Err;
+-	if (!FFileHelper::LoadFileToString(EduText, *FixturePath)
+-		|| !FBattleEduParser::Parse(EduText, Rows, Err))
++	if (!BattleExec::LoadGoldenEduRows(Rows, Err))
+ 	{
+ 		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SpawnClash FAIL EDU fixture (%s)"),
+ 			Err.bFailed ? *Err.Message : TEXT("unreadable"));
+@@ -967,12 +992,14 @@ void CombatPerfStress(const TArray<FString>& Args, UWorld* World)
+ 	// Two 500-man lines in contact (the B.6 1k stress shape): 25 files x 20
+ 	// ranks at 1.2 m -- the tile holds it; the front ranks interpenetrate the
+ 	// dilation and the cluster pass emits the engagement.
+-	const FString FixturePath = FPaths::ProjectContentDir() / TEXT("Data/EDU/golden_edu_v1.txt");
+-	FString EduText;
++	// Rows are matched by dictionary name (B-3): the T2.9 shape is 1,000
++	// levy bodies, not "whatever row sits at index 0 this quarter".
+ 	TArray<FEduUnit> Rows;
+ 	FEduParseError Err;
+-	if (!FFileHelper::LoadFileToString(EduText, *FixturePath)
+-		|| !FBattleEduParser::Parse(EduText, Rows, Err))
++	const int32 LevyRow = BattleExec::LoadGoldenEduRows(Rows, Err)
++		? BattleExec::FindEduRowIndexByDictionary(Rows, TEXT("Peasant_Levy"))
++		: INDEX_NONE;
++	if (LevyRow == INDEX_NONE)
+ 	{
+ 		UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT PerfStress FAIL EDU fixture"));
+ 		return;
+@@ -994,8 +1021,8 @@ void CombatPerfStress(const TArray<FString>& Args, UWorld* World)
+ 		Spec.NumRanks = 20; // deep blocks: 25 x 20 = 500 per side
+ 		return UBattleSpawnLibrary::SpawnUnit(World, Spec, Stats).Unit;
+ 	};
+-	const FUnitHandle A = SpawnLine(0, 500, FVector2D(-10.f, 0.f), 0.f);
+-	const FUnitHandle B = SpawnLine(0, 500, FVector2D(10.f, 0.f), 180.f);
++	const FUnitHandle A = SpawnLine(LevyRow, 500, FVector2D(-10.f, 0.f), 0.f);
++	const FUnitHandle B = SpawnLine(LevyRow, 500, FVector2D(10.f, 0.f), 180.f);
+ 	Registry->IssueAttackUnitOrder(A, B);
+ 	if (UBattleDebugSubsystem* Debug = World->GetSubsystem<UBattleDebugSubsystem>())
+ 	{
+@@ -1198,26 +1225,26 @@ void RangedSpawnVolley(const TArray<FString>& Args, UWorld* World)
+ 		return;
+ 	}
+ 
+-	const FString FixturePath = FPaths::ProjectContentDir() / TEXT("Data/EDU/golden_edu_v1.txt");
+-	FString EduText;
++	// Rows are matched by dictionary name (B-3): the fixture means "the
++	// archer row" and "the levy row", never their current indices.
+ 	TArray<FEduUnit> Rows;
+ 	FEduParseError Err;
+-	if (!FFileHelper::LoadFileToString(EduText, *FixturePath) || !FBattleEduParser::Parse(EduText, Rows, Err) || Rows.Num() < 3)
+-	{
+-		UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT SpawnVolley FAIL bad EDU fixture (%s)"), *Err.Message);
++	const int32 ArcherRow = BattleExec::LoadGoldenEduRows(Rows, Err)
++		? BattleExec::FindEduRowIndexByDictionary(Rows, TEXT("Peasant_Archers"))
++		: INDEX_NONE;
++	const int32 LevyRow = (ArcherRow != INDEX_NONE)
++		? BattleExec::FindEduRowIndexByDictionary(Rows, TEXT("Peasant_Levy"))
++		: INDEX_NONE;
++	if (LevyRow == INDEX_NONE)
++	{
++		UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT SpawnVolley FAIL bad EDU fixture (%s)"),
++			Err.bFailed ? *Err.Message : TEXT("Peasant_Archers/Peasant_Levy rows missing"));
+ 		return;
+ 	}
+ 
+ 	Registry->ResetBattleState();
+ 	BattleExec::EnableDemoCombatPipeline();
+-	for (const TCHAR* Name : { TEXT("Battle.Ranged.Enable"), TEXT("Battle.Ranged.Fire"),
+-		TEXT("Battle.Ranged.Step"), TEXT("Battle.Ranged.Skirmish") })
+-	{
+-		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(Name))
+-		{
+-			C->Set(1, ECVF_SetByCode);
+-		}
+-	}
++	BattleExec::EnableRangedPipeline();
+ 
+ 	auto SpawnAt = [&Rows, &World](int32 RowIdx, const FVector2D& PosM, float YawDeg, uint8 TeamId) -> FUnitHandle
+ 	{
+@@ -1244,8 +1271,8 @@ void RangedSpawnVolley(const TArray<FString>& Args, UWorld* World)
+ 	// engages live: break / fire-while-retreating / resume). Evidence flows
+ 	// from the live sim: RangedFire / SkirmishRetreat / OutOfAmmo lines.
+ 	const bool bSkirmish = Args.Num() > 0 && Args[0] == TEXT("skirmish");
+-	const FUnitHandle Archers = SpawnAt(2, FVector2D(-40.f, 0.f), 0.f, 0);
+-	const FUnitHandle Target = SpawnAt(0, FVector2D(bSkirmish ? -10.f : 40.f, 0.f), 180.f, 1);
++	const FUnitHandle Archers = SpawnAt(ArcherRow, FVector2D(-40.f, 0.f), 0.f, 0);
++	const FUnitHandle Target = SpawnAt(LevyRow, FVector2D(bSkirmish ? -10.f : 40.f, 0.f), 180.f, 1);
+ 	if (!Archers.IsValid() || !Target.IsValid())
+ 	{
+ 		return;
+@@ -1280,25 +1307,22 @@ void RangedPerfStress(const TArray<FString>& Args, UWorld* World)
+ 		UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT RangedPerfStress FAIL no world/registry"));
+ 		return;
+ 	}
+-	const FString FixturePath = FPaths::ProjectContentDir() / TEXT("Data/EDU/golden_edu_v1.txt");
+-	FString EduText;
++	// Rows are matched by dictionary name (B-3): 1,000 archers must not
++	// silently become 1,000 crossbows when the EDU is re-ordered (T6.1).
+ 	TArray<FEduUnit> Rows;
+ 	FEduParseError Err;
+-	if (!FFileHelper::LoadFileToString(EduText, *FixturePath) || !FBattleEduParser::Parse(EduText, Rows, Err) || Rows.Num() < 3)
++	const int32 ArcherRow = BattleExec::LoadGoldenEduRows(Rows, Err)
++		? BattleExec::FindEduRowIndexByDictionary(Rows, TEXT("Peasant_Archers"))
++		: INDEX_NONE;
++	if (ArcherRow == INDEX_NONE)
+ 	{
+-		UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT RangedPerfStress FAIL bad EDU fixture (%s)"), *Err.Message);
++		UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT RangedPerfStress FAIL bad EDU fixture (%s)"),
++			Err.bFailed ? *Err.Message : TEXT("Peasant_Archers row missing"));
+ 		return;
+ 	}
+ 	Registry->ResetBattleState();
+ 	BattleExec::EnableDemoCombatPipeline();
+-	for (const TCHAR* Name : { TEXT("Battle.Ranged.Enable"), TEXT("Battle.Ranged.Fire"),
+-		TEXT("Battle.Ranged.Step"), TEXT("Battle.Ranged.Skirmish") })
+-	{
+-		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(Name))
+-		{
+-			C->Set(1, ECVF_SetByCode);
+-		}
+-	}
++	BattleExec::EnableRangedPipeline();
+ 	// The fixture-session rank bump (disclosed): 20 ranks of shooters.
+ 	if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Ranged.VolleyRanks")))
+ 	{
+@@ -1329,8 +1353,8 @@ void RangedPerfStress(const TArray<FString>& Args, UWorld* World)
+ 		Spec.TeamId = TeamId;
+ 		return UBattleSpawnLibrary::SpawnUnit(World, Spec, Stats).Unit;
+ 	};
+-	const FUnitHandle A = SpawnLine(2, 500, FVector2D(-50.f, 0.f), 0.f, 0);
+-	const FUnitHandle B = SpawnLine(2, 500, FVector2D(50.f, 0.f), 180.f, 1);
++	const FUnitHandle A = SpawnLine(ArcherRow, 500, FVector2D(-50.f, 0.f), 0.f, 0);
++	const FUnitHandle B = SpawnLine(ArcherRow, 500, FVector2D(50.f, 0.f), 180.f, 1);
+ 	if (!A.IsValid() || !B.IsValid())
+ 	{
+ 		UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT RangedPerfStress FAIL spawn"));
+diff --git a/Plugins/MassBattle/Source/MassBattle/Public/BattleExecCommands.h b/Plugins/MassBattle/Source/MassBattle/Public/BattleExecCommands.h
+index 87640a2..e22fda9 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Public/BattleExecCommands.h
++++ b/Plugins/MassBattle/Source/MassBattle/Public/BattleExecCommands.h
+@@ -8,6 +8,8 @@
+ #include "CoreMinimal.h"
+ 
+ class UWorld;
++struct FEduUnit;
++struct FEduParseError;
+ 
+ namespace BattleExec
+ {
+@@ -17,6 +19,20 @@ namespace BattleExec
+ 	// SpawnClash/PerfStress fixtures flip them on for their session. ONE home
+ 	// for the list + the flips -- call sites must not re-type the cvar names.
+ 	MASSBATTLE_API void EnableDemoCombatPipeline();
++
++	// -- Session-on ranged pipeline (the phase-3 audit's D-3 completion) --
++	// Same posture as the combat list: the four Battle.Ranged.* gates flip
++	// on for a session (defaults untouched, ECVF_SetByCode).
++	MASSBATTLE_API void EnableRangedPipeline();
++
++	// -- EDU fixture access (the phase-3 audit's B-3 completion) --
++	// ONE home for the golden fixture's path + load + parse (previously
++	// re-typed per command) and for the dictionary-keyed row lookup (row
++	// ORDER is fixture data; fixtures that mean "the archer row" must not
++	// hold a raw index -- re-ordering the EDU silently re-types the battle).
++	// Returns INDEX_NONE when the dictionary is absent from the fixture.
++	MASSBATTLE_API bool LoadGoldenEduRows(TArray<FEduUnit>& OutRows, FEduParseError& OutError);
++	MASSBATTLE_API int32 FindEduRowIndexByDictionary(const TArray<FEduUnit>& Rows, const FString& Dictionary);
+ 	// -- Task 4 (registry probes) --
+ 	MASSBATTLE_API void DumpRegistry(const TArray<FString>& Args, UWorld* World);
+ 	MASSBATTLE_API void StateHash(const TArray<FString>& Args, UWorld* World);
+diff --git a/Plugins/MassBattle/Source/MassBattleTest/Private/BattleMovementSoakController.cpp b/Plugins/MassBattle/Source/MassBattleTest/Private/BattleMovementSoakController.cpp
+index 2230fb1..1bfe7d1 100644
+--- a/Plugins/MassBattle/Source/MassBattleTest/Private/BattleMovementSoakController.cpp
++++ b/Plugins/MassBattle/Source/MassBattleTest/Private/BattleMovementSoakController.cpp
+@@ -1,5 +1,6 @@
+ #include "BattleMovementSoakController.h"
+ #include "BattleRanged.h"
++#include "BattleExecCommands.h"
+ #include "BattleDebugSubsystem.h"
+ #include "BattleProjectileSubsystem.h"
+ #include "BattleEngagement.h"
+@@ -155,13 +156,18 @@ void UBattleMovementSoakController::OnTick(float TimeDelta)
+ 		const bool bVolleySoak = FRangedCVars::SoakVolley();
+ 		const int32 TotalUnits = UnitsPerRow * UnitRows;
+ 		int32 ArcherUnits = 0;
++		// The archer row is matched by dictionary name (B-3): re-ordering the
++		// golden EDU must not re-type the soak's ranged mix.
++		const int32 ArcherRow = bVolleySoak
++			? BattleExec::FindEduRowIndexByDictionary(Rows, TEXT("Peasant_Archers"))
++			: INDEX_NONE;
+ 		for (int32 i = 0; i < TotalUnits; ++i)
+ 		{
+ 			const int32 Col = i % UnitsPerRow;
+ 			const int32 Row = i / UnitsPerRow;
+-			const bool bArcher = bVolleySoak && (i % 4 == 3);
++			const bool bArcher = bVolleySoak && (ArcherRow != INDEX_NONE) && (i % 4 == 3);
+ 			FUnitSpawnSpec Spec;
+-			Spec.EduRowIndex = bArcher ? FMath::Min(2, Rows.Num() - 1) : (i % Rows.Num());
++			Spec.EduRowIndex = bArcher ? ArcherRow : (i % Rows.Num());
+ 			Spec.SoldierCount = 40;
+ 			Spec.UnitName = FString::Printf(TEXT("Soak_%d"), i);
+ 			Spec.SpawnPos = FVector2D(-4500.f + Col * 3000.f, Row * 3000.f);
+diff --git a/Source/MassBattleGame/DemoGameMode.cpp b/Source/MassBattleGame/DemoGameMode.cpp
+index 55a4ca6..e706fb8 100644
+--- a/Source/MassBattleGame/DemoGameMode.cpp
++++ b/Source/MassBattleGame/DemoGameMode.cpp
+@@ -165,23 +165,12 @@ void ADemoGameMode::SpawnScenarioAsset()
+ 		return;
+ 	}
+ 
+-	const auto FindRow = [&Rows](const FName& Dictionary) -> int32
+-	{
+-		for (int32 i = 0; i < Rows.Num(); ++i)
+-		{
+-			const FEduField* Dict = Rows[i].FindField(TEXT("dictionary"));
+-			if (Dict && Dict->GetValue().Equals(Dictionary.ToString(), ESearchCase::IgnoreCase))
+-			{
+-				return i;
+-			}
+-		}
+-		return INDEX_NONE;
+-	};
+-
+ 	TArray<FUnitHandle> Spawned;
+ 	for (const FDemoScenarioSpawn& RowDef : ScenarioAsset->Spawns)
+ 	{
+-		const int32 EduRow = FindRow(RowDef.Dictionary);
++		// ONE home for the dictionary lookup (the plugin's BattleExec helper;
++		// this lambda was its third re-typed copy -- audit B-3).
++		const int32 EduRow = BattleExec::FindEduRowIndexByDictionary(Rows, RowDef.Dictionary.ToString());
+ 		if (EduRow == INDEX_NONE)
+ 		{
+ 			UE_LOG(LogDemoBattle, Error, TEXT("EXEC_RESULT DemoScenario FAIL unknown EDU dictionary '%s'"),
+diff --git a/Source/MassBattleGame/DemoUnitActor.cpp b/Source/MassBattleGame/DemoUnitActor.cpp
+index cdc7377..3d3dcd0 100644
+--- a/Source/MassBattleGame/DemoUnitActor.cpp
++++ b/Source/MassBattleGame/DemoUnitActor.cpp
+@@ -12,6 +12,13 @@ void ADemoUnitActor::OnConstruction(const FTransform& Transform)
+ {
+ 	Super::OnConstruction(Transform);
+ 
++	// ONE team notion on the authoring surface: the demo faction (EDemoTeam)
++	// drives the sim side (AUnitActor::TeamId stamps the spawn spec). An
++	// author who sets Team=Enemy but leaves TeamId at its default would tint
++	// the unit enemy while the ranged rules treat it as a friend -- the sync
++	// keeps the two from disagreeing (audit B-3).
++	TeamId = static_cast<uint8>(Team);
++
+ 	// Editor placement aid only; in-game the ISM capsules are the visual.
+ 	// Finite lifetime (refreshed on every construction/move/property change):
+ 	// persistent lines lingered in the viewport after PIE and the old global
+diff --git a/Source/MassBattleGame/DemoUnitVisualSubsystem.cpp b/Source/MassBattleGame/DemoUnitVisualSubsystem.cpp
+index 9ce3f18..ca2e169 100644
+--- a/Source/MassBattleGame/DemoUnitVisualSubsystem.cpp
++++ b/Source/MassBattleGame/DemoUnitVisualSubsystem.cpp
+@@ -90,11 +90,12 @@ int32 UDemoUnitVisualSubsystem::AdoptUnknownRegistryUnits(UUnitRegistrySubsystem
+ 		{
+ 			continue;
+ 		}
+-		// Demo team convention: EDU row 0 = the Player faction, row 1+ =
+-		// Enemy (the fixture's peasant/sergeant split maps onto it).
++		// Demo team convention: the SIDE the unit fights on (TeamId; team 0
++		// = the Player convention) drives the faction split -- EDU row order
++		// is fixture data, never a faction notion (audit B-3).
+ 		EDemoTeam Team = EDemoTeam::Enemy;
+ 		if (const FUnitSpawnSpec* Spec = Registry->FindUnitSpec(Handle);
+-			Spec && Spec->EduRowIndex == 0)
++			Spec && Spec->TeamId == 0)
+ 		{
+ 			Team = EDemoTeam::Player;
+ 		}
+-- 
+2.47.3
+

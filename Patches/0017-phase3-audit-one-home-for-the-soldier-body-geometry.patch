@@ -1,0 +1,210 @@
+From 526a67807275ae27c7a0626ff6d274d3bef74d8d Mon Sep 17 00:00:00 2001
+From: Z User <z@container>
+Date: Thu, 29 Oct 2026 23:25:24 +0000
+Subject: [PATCH] phase3-audit: one home for the soldier body geometry (A-1)
+
+BattleTypes.h gains namespace BattleBody {RadiusM 0.4, EyeHeightM 1.6,
+TopM 1.8, AimCenterM 1.0} -- the file every seam already includes.
+Consumers: Contact::BodyRadiusM (BattleEngagement.h) becomes an alias;
+the ranged seam drops VolleyBodyRadiusM (BattleRanged.cpp) and the raw
+2.f * 0.4f blocker-query literal (RangedFireProcessor.cpp); the step
+processor drops its file-local BodyRadiusM/BodyTopM and gains a named
+FlyoverQueryMarginM (was the raw 0.7f). Values identical everywhere --
+this is a rename, not a re-derivation. Same bits out by construction.
+
+MUST re-run on the UE machine: unit tier (T3.1-T3.3 use 1.6f goldens;
+expected green, zero drift -- the values are unchanged).
+---
+ .../MassBattle/Private/BattleRanged.cpp       |  7 +++----
+ .../Private/ProjectileStepProcessor.cpp       | 19 +++++++++++--------
+ .../Private/RangedFireProcessor.cpp           |  6 +++---
+ .../MassBattle/Public/BattleEngagement.h      | 12 +++++++-----
+ .../Source/MassBattle/Public/BattleRanged.h   |  2 +-
+ .../Source/MassBattle/Public/BattleTypes.h    | 18 ++++++++++++++++++
+ 6 files changed, 43 insertions(+), 21 deletions(-)
+
+diff --git a/Plugins/MassBattle/Source/MassBattle/Private/BattleRanged.cpp b/Plugins/MassBattle/Source/MassBattle/Private/BattleRanged.cpp
+index 787bf76..24f9b54 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Private/BattleRanged.cpp
++++ b/Plugins/MassBattle/Source/MassBattle/Private/BattleRanged.cpp
+@@ -158,8 +158,6 @@ namespace
+ 		const float Clamped = FMath::Clamp(T, 0.f, 1.f);
+ 		return FVector2D::Distance(Point, A + AB * Clamped);
+ 	}
+-
+-	constexpr float VolleyBodyRadiusM = 0.4f; // the 40 cm body radius (B-1 family: one named constant per seam)
+ }
+ 
+ int32 SelectVolleyShots(
+@@ -195,8 +193,9 @@ int32 SelectVolleyShots(
+ 	const bool bArcedHold = Profile.bIndirect && FriendsInZone > FriendlyImpactTolerance;
+ 
+ 	// Flat-lane corridor (A7): any friendly body inside the corridor holds
+-	// fire. Corridor half-width = 2 body radii + hit radius.
+-	const float CorridorHalfM = 2.f * VolleyBodyRadiusM + Profile.HitRadiusM;
++	// fire. Corridor half-width = 2 body radii + hit radius (one home:
++	// BattleTypes.h's BattleBody, the B-1 rule).
++	const float CorridorHalfM = 2.f * BattleBody::RadiusM + Profile.HitRadiusM;
+ 
+ 	int32 ShotCount = 0;
+ 	for (FVolleyShooterView& Shooter : InOutShooters)
+diff --git a/Plugins/MassBattle/Source/MassBattle/Private/ProjectileStepProcessor.cpp b/Plugins/MassBattle/Source/MassBattle/Private/ProjectileStepProcessor.cpp
+index b2a5c16..3b5cf9b 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Private/ProjectileStepProcessor.cpp
++++ b/Plugins/MassBattle/Source/MassBattle/Private/ProjectileStepProcessor.cpp
+@@ -67,10 +67,13 @@ namespace
+ 	// keeps corpses addressable -- this ledger is the no-double-kill guard.
+ 	TSet<FMassEntityHandle> GKilledLedger;
+ 
+-	// Body geometry for the height gates (the B-1 family: named constants;
+-	// values mirror the hash entry's 40 cm body radius and the ~1.8 m body).
+-	constexpr float BodyRadiusM = 0.4f;
+-	constexpr float BodyTopM = 1.8f;
++	// Body geometry for the height gates: ONE home (BattleTypes.h's
++	// BattleBody) -- the same 40 cm radius the contact ring and the ranged
++	// corridors read. FlyoverQueryMarginM: how far above body top the
++	// mid-segment must sit before the pass skips the impact query entirely
++	// (R-R2's cheap gate; conservative by design -- the candidate gate
++	// itself uses no margin).
++	constexpr float FlyoverQueryMarginM = 0.7f;
+ 
+ 	/** Point-to-segment distance, 2D (the swept-segment corridor test). */
+ 	float SegmentDist2D(const FVector2D& Point, const FVector2D& A, const FVector2D& B)
+@@ -160,13 +163,13 @@ void RunProjectileStepPass(UWorld* World, float DeltaSeconds)
+ 		const FVector2D Mid = (Pre + Post) * 0.5f;
+ 		const float HalfSeg = FVector2D::Distance(Pre, Post) * 0.5f;
+ 		const float GroundMid = Grid.SampleHeight(Mid);
+-		if (MidZ > GroundMid + BodyTopM + 0.7f)
++		if (MidZ > GroundMid + BattleBody::TopM + FlyoverQueryMarginM)
+ 		{
+ 			continue; // above every body: no query (the R-R2 early-out)
+ 		}
+ 
+ 		const FProjectileProfile Profile = GetProjectileProfile(static_cast<EBattleProjectileKind>(Pool.Kind[Slot]));
+-		const float CorridorM = HalfSeg + Profile.HitRadiusM + BodyRadiusM;
++		const float CorridorM = HalfSeg + Profile.HitRadiusM + BattleBody::RadiusM;
+ 		GHitEntries.Reset();
+ 		GHitPositions.Reset();
+ 		if (Hash)
+@@ -202,7 +205,7 @@ void RunProjectileStepPass(UWorld* World, float DeltaSeconds)
+ 				continue;
+ 			}
+ 			const float Dist = SegmentDist2D(GHitPositions[i], Pre, Post);
+-			if (Dist > Profile.HitRadiusM + BodyRadiusM)
++			if (Dist > Profile.HitRadiusM + BattleBody::RadiusM)
+ 			{
+ 				continue;
+ 			}
+@@ -211,7 +214,7 @@ void RunProjectileStepPass(UWorld* World, float DeltaSeconds)
+ 			const float T = FMath::Clamp(FVector2D::DotProduct(GHitPositions[i] - Pre, SegAB) / SegLenSq, 0.f, 1.f);
+ 			const float ZAtT = FMath::Lerp(GPreZ[Slot], Pool.PosZ[Slot], T);
+ 			const float GroundI = Grid.SampleHeight(GHitPositions[i]);
+-			if (ZAtT > GroundI + BodyTopM)
++			if (ZAtT > GroundI + BattleBody::TopM)
+ 			{
+ 				continue; // passes overhead
+ 			}
+diff --git a/Plugins/MassBattle/Source/MassBattle/Private/RangedFireProcessor.cpp b/Plugins/MassBattle/Source/MassBattle/Private/RangedFireProcessor.cpp
+index 718b091..69c2216 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Private/RangedFireProcessor.cpp
++++ b/Plugins/MassBattle/Source/MassBattle/Private/RangedFireProcessor.cpp
+@@ -258,7 +258,7 @@ void RunRangedFirePass(UWorld* World, float DeltaSeconds)
+ 				Shooter.Unit = Handle;
+ 				Shooter.RosterIndex = RosterIdx++;
+ 				Shooter.PosM = FVector2D(P.X, P.Y) * 0.01f;
+-				Shooter.EyeZM = 1.6f; // A6 placeholder launch height
++				Shooter.EyeZM = BattleBody::EyeHeightM; // A6 placeholder launch height (one home: BattleTypes.h)
+ 				Shooter.Kind = Ranged->Kind;
+ 				Shooter.RangeM = Ranged->RangeM;
+ 				Shooter.Ammo = Ranged->AmmoCount;
+@@ -313,7 +313,7 @@ void RunRangedFirePass(UWorld* World, float DeltaSeconds)
+ 		const FProjectileProfile Profile = GetProjectileProfile(GShooters[0].Kind);
+ 		FVolleyTargetView Target;
+ 		Target.PosM = *TargetAnchor;
+-		Target.ZM = Grid.SampleHeight(*TargetAnchor) + 1.0f; // body-center aim
++		Target.ZM = Grid.SampleHeight(*TargetAnchor) + BattleBody::AimCenterM; // body-center aim (one home)
+ 		Target.Unit = TargetUnit;
+ 
+ 		// -- Friendly blockers through the spatial hash (A7's sanctioned
+@@ -326,7 +326,7 @@ void RunRangedFirePass(UWorld* World, float DeltaSeconds)
+ 			const float DistM = FVector2D::Distance(GShooters[0].PosM, Target.PosM);
+ 			const float QueryRadiusM = Profile.bIndirect
+ 				? DistM * FMath::Tan(FMath::DegreesToRadians(FMath::Max(Profile.DispersionDeg, 0.01f))) + Profile.HitRadiusM + 2.f
+-				: DistM * 0.5f + 2.f * 0.4f + Profile.HitRadiusM + 2.f;
++				: DistM * 0.5f + 2.f * BattleBody::RadiusM + Profile.HitRadiusM + 2.f;
+ 			const FVector2D QueryCenterM = Profile.bIndirect
+ 				? Target.PosM
+ 				: (*TargetAnchor + GShooters[0].PosM) * 0.5f;
+diff --git a/Plugins/MassBattle/Source/MassBattle/Public/BattleEngagement.h b/Plugins/MassBattle/Source/MassBattle/Public/BattleEngagement.h
+index 801c6e5..6590fdc 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Public/BattleEngagement.h
++++ b/Plugins/MassBattle/Source/MassBattle/Public/BattleEngagement.h
+@@ -83,16 +83,18 @@ struct FCombatAttackerView
+ 
+ namespace FCombatSolver
+ {
+-	// -- Body geometry (ONE home for the 40 cm soldier body radius, fact 1.9) --
++	// -- Body geometry (ONE home: BattleTypes.h's BattleBody) --
+ 	//
+ 	// Consumers: the cluster pass's OBB dilation, the assign pass's contact
+-	// ring, and the servo's avoidance/touch radii all re-derive the same
+-	// body size. Keep it HERE (beside FAssignContext, which carries it into
+-	// the seam) -- a per-file retyped 0.4f drifts silently (B-1).
++	// ring, the servo's avoidance/touch radii, and (phase 3) the ranged
++	// lane/impact corridors all read the same body size. The home is
++	// BattleBody::RadiusM in BattleTypes.h (the file every seam includes);
++	// this alias keeps the combat-facing name. A per-file retyped 0.4f
++	// drifts silently (B-1; phase 3's ranged seam re-scattered it, audit A-1).
+ 	namespace Contact
+ 	{
+ 		/** Soldier body radius, meters (fact 1.9: FAgentRadiusFragment 40 cm). */
+-		constexpr float BodyRadiusM = 0.4f;
++		constexpr float BodyRadiusM = BattleBody::RadiusM;
+ 	}
+ 
+ 	// -- ContactAngle conventions (ONE value, TWO consumers, spec §4.5) --
+diff --git a/Plugins/MassBattle/Source/MassBattle/Public/BattleRanged.h b/Plugins/MassBattle/Source/MassBattle/Public/BattleRanged.h
+index 9b84955..d40b596 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Public/BattleRanged.h
++++ b/Plugins/MassBattle/Source/MassBattle/Public/BattleRanged.h
+@@ -67,7 +67,7 @@ struct FVolleyShooterView
+ 	FUnitHandle Unit;
+ 	int32 RosterIndex = -1;   // canonical identity input (A13, RC8)
+ 	FVector2D PosM = FVector2D::ZeroVector;   // planar position, meters
+-	float EyeZM = 1.6f;                       // launch height, meters
++	float EyeZM = BattleBody::EyeHeightM;              // launch height, meters (one home: BattleTypes.h)
+ 	EBattleProjectileKind Kind = EBattleProjectileKind::None;
+ 	float RangeM = 0.f;                       // weapon range, meters (fragment-stamped)
+ 	int16 Ammo = 0;
+diff --git a/Plugins/MassBattle/Source/MassBattle/Public/BattleTypes.h b/Plugins/MassBattle/Source/MassBattle/Public/BattleTypes.h
+index def3d82..6b83d7d 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Public/BattleTypes.h
++++ b/Plugins/MassBattle/Source/MassBattle/Public/BattleTypes.h
+@@ -53,6 +53,24 @@ inline uint32 BattleCanonicalCount(int32 RosterIndex, uint32 Count)
+ 	return (static_cast<uint32>(RosterIndex) << 16) | (Count & 0xFFFFu);
+ }
+ 
++/** Soldier body geometry (ONE home, fact 1.9's 40 cm body + the phase-3
++ *  ranged heights): every body-size read in the project consumes these --
++ *  the engagement contact radius (aliased as FCombatSolver::Contact::
++ *  BodyRadiusM), the ranged lane/impact corridors, and the height gates.
++ *  A per-file retyped 0.4f/1.6f/1.8f drifts silently (the phase-2 audit's
++ *  B-1 lesson, re-scattered by phase 3's ranged seam -- this audit's A-1). */
++namespace BattleBody
++{
++	/** Body radius, meters (fact 1.9: FAgentRadiusFragment 40 cm). */
++	constexpr float RadiusM = 0.4f;
++	/** Launch/eye height, meters (the ranged fire pass's A6 placeholder). */
++	constexpr float EyeHeightM = 1.6f;
++	/** Body top, meters (the impact height gates' body ceiling). */
++	constexpr float TopM = 1.8f;
++	/** Aim-point height above ground, meters (the volley target's body center). */
++	constexpr float AimCenterM = 1.0f;
++}
++
+ /** Weapon reach class (spec §4.5: >= Spear grants the second-rank budget
+  *  bonus; arch §9.1 spear reach). Mapped from the EDU stat_pri tech type at
+  *  spawn (task 2 step 1); the class SET and mapping are A6 placeholders the
+-- 
+2.47.3
+

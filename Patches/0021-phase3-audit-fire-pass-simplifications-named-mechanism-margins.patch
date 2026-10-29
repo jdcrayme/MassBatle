@@ -1,0 +1,291 @@
+From f2f58e5a580b9ba49de7563b6e32d4206381b270 Mon Sep 17 00:00:00 2001
+From: Z User <z@container>
+Date: Thu, 29 Oct 2026 23:33:37 +0000
+Subject: [PATCH] phase3-audit: fire-pass simplifications + named mechanism
+ margins (C-tier)
+
+RangedFireProcessor.cpp:
+- The A14 GAS mirror (interim writer, UnitSync owns it Phase 4+) now does
+  ONE TActorIterator sweep per pass into a cached unit->actor map -- was a
+  per-unit scan, O(units x actors) per tick on the game thread.
+- The blocker-query radius reads the seam's ONE impact-zone formula
+  (ImpactZoneRadiusForDist, new in BattleRanged) plus a named pad -- was a
+  re-typed derivation of the same cone math.
+- The overlay bar + mirror fractions read the seam's ComputeAmmoFraction --
+  was two hand-rolled divisions with their own Max(1,...) guards.
+- The skirmish facing fetch reads State->Roster (already in hand) instead
+  of a redundant registry FindRoster.
+- The pool TTL write reads FRangedConstants::TtlSafetyMarginS (was 2.f).
+
+BattleRanged.h/.cpp: FRangedConstants::TtlSafetyMarginS + the
+ImpactZoneRadiusForDist helper (ONE formula for the seam's zone count and
+the fire pass's query); the two 0.3f LOS-clearance sites read
+FBallisticsConstants::LosClearanceM (BattleBallistics.h). The pool
+reserve floor is named (BattleProjectileSubsystem.cpp, was Max(16, ...)).
+
+Values identical at every site; the mirror's per-pass cost is the only
+behavior-adjacent change (same writes, fewer scans).
+
+MUST re-run on the UE machine: full unit + func tier (the fire pass feeds
+S6/Skirmish/PerfStress; expected green, same EXEC_RESULT lines).
+---
+ .../Private/BattleProjectileSubsystem.cpp     |  9 ++-
+ .../MassBattle/Private/BattleRanged.cpp       | 25 +++++---
+ .../Private/RangedFireProcessor.cpp           | 60 ++++++++++++-------
+ .../MassBattle/Public/BattleBallistics.h      |  4 ++
+ .../Source/MassBattle/Public/BattleRanged.h   | 15 +++++
+ 5 files changed, 83 insertions(+), 30 deletions(-)
+
+diff --git a/Plugins/MassBattle/Source/MassBattle/Private/BattleProjectileSubsystem.cpp b/Plugins/MassBattle/Source/MassBattle/Private/BattleProjectileSubsystem.cpp
+index e93fcee..9f41dbd 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Private/BattleProjectileSubsystem.cpp
++++ b/Plugins/MassBattle/Source/MassBattle/Private/BattleProjectileSubsystem.cpp
+@@ -4,9 +4,16 @@
+ #include "BattleProjectileSubsystem.h"
+ #include "BattleRanged.h"
+ 
++namespace
++{
++	/** Floor for the cvar read: a pool smaller than this cannot serve even a
++	 *  pair of volleys; the cvar is the tuning knob, this is the sanity bound. */
++	constexpr int32 MinPoolReserve = 16;
++}
++
+ void UBattleProjectileSubsystem::ReserveForBattle()
+ {
+-	Pool.Reserve(FMath::Max(16, FRangedCVars::PoolCapacity()));
++	Pool.Reserve(FMath::Max(MinPoolReserve, FRangedCVars::PoolCapacity()));
+ }
+ 
+ void UBattleProjectileSubsystem::ResetForBattle()
+diff --git a/Plugins/MassBattle/Source/MassBattle/Private/BattleRanged.cpp b/Plugins/MassBattle/Source/MassBattle/Private/BattleRanged.cpp
+index 24f9b54..91a453b 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Private/BattleRanged.cpp
++++ b/Plugins/MassBattle/Source/MassBattle/Private/BattleRanged.cpp
+@@ -140,6 +140,15 @@ FProjectileProfile GetProjectileProfile(EBattleProjectileKind Kind)
+ 	return P;
+ }
+ 
++float ImpactZoneRadiusForDist(float HorizDistM, const FProjectileProfile& Profile)
++{
++	// A7's arced hold-fire estimate: the dispersion cone scaled to the
++	// horizontal distance, plus the hit radius (ONE home; the fire pass's
++	// blocker query pads this -- never re-derive it).
++	const float ConeRad = FMath::DegreesToRadians(FMath::Max(Profile.DispersionDeg, 0.01f));
++	return HorizDistM * FMath::Tan(ConeRad) + Profile.HitRadiusM;
++}
++
+ // -- Seam bodies (the task-0 stubs replaced; T3.3-locked) --
+ 
+ namespace
+@@ -176,12 +185,12 @@ int32 SelectVolleyShots(
+ 	const float MinRangeM = FRangedCVars::MinRangeM();
+ 	const float GravityMps2 = FBallisticsConstants::GravityMps2 * Profile.GravityScale;
+ 
+-	// Arced impact-zone estimate (A7): the dispersion cone scaled to the
+-	// horizontal distance, plus the hit radius. Friends inside -> hold when
+-	// the count exceeds the tolerance.
+-	const float HorizDist = FVector2D::Distance(InOutShooters.Num() > 0 ? InOutShooters[0].PosM : FVector2D::ZeroVector, Target.PosM);
+-	const float ConeRad = FMath::DegreesToRadians(FMath::Max(Profile.DispersionDeg, 0.01f));
+-	const float ImpactZoneRadiusM = (InOutShooters.Num() > 0 ? HorizDist : 0.f) * FMath::Tan(ConeRad) + Profile.HitRadiusM;
++	// Arced impact-zone estimate (A7), ONE formula (the seam helper): the
++	// fire pass's blocker query reads the same estimate padded. Friends
++	// inside -> hold when the count exceeds the tolerance.
++	const float ImpactZoneRadiusM = InOutShooters.Num() > 0
++		? ImpactZoneRadiusForDist(FVector2D::Distance(InOutShooters[0].PosM, Target.PosM), Profile)
++		: 0.f;
+ 	int32 FriendsInZone = 0;
+ 	for (const FVector2D& Friend : FriendlyLaneBlockersM)
+ 	{
+@@ -218,11 +227,11 @@ int32 SelectVolleyShots(
+ 		{
+ 			const FVector2D Dir = (Target.PosM - Shooter.PosM).GetSafeNormal();
+ 			const FVector2D FrontageEnd = Shooter.PosM + Dir * FRangedCVars::FrontageClearM();
+-			bClear = FBallisticsMath::MarchClear(Grid, Shooter.PosM, Shooter.EyeZM, FrontageEnd, Shooter.EyeZM, 0.3f);
++			bClear = FBallisticsMath::MarchClear(Grid, Shooter.PosM, Shooter.EyeZM, FrontageEnd, Shooter.EyeZM, FBallisticsConstants::LosClearanceM);
+ 		}
+ 		else
+ 		{
+-			bClear = FBallisticsMath::MarchClear(Grid, Shooter.PosM, Shooter.EyeZM, Target.PosM, Target.ZM, 0.3f);
++			bClear = FBallisticsMath::MarchClear(Grid, Shooter.PosM, Shooter.EyeZM, Target.PosM, Target.ZM, FBallisticsConstants::LosClearanceM);
+ 			if (bClear)
+ 			{
+ 				for (const FVector2D& Friend : FriendlyLaneBlockersM)
+diff --git a/Plugins/MassBattle/Source/MassBattle/Private/RangedFireProcessor.cpp b/Plugins/MassBattle/Source/MassBattle/Private/RangedFireProcessor.cpp
+index 69c2216..0ee8cdf 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Private/RangedFireProcessor.cpp
++++ b/Plugins/MassBattle/Source/MassBattle/Private/RangedFireProcessor.cpp
+@@ -60,7 +60,9 @@ namespace
+ 	TArray<FVector2D> GHashPositions;
+ 	TMap<FUnitHandle, FVector2D> GAnchorsM;
+ 	TMap<FUnitHandle, FUnitHandle> GEnemyOf;
+-
++	/** Blocker-query pad, meters: the hash circle is a strict superset of the
++	 *  rule's geometry (the seam's zone estimate / the flat corridor bound). */
++	constexpr float BlockerQueryPadM = 2.f;
+ 	/** Formation anchor of a unit, meters (its first roster entity's shared
+ 	 *  fragment); false when the unit has no live formation chunk. */
+ 	bool FindUnitAnchorM(FMassEntityManager& EM, const TArray<FMassEntityHandle>& Roster, FVector2D& OutAnchorM)
+@@ -79,27 +81,39 @@ namespace
+ 		return true;
+ 	}
+ 
++	/** Per-pass unit->actor cache (EC9): ONE actor sweep per fire pass --
++	 *  the previous per-unit TActorIterator scan was O(units x actors) per
++	 *  tick on the game thread. Reset at pass start; filled lazily on the
++	 *  first mirror call. */
++	TMap<FUnitHandle, TWeakObjectPtr<AUnitActor>> GActorsByUnit;
++
+ 	/** A14 UI mirror: the registry owns the fraction's authority; the unit
+ 	 *  actor's AmmoPool attribute mirrors it for HUD reads. No actor (unit
+ 	 *  tier worlds) -> no-op. */
+ 	void MirrorAmmoPoolToGas(UWorld* InWorld, const FUnitHandle& InHandle, float Fraction)
+ 	{
+-		for (TActorIterator<AUnitActor> It(InWorld); It; ++It)
++		if (GActorsByUnit.Num() == 0)
+ 		{
+-			AUnitActor* Actor = *It;
+-			if (Actor->GetUnitHandle() != InHandle)
+-			{
+-				continue;
+-			}
+-			if (UAbilitySystemComponent* ASC = Actor->GetAbilitySystemComponent())
++			for (TActorIterator<AUnitActor> It(InWorld); It; ++It)
+ 			{
+-				const FGameplayAttribute Attribute = UUnitAttributeSet::FindAttributeByName(TEXT("AmmoPool"));
+-				if (Attribute.IsValid())
++				if (It->GetUnitHandle().IsValid())
+ 				{
+-					ASC->SetNumericAttributeBase(Attribute, FMath::Clamp(Fraction, 0.f, 1.f));
++					GActorsByUnit.Add(It->GetUnitHandle(), TWeakObjectPtr<AUnitActor>(*It));
+ 				}
+ 			}
+-			break;
++		}
++		AUnitActor* Actor = GActorsByUnit.FindRef(InHandle).Get();
++		if (!Actor)
++		{
++			return;
++		}
++		if (UAbilitySystemComponent* ASC = Actor->GetAbilitySystemComponent())
++		{
++			const FGameplayAttribute Attribute = UUnitAttributeSet::FindAttributeByName(TEXT("AmmoPool"));
++			if (Attribute.IsValid())
++			{
++				ASC->SetNumericAttributeBase(Attribute, FMath::Clamp(Fraction, 0.f, 1.f));
++			}
+ 		}
+ 	}
+ }
+@@ -132,7 +146,7 @@ void RunRangedFirePass(UWorld* World, float DeltaSeconds)
+ 
+ 	GAnchorsM.Reset();
+ 	GEnemyOf.Reset();
+-
++	GActorsByUnit.Reset(); // per-pass: ONE sweep serves every mirror call
+ 	// Pass-level maps (sorted order -> deterministic first-wins): unit
+ 	// anchors (the skirmish geometry + the volley aim point) and the
+ 	// engagement-record enemy (the A11 target fallback).
+@@ -202,11 +216,13 @@ void RunRangedFirePass(UWorld* World, float DeltaSeconds)
+ 					? (*MyAnchor - EnemyAnchorM) / FMath::Max(NearestEnemyDistM, 1e-3f)
+ 					: FVector2D(0.f, 1.f);
+ 				const FVector2D RetreatAnchorM = *MyAnchor + AwayDir * (BreakDist * 2.f);
++				// Facing from the SAME formation shared fragment the anchor
++				// read (no second registry lookup -- State->Roster IS the roster).
+ 				float FacingYaw = 0.f;
+-				if (const TArray<FMassEntityHandle>* Roster = Registry->FindRoster(Handle))
++				if (State->Roster.Num() > 0)
+ 				{
+ 					if (const FUnitFormationSharedFragment* Formation =
+-						EM.GetSharedFragmentDataPtr<FUnitFormationSharedFragment>((*Roster)[0]))
++						EM.GetSharedFragmentDataPtr<FUnitFormationSharedFragment>(State->Roster[0]))
+ 					{
+ 						FacingYaw = Formation->FacingYaw;
+ 					}
+@@ -324,9 +340,11 @@ void RunRangedFirePass(UWorld* World, float DeltaSeconds)
+ 		if (Hash)
+ 		{
+ 			const float DistM = FVector2D::Distance(GShooters[0].PosM, Target.PosM);
++			// The blocker QUERY radius: the arced impact-zone estimate (the
++			// seam's ONE formula, padded) or the flat corridor's midpoint bound.
+ 			const float QueryRadiusM = Profile.bIndirect
+-				? DistM * FMath::Tan(FMath::DegreesToRadians(FMath::Max(Profile.DispersionDeg, 0.01f))) + Profile.HitRadiusM + 2.f
+-				: DistM * 0.5f + 2.f * BattleBody::RadiusM + Profile.HitRadiusM + 2.f;
++				? ImpactZoneRadiusForDist(DistM, Profile) + BlockerQueryPadM
++				: DistM * 0.5f + 2.f * BattleBody::RadiusM + Profile.HitRadiusM + BlockerQueryPadM;
+ 			const FVector2D QueryCenterM = Profile.bIndirect
+ 				? Target.PosM
+ 				: (*TargetAnchor + GShooters[0].PosM) * 0.5f;
+@@ -434,7 +452,7 @@ void RunRangedFirePass(UWorld* World, float DeltaSeconds)
+ 			Pool.VelY[Slot] = Shot.LaunchDir.Y * Profile.MuzzleSpeedMps;
+ 			Pool.VelZ[Slot] = Shot.LaunchDir.Z * Profile.MuzzleSpeedMps;
+ 			Pool.GravityScale[Slot] = Profile.GravityScale;
+-			Pool.TTL[Slot] = Shot.FlightTimeS + 2.f; // safety net past impact
++			Pool.TTL[Slot] = Shot.FlightTimeS + FRangedConstants::TtlSafetyMarginS; // release backstop past impact
+ 			Pool.Kind[Slot] = static_cast<uint8>(Shot.Kind);
+ 			Pool.GenerationArray[Slot] = Generation;
+ 			Pool.OwnerUnit[Slot] = Shot.Unit;
+@@ -495,7 +513,7 @@ void RunRangedFirePass(UWorld* World, float DeltaSeconds)
+ 			if (UnitAnchorM)
+ 			{
+ 				const float Fraction = FMath::Clamp(
+-					static_cast<float>(AmmoSum) / FMath::Max(1, State->RangedInitialAmmo * State->InitialRosterSize), 0.f, 1.f);
++					ComputeAmmoFraction(AmmoSum, State->RangedInitialAmmo, State->InitialRosterSize), 0.f, 1.f);
+ 				const float BarH = 2.5f * Fraction;
+ 				FBattleOverlayLine Bar;
+ 				Bar.Shape = EBattleOverlayShape::Segment;
+@@ -517,8 +535,8 @@ void RunRangedFirePass(UWorld* World, float DeltaSeconds)
+ 		}
+ 		if (Debug)
+ 		{
+-			MirrorAmmoPoolToGas(World, Handle, static_cast<float>(AmmoSum)
+-				/ static_cast<float>(FMath::Max(1, State->RangedInitialAmmo * State->InitialRosterSize)));
++			MirrorAmmoPoolToGas(World, Handle,
++				ComputeAmmoFraction(AmmoSum, State->RangedInitialAmmo, State->InitialRosterSize));
+ 		}
+ 
+ 		if (Debug)
+diff --git a/Plugins/MassBattle/Source/MassBattle/Public/BattleBallistics.h b/Plugins/MassBattle/Source/MassBattle/Public/BattleBallistics.h
+index f6dea5a..c672732 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Public/BattleBallistics.h
++++ b/Plugins/MassBattle/Source/MassBattle/Public/BattleBallistics.h
+@@ -22,6 +22,10 @@ namespace FBallisticsConstants
+ 	/** Numerical guards. */
+ 	constexpr float DistanceEpsilonM = 1e-4f;
+ 	constexpr float ConeEpsilonDeg = 1e-4f;
++	/** Default LOS clearance above terrain, meters (the march's occlusion
++	 *  margin -- the ranged fire-rule call sites read this; was the
++	 *  re-typed 0.3f, phase-3 audit). */
++	constexpr float LosClearanceM = 0.3f;
+ }
+ 
+ /** Launch solution for one shot (spec §4.1). */
+diff --git a/Plugins/MassBattle/Source/MassBattle/Public/BattleRanged.h b/Plugins/MassBattle/Source/MassBattle/Public/BattleRanged.h
+index d40b596..303dc6f 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Public/BattleRanged.h
++++ b/Plugins/MassBattle/Source/MassBattle/Public/BattleRanged.h
+@@ -58,6 +58,21 @@ struct MASSBATTLE_API FProjectileProfile
+ /** The profile table (one row per EBattleProjectileKind != None). */
+ MASSBATTLE_API FProjectileProfile GetProjectileProfile(EBattleProjectileKind Kind);
+ 
++/** Fire-pass mechanism constants (named once; the A6 TUNABLES stay in the
++ *  CVAR block -- these are mechanism margins, not tuning knobs). */
++namespace FRangedConstants
++{
++	/** TTL safety margin past the solved flight time, seconds (the pool
++	 *  write's release backstop; ground hits end flight earlier). */
++	constexpr float TtlSafetyMarginS = 2.f;
++}
++
++/** A7's arced impact-zone estimate (ONE formula, two consumers): the
++ *  dispersion cone scaled to the horizontal distance, plus the hit radius.
++ *  The seam's hold-fire zone count and the fire pass's blocker QUERY (which
++ *  pads it) read the same number -- previously two re-typed derivations. */
++MASSBATTLE_API float ImpactZoneRadiusForDist(float HorizDistM, const FProjectileProfile& Profile);
++
+ /** Volley pass input: one ranged entity's fire-relevant view (spec §4.4).
+  *  Plain mirror assembled by the processor in roster order -- the seam never
+  *  touches fragments or worlds. */
+-- 
+2.47.3
+

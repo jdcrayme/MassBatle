@@ -1,0 +1,104 @@
+From 606c707844f7e26a758faaf938ff8a539de87191 Mon Sep 17 00:00:00 2001
+From: Z User <z@container>
+Date: Thu, 29 Oct 2026 23:26:06 +0000
+Subject: [PATCH] phase3-audit: one home for the ContactAngle deg<->byte
+ conversions (B-6)
+
+The 0-255 byte convention had TWO inline converters living in
+processors: the step pass's deg->byte quantization (a five-line
+expression in the impact hot path) and the assign pass's inverse
+byte->deg scale. Both now read FCombatSolver::ContactAngleFromDegrees /
+DegreesFromContactAngle, beside the sectorizer they feed -- the scale
+255/360 and its inverse are named once, so a future deg-native consumer
+cannot re-derive a drifting copy. Formulas verbatim; identical values.
+
+MUST re-run on the UE machine: unit tier + Battle.Func.S6_Volley /
+CombatSmoke / ChargeMechanics (impact sectors and ring points are the
+consumers -- expected green, identical values).
+---
+ .../Private/AssignPairsProcessor.cpp           |  2 +-
+ .../MassBattle/Private/BattleEngagement.cpp    | 18 ++++++++++++++++++
+ .../Private/ProjectileStepProcessor.cpp        |  3 +--
+ .../MassBattle/Public/BattleEngagement.h       | 10 ++++++++++
+ 4 files changed, 30 insertions(+), 3 deletions(-)
+
+diff --git a/Plugins/MassBattle/Source/MassBattle/Private/AssignPairsProcessor.cpp b/Plugins/MassBattle/Source/MassBattle/Private/AssignPairsProcessor.cpp
+index 4937a2d..2fe6542 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Private/AssignPairsProcessor.cpp
++++ b/Plugins/MassBattle/Source/MassBattle/Private/AssignPairsProcessor.cpp
+@@ -437,7 +437,7 @@ void UAssignPairsProcessor::Execute(FMassEntityManager& EntityManager, FMassExec
+ 				if (S.Target.IsValid())
+ 				{
+ 					RingDef = FCombatSolver::FindDefender(Defenders, S.Target);
+-					RingAngleDeg = static_cast<float>(S.ContactAngle) * (360.f / 255.f);
++					RingAngleDeg = FCombatSolver::DegreesFromContactAngle(S.ContactAngle);
+ 					bRing = RingDef != nullptr;
+ 				}
+ 				else
+diff --git a/Plugins/MassBattle/Source/MassBattle/Private/BattleEngagement.cpp b/Plugins/MassBattle/Source/MassBattle/Private/BattleEngagement.cpp
+index 9f8a935..b61b785 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Private/BattleEngagement.cpp
++++ b/Plugins/MassBattle/Source/MassBattle/Private/BattleEngagement.cpp
+@@ -162,6 +162,24 @@ namespace FCombatSolver
+ 		return static_cast<uint8>(Center & 0xFF);
+ 	}
+ 
++	uint8 ContactAngleFromDegrees(float AngleDeg)
++	{
++		// The 0-255 quantizer's deg->byte edge, named once (the phase-3
++		// audit's B-6): negative inputs wrap to [0,360); the & 255 guards
++		// the exact-circle edge (360 deg would round to 256). Consumers:
++		// the projectile incoming angle (step pass) and any future
++		// deg-native writer.
++		return static_cast<uint8>(static_cast<int32>(
++			FMath::RoundToDouble((AngleDeg < 0.f ? AngleDeg + 360.f : AngleDeg) * (255.0 / 360.0))) & 255);
++	}
++
++	float DegreesFromContactAngle(uint8 ContactAngle)
++	{
++		// The inverse scale; the assign pass's ring-point math reads it
++		// (byte -> degrees, clockwise from the defender's facing).
++		return static_cast<float>(ContactAngle) * (360.f / 255.f);
++	}
++
+ 	int32 SlotBudget(const FCombatDefenderView& Defender, float Coverage, const FCombatAttackerView& Attacker)
+ 	{
+ 		const float Lerped = FMath::Lerp(static_cast<float>(FCombatCVars::MaxMobSlots()),
+diff --git a/Plugins/MassBattle/Source/MassBattle/Private/ProjectileStepProcessor.cpp b/Plugins/MassBattle/Source/MassBattle/Private/ProjectileStepProcessor.cpp
+index 3b5cf9b..c8c6988 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Private/ProjectileStepProcessor.cpp
++++ b/Plugins/MassBattle/Source/MassBattle/Private/ProjectileStepProcessor.cpp
+@@ -247,8 +247,7 @@ void RunProjectileStepPass(UWorld* World, float DeltaSeconds)
+ 		const FVector2D Incoming = -FVector2D(Pool.VelX[Slot], Pool.VelY[Slot]).GetSafeNormal(); // toward the shooter
+ 		const float AngleDeg = FMath::UnwindDegrees(
+ 			FMath::RadiansToDegrees(FMath::Atan2(Incoming.Y, Incoming.X)) - VictimYaw);
+-		const uint8 ContactAngle = static_cast<uint8>(static_cast<int32>(
+-			FMath::RoundToDouble((AngleDeg < 0.f ? AngleDeg + 360.f : AngleDeg) * (255.0 / 360.0))) & 255);
++		const uint8 ContactAngle = FCombatSolver::ContactAngleFromDegrees(AngleDeg);
+ 		const int32 Sector = FCombatSolver::SectorIndexFromAngle(ContactAngle, SectorCount);
+ 
+ 		const float Defense = VictimStats->MeleeDefense * FMeleeMath::SkillArcMult(Sector, SectorCount)
+diff --git a/Plugins/MassBattle/Source/MassBattle/Public/BattleEngagement.h b/Plugins/MassBattle/Source/MassBattle/Public/BattleEngagement.h
+index 6590fdc..4766a8c 100644
+--- a/Plugins/MassBattle/Source/MassBattle/Public/BattleEngagement.h
++++ b/Plugins/MassBattle/Source/MassBattle/Public/BattleEngagement.h
+@@ -115,6 +115,16 @@ namespace FCombatSolver
+ 	 *  SectorIndexFromAngle). */
+ 	MASSBATTLE_API uint8 SectorCenterAngle(int32 SectorIndex, int32 SectorCount);
+ 
++	/** Deg -> the 0-255 ContactAngle byte: negative inputs wrap to
++	 *  [0,360), scaled by 255/360, rounded, & 255 (the exact-circle guard).
++	 *  ONE home for the quantizer's deg-native edge (phase-3 audit B-6):
++	 *  the projectile incoming angle (step pass) and the ring-point math's
++	 *  inverse (below) read it; nothing re-derives the scale. */
++	MASSBATTLE_API uint8 ContactAngleFromDegrees(float AngleDeg);
++
++	/** The inverse scale (byte -> degrees, clockwise from the facing). */
++	MASSBATTLE_API float DegreesFromContactAngle(uint8 ContactAngle);
++
+ 	/** Per-defender attack-slot budget (spec §4.5, arch §7.3 verbatim):
+ 	 *  lerp(MaxMobSlots, FormedSlots, Coverage) rounded to nearest, +
+ 	 *  SecondRankBonus for spear-class attackers, clamped >= 1. T2.2 bound
+-- 
+2.47.3
+
