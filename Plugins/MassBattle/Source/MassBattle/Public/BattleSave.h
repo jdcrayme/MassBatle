@@ -69,12 +69,16 @@ struct FUnitSaveEntry
 	// ammo-fraction denominator. Entity ammo and pool state stay unsaved
 	// (T6.3 by design): the v2 restore reproduces registry-level ranged
 	// state only. v1 payloads restore these to the defaults (toggles
-	// on/off/off, denominators 0).
+	// on/off/off, denominators 0). TeamId rides v2 as well: the ranged
+	// friend/enemy discriminator (the spec's A7 presumes sides; the field is
+	// the disclosed minimal addition, progress log 2026-10-28) -- a restore
+	// that dropped it would merge the battle's sides.
 	UPROPERTY() uint8 bFireAtWill = 1;
 	UPROPERTY() uint8 bSkirmish = 0;
 	UPROPERTY() uint8 bOutOfAmmo = 0;
 	UPROPERTY() int32 RangedInitialAmmo = 0;
 	UPROPERTY() int32 InitialRosterSize = 0;
+	UPROPERTY() uint8 TeamId = 0;
 };
 
 /** One engagement-record snapshot (spec §3.5). AssignedAttackers is excluded:

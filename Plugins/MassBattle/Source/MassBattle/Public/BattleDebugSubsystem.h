@@ -87,6 +87,19 @@ public:
 	int32 GetProjectileGroundHits() const { return ProjectileGroundHits; }
 	int32 GetProjectileTtlExpired() const { return ProjectileTtlExpired; }
 
+	/** Phase 3 (task 4): the fire pass cost + emission counters (game-thread
+	 *  writer; Holds = cheap-eligible shooters that did not emit -- the
+	 *  R-R6 rule-vs-bug discriminator). */
+	void RecordRangedFire(double Ms, int32 Shots, int32 Holds)
+	{
+		RangedFireMs = Ms;
+		RangedShots += Shots;
+		RangedHolds += Holds;
+	}
+	double GetRangedFireMs() const { return RangedFireMs; }
+	int32 GetRangedShots() const { return RangedShots; }
+	int32 GetRangedHolds() const { return RangedHolds; }
+
 	/** T2.9 perf probe: dump the metrics line at N ticks after arming (the
 	 *  Exec fixtures run before the sim advances; the probe samples the
 	 *  steady state). Disarms after the dump. */
@@ -172,6 +185,9 @@ private:
 	double ProjectileStepMs = 0.0;
 	int32 ProjectileGroundHits = 0;
 	int32 ProjectileTtlExpired = 0;
+	double RangedFireMs = 0.0;
+	int32 RangedShots = 0;
+	int32 RangedHolds = 0;
 
 	/** Task 10 corpse ledger (capped FIFO; the overlay draws yaw-aligned
 	 *  rectangles). Game thread only (the death signal receiver). */

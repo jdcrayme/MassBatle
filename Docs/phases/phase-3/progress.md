@@ -208,6 +208,77 @@
   by-design skeletons + the two phase-2 melts) -- the new processor in the live Battle
   group leaves the melee baseline unregressed (R-R8).
 
+## Task 4 -- volley selection + RangedFire processor
+
+- [task4.1] DISCLOSED DEVIATION (AGENTS 2.1 -- reality won): the spec's A7/A8 wording
+  presumes FRIEND/ENEMY sides the data model never defined (no TeamId anywhere; the
+  cluster records form at contact range, never at the 25 m skirmish break distance, so
+  records cannot drive either rule). Minimal honest addition: `FUnitSpawnSpec.TeamId`
+  (uint8, default 0), carried in `SpecsByIndex` (no new registry state), read by the
+  ranged pass ONLY -- melee stays intent/record-driven and never reads it (A12
+  preserved). Save v2 gained `FUnitSaveEntry.TeamId` (a restore that dropped it would
+  merge the battle's sides); the spec's v2 field list gets the addition called out in
+  the report. Friendly = same team; skirmish threat = nearest team-different unit
+  anchor (unit-level geometry, F12-compliant -- never a per-entity scan).
+- [task4.2] `FUnitRuntimeState` += transient skirmish state (RC7 serial guard):
+  `bRetreating` + `AutoRetreatSerial` (NOT saved -- a restored battle resumes
+  evaluation from idle). `Registry::ApplyUnitSkirmishDecision(Handle, Decision,
+  RetreatAnchorCm, Facing)` implements the guard: retreat issues only for an idle
+  (None/Stop) unit or refreshes while the move is still OURS; a player serial bump
+  cancels and is never overridden; Fire past the resume distance stops OUR retreat.
+  EXEC lines: `SkirmishRetreat/SkirmishResume/SkirmishCancel`.
+- [task4.3] Seam adjustment (1 line, disclosed): the flat-lane corridor test now skips
+  a blocker coincident with the shooter's own position (mm tolerance) -- the shooter's
+  body sits at the segment start and would otherwise hold every flat shot forever.
+- [task4.4] `URangedFireProcessor` (new `RangedFireProcessor.h/cpp`): game-thread
+  (ADR-28), group "Battle", after AssignPairs / before FormationSlotResolve (A4);
+  `ShouldAllowQueryBasedPruning -> false` (the task-3 engine note). The core is the
+  EXPORTED `RunRangedFirePass(World, DT)` (the exec fixtures + unit tier drive it
+  without a Mass tick; the processor is the per-tick shim). Per tick: pass-level
+  anchor + record-enemy maps (sorted order, deterministic); per ranged unit --
+  reload advance (weapon clocks tick target-less), roster-order shooter views (rank =
+  SlotIndex/NumFiles), A11 target (order target, else record enemy; none = HOLD),
+  A7 blockers via the sanctioned hash circle queries (arced: impact-zone radius;
+  flat: corridor midpoint; same-team bodies), the seam call, writeback (accounting
+  IS the shot), pool writes with the impact attack term stamped at fire
+  (RangedAttack x RangedAttackMult x AccuracyMult, spec 4.6), trajectory overlay
+  segments, out-of-ammo flip at aggregate zero + the A14 UI mirror
+  (`MirrorAmmoPoolToGas` writes the unit actor's AmmoPool attribute here -- spec 3.2
+  assigns the mirror to UnitSync; the fire pass is the interim writer until Task 8
+  wires the sync path, disclosed). File-static GT-only scratch (EC9: allocated once,
+  Reset per pass -- no steady-volley allocation).
+- [task4.5] Metrics: `BattleMetrics` += `FireMs=%.3f Shots=%d Holds=%d` (appended,
+  F14 rule); Holds = cheap-eligible shooters that did not emit -- the R-R6
+  rule-vs-bug discriminator; ResetDiagnostics covers the new counters.
+- [task4.6] ExecBridge: `Battle.Ranged.SpawnVolley [line|skirmish]` -- resets the
+  battle, flips the session flags (combat pipeline + the ranged block,
+  ECVF_SetByCode), spawns archers vs a formed line at 80 m on OPPOSING teams, issues
+  the attack (the skirmish variant is Task 6's M4 extension). Evidence flows from the
+  live sim: RangedFire/RangedDump/OutOfAmmo/Skirmish lines.
+- [task4.7] `Battle.Unit.Ranged.FirePass` (MassBattleCombatTests.cpp): three live
+  flows on real spawned worlds. Flow A (RC1/RC5): attack-ordered archers -> one volley
+  of 40 (shots == roster, ammo 25 -> 24 each, reload armed, pool live 40, stamped
+  attack term 6.0), reload cycle suppresses the second pass, drain flips out-of-ammo
+  once and the spent unit never fires again, flags-off pass is a no-op. Flow B (A7):
+  a friendly unit inside the arced impact zone -> 0 shots, rule-holds == 40 (R-R6
+  evidence). Flow C (RC7): retreat triggers inside 25 m (Move away, anchor -50 m,
+  facing held), no churn while retreating, resume stops past 32.5 m, the threat's
+  return re-retreats, and a player Move cancels + is never overridden.
+  Two test-side defects found and fixed en route: flows A/B initially omitted the
+  attack order (the pass correctly HELD per A11 -- the fix was the fixture, not the
+  code), and flow A's flags-off check left Enable=0 for flows B/C.
+- [task4.8] Build -> Succeeded. Unit tier: **passed=78 failed=0 total=78
+  completed=True exit=0 ok=True** (+1 = FirePass). Func tier: **passed=19 failed=4
+  total=23**, counts agree, the exact baseline -- the fire processor rides the live
+  Battle group with plugin defaults OFF (byte-identical melee, R-R8).
+- [task4.9] Acceptance evidence (verbatim, `Tools/CI/last_run/unit.log`):
+  `EXEC_RESULT RangedFire Unit=1:1 Shots=40 Holds=0 AmmoSum=960 PoolLive=40` /
+  `EXEC_RESULT OutOfAmmo Unit=1:1 Roster=40 InitialAmmo=25` /
+  `EXEC_RESULT SkirmishRetreat Unit=1:1 Anchor=(-50.0,0.0)m Facing=0.0 Serial=1` /
+  `EXEC_RESULT SkirmishResume Unit=1:1` /
+  `EXEC_RESULT SkirmishRetreat ... Serial=3` /
+  `EXEC_RESULT SkirmishCancel Unit=1:1 PlayerOrderSerial=4`.
+
 ## Open items carried
 
 - S4_ShieldWall / S5_Mob melts: pre-existing, owned by the phase-2 dossier's deferred

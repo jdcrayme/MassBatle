@@ -227,6 +227,12 @@ int32 SelectVolleyShots(
 			{
 				for (const FVector2D& Friend : FriendlyLaneBlockersM)
 				{
+					// The shooter's own body sits at the segment start -- it is
+					// not a lane blocker (mm tolerance; bodies never overlap).
+					if (FVector2D::DistSquared(Friend, Shooter.PosM) <= 1e-6f)
+					{
+						continue;
+					}
 					if (PointSegmentDist2D(Friend, Shooter.PosM, Target.PosM) <= CorridorHalfM)
 					{
 						bClear = false;

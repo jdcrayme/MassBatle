@@ -151,6 +151,16 @@ struct FUnitRuntimeState
 	// either side reads as non-ranged (fraction -1).
 	int32 RangedInitialAmmo = 0;
 	int32 InitialRosterSize = 0;
+
+	// Phase 3 (RC7, A8): skirmish auto-retreat state. TRANSIENT by design --
+	// not in the save schema (a restored battle resumes auto-retreat
+	// evaluation from the idle state). bRetreating is true while the unit's
+	// current order is OUR retreat move; AutoRetreatSerial is the OrderSerial
+	// at issue -- a player order bump changes the serial, which cancels the
+	// retreat (the RC7 order-serial guard; the registry order APIs never
+	// touch these two fields).
+	bool bRetreating = false;
+	uint32 AutoRetreatSerial = 0;
 };
 
 /** Spawn request: one parsed EDU row + roster size. Formation params seed the
@@ -179,4 +189,12 @@ struct FUnitSpawnSpec
 
 	/** Ranks in the formed layout (files = ceil(SoldierCount / NumRanks)). */
 	int32 NumRanks = 2;
+
+	/** Side id (Phase 3, A7/A8): the ranged pass's friend/enemy discriminator
+	 *  (same team = friendly bodies; different team = skirmish threats). The
+	 *  melee solver stays intent/record-driven and never reads it (A12).
+	 *  Reality note: the spec's A7 wording presumes sides the data model
+	 *  never defined -- this field is the minimal honest addition, disclosed
+	 *  in the phase progress log (AGENTS 2.1). Default 0. */
+	uint8 TeamId = 0;
 };

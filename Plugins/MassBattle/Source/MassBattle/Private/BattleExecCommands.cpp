@@ -1093,7 +1093,7 @@ void RangedDump(const TArray<FString>& Args, UWorld* World)
 				}
 			}
 		}
-		FStringBuilderBase HistBuilder;
+		TStringBuilder<256> HistBuilder;
 		Histogram.KeySort(TLess<int32>());
 		bool bFirst = true;
 		for (const TPair<int32, int32>& Bucket : Histogram)
@@ -1106,7 +1106,6 @@ void RangedDump(const TArray<FString>& Args, UWorld* World)
 			bFirst = false;
 		}
 		const FString HistStr = bFirst ? FString(TEXT("-")) : HistBuilder.ToString();
-
 		// Pool attribution (spec §4.10): live projectiles this unit owns.
 		int32 PoolOwned = 0;
 		for (int32 Slot = 0; Slot < Pool.GetCapacity(); ++Slot)
@@ -1132,6 +1131,74 @@ void RangedDump(const TArray<FString>& Args, UWorld* World)
 			PoolOwned);
 	}
 	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT RangedDump End"));
+}
+
+void RangedSpawnVolley(const TArray<FString>& Args, UWorld* World)
+{
+	// Args: [line|skirmish] -- the M4 gray-box sample (task 6 extends the
+	// skirmish variant). Spawns archers vs a formed line at volley range on
+	// OPPOSING teams, issues the attack, and flips the session flags (the
+	// combat pipeline + the ranged block; ECVF_SetByCode, plugin defaults
+	// untouched). Evidence then flows from the live sim: RangedFire /
+	// SkirmishRetreat / OutOfAmmo EXEC lines + Battle.Ranged.Dump.
+	UUnitRegistrySubsystem* Registry = World ? World->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	if (!Registry || !World)
+	{
+		UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT SpawnVolley FAIL no world/registry"));
+		return;
+	}
+
+	const FString FixturePath = FPaths::ProjectContentDir() / TEXT("Data/EDU/golden_edu_v1.txt");
+	FString EduText;
+	TArray<FEduUnit> Rows;
+	FEduParseError Err;
+	if (!FFileHelper::LoadFileToString(EduText, *FixturePath) || !FBattleEduParser::Parse(EduText, Rows, Err) || Rows.Num() < 3)
+	{
+		UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT SpawnVolley FAIL bad EDU fixture (%s)"), *Err.Message);
+		return;
+	}
+
+	Registry->ResetBattleState();
+	BattleExec::EnableDemoCombatPipeline();
+	for (const TCHAR* Name : { TEXT("Battle.Ranged.Enable"), TEXT("Battle.Ranged.Fire"),
+		TEXT("Battle.Ranged.Step"), TEXT("Battle.Ranged.Skirmish") })
+	{
+		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(Name))
+		{
+			C->Set(1, ECVF_SetByCode);
+		}
+	}
+
+	auto SpawnAt = [&Rows, &World](int32 RowIdx, const FVector2D& PosM, float YawDeg, uint8 TeamId) -> FUnitHandle
+	{
+		FBattleRowStats Stats;
+		FString Error;
+		if (!FBattleRowStats::FromEdu(Rows[RowIdx], Stats, Error))
+		{
+			return FUnitHandle();
+		}
+		FUnitSpawnSpec Spec;
+		Spec.EduRowIndex = RowIdx;
+		Spec.SoldierCount = FMath::Max(1, Stats.SoldierCount);
+		Spec.UnitName = Stats.TypeName;
+		Spec.SpawnPos = PosM * 100.f;
+		Spec.SpawnYaw = YawDeg;
+		Spec.NumRanks = 2;
+		Spec.TeamId = TeamId;
+		return UBattleSpawnLibrary::SpawnUnit(World, Spec, Stats).Unit;
+	};
+
+	// Archers west, target line 80 m east (inside the 120 m bow range).
+	const FUnitHandle Archers = SpawnAt(2, FVector2D(-40.f, 0.f), 0.f, 0);
+	const FUnitHandle Target = SpawnAt(0, FVector2D(40.f, 0.f), 180.f, 1);
+	if (!Archers.IsValid() || !Target.IsValid())
+	{
+		return;
+	}
+	Registry->IssueAttackUnitOrder(Archers, Target);
+	UE_LOG(LogMassBattle, Display,
+		TEXT("EXEC_RESULT SpawnVolley OK Archers=%u:%u Target=%u:%u (flags on; watch RangedFire/RangedDump/OutOfAmmo lines)"),
+		Archers.Index, Archers.Serial, Target.Index, Target.Serial);
 }
 
 // ---- Command registration (Task 4 portion) ----
@@ -1269,3 +1336,8 @@ static FAutoConsoleCommandWithWorldAndArgs GBattleRangedDump(
 	TEXT("Battle.Ranged.Dump"),
 	TEXT("[UnitIndex] -- toggles, ammo fraction + per-entity histogram, pool attribution; EXEC_RESULT RangedDump lines"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BattleExec::RangedDump));
+
+static FAutoConsoleCommandWithWorldAndArgs GBattleRangedSpawnVolley(
+	TEXT("Battle.Ranged.SpawnVolley"),
+	TEXT("[line|skirmish] -- task 4 M4 gray-box fixture: archers vs a formed line at volley range, flags on; EXEC_RESULT SpawnVolley"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BattleExec::RangedSpawnVolley));

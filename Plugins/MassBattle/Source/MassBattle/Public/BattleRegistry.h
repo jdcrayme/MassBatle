@@ -325,6 +325,17 @@ public:
 	 *  drives the aggregate to zero. */
 	bool FlipUnitOutOfAmmo(FUnitHandle Handle);
 
+	/** Skirmish decision application (RC7, A8; game thread). Reads the
+	 *  transient retreat state, honors the order-serial guard (a player
+	 *  order bump cancels the auto-retreat; auto-retreat only ever replaces
+	 *  an idle unit or its OWN retreat move), issues the retreat Move away
+	 *  from the threat (facing preserved) or the resume Stop, and logs the
+	 *  EXEC_RESULT lines. Decision: 0 Hold / 1 Fire / 2 Retreat
+	 *  (BattleRanged.h's ESkirmishDecision, kept int here to avoid a
+	 *  header cycle). */
+	void ApplyUnitSkirmishDecision(FUnitHandle Handle, int32 Decision,
+		const FVector2D& RetreatAnchorCm, float FacingYawDeg);
+
 	/** Idempotent: marking twice in one frame leaves one dirty entry. */
 	void MarkStatsDirty(FUnitHandle Handle);
 	void ClearStatsDirty(FUnitHandle Handle);

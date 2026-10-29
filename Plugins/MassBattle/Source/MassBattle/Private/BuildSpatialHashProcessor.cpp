@@ -39,6 +39,7 @@ void UBuildSpatialHashProcessor::ConfigureQueries(const TSharedRef<FMassEntityMa
 	HashQuery.AddRequirement<FTransformFragment>(EMassFragmentAccess::ReadOnly);
 	HashQuery.AddRequirement<FOwnerUnitFragment>(EMassFragmentAccess::ReadOnly);
 	HashQuery.AddRequirement<FLoadoutFragment>(EMassFragmentAccess::ReadOnly);
+	HashQuery.AddRequirement<FBaseStatsFragment>(EMassFragmentAccess::ReadOnly); // A12: the RangedCapable stamp source
 	HashQuery.AddTagRequirement<FDeadTag>(EMassFragmentPresence::None); // audit M8 pattern
 	HashQuery.AddSharedRequirement<FUnitFormationSharedFragment>(EMassFragmentAccess::ReadOnly);
 	HashQuery.RegisterWithProcessor(*this);
@@ -72,6 +73,7 @@ void UBuildSpatialHashProcessor::Execute(FMassEntityManager& EntityManager, FMas
 		const auto Transforms = Context.GetFragmentView<FTransformFragment>();
 		const auto Owners = Context.GetFragmentView<FOwnerUnitFragment>();
 		const auto Loadouts = Context.GetFragmentView<FLoadoutFragment>();
+		const auto BaseStats = Context.GetFragmentView<FBaseStatsFragment>();
 		MaxEntities = FMath::Max(MaxEntities, Context.GetNumEntities());
 		Entries.Reserve(Entries.Num() + Context.GetNumEntities());
 		PositionsM.Reserve(PositionsM.Num() + Context.GetNumEntities());
@@ -81,6 +83,13 @@ void UBuildSpatialHashProcessor::Execute(FMassEntityManager& EntityManager, FMas
 			Entry.Entity = Context.GetEntity(i);
 			Entry.Unit = Owners[i].Owner;
 			Entry.ReachClass = FMath::Clamp(Loadouts[i].ReachClass, static_cast<uint8>(0), static_cast<uint8>(7));
+			// Phase 3 A12: the Flags byte's first defined bit -- stamped from
+			// the loadout's base stats (spec ranged-stack 3.3); ranged targeting
+			// priority + impact debug read it.
+			if (BaseStats[i].RangedAttack > 0.f)
+			{
+				Entry.Flags |= static_cast<uint8>(ECombatHashFlags::RangedCapable);
+			}
 			const FVector P = Transforms[i].GetTransform().GetTranslation();
 			Entries.Add(Entry);
 			PositionsM.Add(FVector2D(P.X, P.Y) * 0.01f);

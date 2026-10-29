@@ -316,6 +316,80 @@ bool UUnitRegistrySubsystem::FlipUnitOutOfAmmo(FUnitHandle Handle)
 	return true;
 }
 
+void UUnitRegistrySubsystem::ApplyUnitSkirmishDecision(FUnitHandle Handle, int32 Decision,
+	const FVector2D& RetreatAnchorCm, float FacingYawDeg)
+{
+	// RC7 order-serial guard (game thread; each registry access takes its own
+	// scope -- no nesting per the M7 detector rule):
+	//  - a retreat is issued ONLY for an idle unit (None/Stop) or refreshed
+	//    while the current move is still OUR retreat order;
+	//  - a player order (serial bump) cancels the retreat state and is never
+	//    overridden;
+	//  - Fire (past the resume distance) stops OUR retreat and clears.
+	if (!Handle.IsValid())
+	{
+		return;
+	}
+	bool bRetreating = false;
+	uint32 AutoSerial = 0;
+	FUnitOrder::EType OrderType = FUnitOrder::EType::None;
+	uint32 OrderSerial = 0;
+	{
+		UE_MT_SCOPED_READ_ACCESS(AccessDetector);
+		const FUnitRuntimeState* State = Units.Find(Handle);
+		if (!State)
+		{
+			return;
+		}
+		bRetreating = State->bRetreating;
+		AutoSerial = State->AutoRetreatSerial;
+		OrderType = State->CurrentOrder.Type;
+		OrderSerial = State->OrderSerial;
+	}
+
+	if (bRetreating && AutoSerial != OrderSerial)
+	{
+		// A player order superseded our retreat: cancel the state, never
+		// re-issue while that order stands (RC7).
+		UE_MT_SCOPED_WRITE_ACCESS(AccessDetector);
+		if (FUnitRuntimeState* State = Units.Find(Handle))
+		{
+			State->bRetreating = false;
+		}
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SkirmishCancel Unit=%u:%u PlayerOrderSerial=%u"),
+			Handle.Index, Handle.Serial, OrderSerial);
+		return;
+	}
+
+	if (Decision == 2) // Retreat
+	{
+		if (!bRetreating && (OrderType == FUnitOrder::EType::None || OrderType == FUnitOrder::EType::Stop))
+		{
+			IssueMoveOrder(Handle, RetreatAnchorCm, FacingYawDeg);
+			UE_MT_SCOPED_WRITE_ACCESS(AccessDetector);
+			if (FUnitRuntimeState* State = Units.Find(Handle))
+			{
+				State->bRetreating = true;
+				State->AutoRetreatSerial = State->OrderSerial;
+				UE_LOG(LogMassBattle, Display,
+					TEXT("EXEC_RESULT SkirmishRetreat Unit=%u:%u Anchor=(%.1f,%.1f)m Facing=%.1f Serial=%u"),
+					Handle.Index, Handle.Serial, RetreatAnchorCm.X * 0.01f, RetreatAnchorCm.Y * 0.01f,
+					FacingYawDeg, State->OrderSerial);
+			}
+		}
+	}
+	else if (Decision == 1 && bRetreating) // Fire past the resume distance
+	{
+		IssueStopOrder(Handle);
+		UE_MT_SCOPED_WRITE_ACCESS(AccessDetector);
+		if (FUnitRuntimeState* State = Units.Find(Handle))
+		{
+			State->bRetreating = false;
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SkirmishResume Unit=%u:%u"), Handle.Index, Handle.Serial);
+		}
+	}
+}
+
 const FBattleAttributeSnapshot* UUnitRegistrySubsystem::FindCachedAttributes(FUnitHandle Handle) const
 {
 	UE_MT_SCOPED_READ_ACCESS(AccessDetector);
@@ -945,6 +1019,7 @@ void UUnitRegistrySubsystem::CaptureBattleState(FBattleSaveData& OutData) const
 		Entry.bOutOfAmmo = State->bOutOfAmmo ? 1 : 0;
 		Entry.RangedInitialAmmo = State->RangedInitialAmmo;
 		Entry.InitialRosterSize = State->InitialRosterSize;
+		Entry.TeamId = Spec ? Spec->TeamId : 0;
 	}
 
 	// Slot bookkeeping the round-trip must reproduce (free-list depth folds
@@ -1066,6 +1141,7 @@ bool UUnitRegistrySubsystem::RestoreBattleState(const FBattleSaveData& InData)
 		Spec.SpawnPos = Entry.SpawnPos;
 		Spec.SpawnYaw = Entry.SpawnYaw;
 		Spec.NumRanks = Entry.NumRanks;
+		Spec.TeamId = bV2 ? Entry.TeamId : 0;
 	}
 
 	FreeIndices = InData.FreeIndices;

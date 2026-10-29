@@ -54,6 +54,10 @@ void UBattleDebugSubsystem::ResetDiagnostics()
 	ProjectileStepMs = 0.0;
 	ProjectileGroundHits = 0;
 	ProjectileTtlExpired = 0;
+	// Phase 3 (task 4): the fire pass.
+	RangedFireMs = 0.0;
+	RangedShots = 0;
+	RangedHolds = 0;
 }
 
 void UBattleDebugSubsystem::RecordGarrisonSettled(int32 FilingTicks, int32 QueueWaitTicks)
@@ -314,10 +318,11 @@ void UBattleDebugSubsystem::DumpMetrics()
 	}
 
 	UE_LOG(LogMassBattle, Display,
-	       TEXT("EXEC_RESULT BattleMetrics Frame=%d Archetypes=%d Units=%d UnitSyncMs=%.3f BookkeepingHash=%u OverlayHook=%d CombatHashMs=%.3f TallyMs=%.3f AssignMs=%.3f Rolls=%d/%d ChargeConnects=%d DeathsF/F/R=%d/%d/%d InFlight=%d StepMs=%.3f GroundHits=%d TtlExpired=%d PoolDrops=%d PoolCapacity=%d"),
+	       TEXT("EXEC_RESULT BattleMetrics Frame=%d Archetypes=%d Units=%d UnitSyncMs=%.3f BookkeepingHash=%u OverlayHook=%d CombatHashMs=%.3f TallyMs=%.3f AssignMs=%.3f Rolls=%d/%d ChargeConnects=%d DeathsF/F/R=%d/%d/%d InFlight=%d StepMs=%.3f GroundHits=%d TtlExpired=%d PoolDrops=%d PoolCapacity=%d FireMs=%.3f Shots=%d Holds=%d"),
 	       LastMetrics.Frame, ArchetypeCount, LastMetrics.UnitCount,
 	       LastMetrics.UnitSyncMs, static_cast<uint32>(LastMetrics.RegistryHash32), BattleDebugShowOverlay,
 	       CombatHashMs, TallyMs, AssignMs, CombatRolls.load(), CombatRollsLanded.load(), ChargeConnects.load(),
 	       DeathsByArc[0], DeathsByArc[1], DeathsByArc[2],
-	       PoolInFlight, ProjectileStepMs, ProjectileGroundHits, ProjectileTtlExpired, PoolDrops, PoolCapacity);
+	       PoolInFlight, ProjectileStepMs, ProjectileGroundHits, ProjectileTtlExpired, PoolDrops, PoolCapacity,
+	       RangedFireMs, RangedShots, RangedHolds);
 }

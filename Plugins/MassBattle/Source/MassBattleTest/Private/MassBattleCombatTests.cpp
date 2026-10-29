@@ -18,14 +18,20 @@
 #include "BattleFragments.h"
 #include "BattleCombatFragments.h"
 #include "BattleRangedFragments.h"
+#include "BattleRanged.h"
 #include "BattleProjectilePool.h"
 #include "BattleProjectileSubsystem.h"
+#include "BattleDebugSubsystem.h"
+#include "RangedFireProcessor.h"
 #include "BattleRngRegistry.h"
 #include "BattleEduParser.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
+#include "HAL/IConsoleManager.h"
+#include "MassCommonFragments.h"
 #include "MassEntitySubsystem.h"
 #include "MassEntityView.h"
+#include "BattleMovementFragments.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 
@@ -806,6 +812,330 @@ bool FCombat_RangedRegistrySpine::RunTest(const FString& Parameters)
 	}
 
 	World->DestroyWorld(false);
+	return true;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3 task 4: the live fire pass (RC1/RC4/RC5/RC7 halves at unit tier --
+// the processor core is the exported RunRangedFirePass, driven here without
+// a Mass tick). Covers: eligibility -> shots -> pool entries -> decrements
+// (RC1/RC5), the reload cycle, the arced impact-zone friendly hold (A7),
+// the once-only out-of-ammo flip, flags-off identity, and the skirmish
+// retreat / resume / player-cancel triple (RC7, A8 serial guard).
+// ---------------------------------------------------------------------------
+
+namespace
+{
+	/** Combat spawn with position/facing/team (the fire fixtures' shape). */
+	FUnitHandle SpawnRowAt(UWorld* World, const FEduUnit& EduRow, const FVector2D& PosM, float YawDeg, uint8 TeamId)
+	{
+		FBattleRowStats Stats;
+		FString Error;
+		if (!FBattleRowStats::FromEdu(EduRow, Stats, Error))
+		{
+			return FUnitHandle();
+		}
+		FUnitSpawnSpec Spec;
+		Spec.EduRowIndex = 0;
+		Spec.SoldierCount = FMath::Max(1, Stats.SoldierCount);
+		Spec.UnitName = Stats.TypeName;
+		Spec.SpawnPos = PosM * 100.f;
+		Spec.SpawnYaw = YawDeg;
+		Spec.NumRanks = 2;
+		Spec.TeamId = TeamId;
+		return UBattleSpawnLibrary::SpawnUnit(World, Spec, Stats).Unit;
+	}
+
+	/** Builds the combat spatial hash from every live unit's roster (the
+	 *  BuildSpatialHashProcessor's shape, driven manually for the test tier). */
+	void BuildTestHash(UWorld* World, UUnitRegistrySubsystem* Registry)
+	{
+		UBattleSpatialHashSubsystem* Hash = World->GetSubsystem<UBattleSpatialHashSubsystem>();
+		UMassEntitySubsystem* Entities = World->GetSubsystem<UMassEntitySubsystem>();
+		FMassEntityManager& EM = Entities->GetMutableEntityManager();
+		TArray<FBattleHashEntry> Entries;
+		TArray<FVector2D> PositionsM;
+		for (const FUnitHandle& Handle : Registry->GetSortedHandles())
+		{
+			const TArray<FMassEntityHandle>* Roster = Registry->FindRoster(Handle);
+			if (!Roster)
+			{
+				continue;
+			}
+			for (const FMassEntityHandle& Entity : *Roster)
+			{
+				FBattleHashEntry Entry;
+				Entry.Entity = Entity;
+				Entry.Unit = Handle;
+				const FTransformFragment* Transform = FMassEntityView(EM, Entity).GetFragmentDataPtr<FTransformFragment>();
+				const FVector P = Transform ? Transform->GetTransform().GetTranslation() : FVector::ZeroVector;
+				Entries.Add(Entry);
+				PositionsM.Add(FVector2D(P.X, P.Y) * 0.01f);
+			}
+		}
+		Hash->Reserve(FMath::Max(512, Entries.Num()));
+		Hash->RebuildWithPositions(MoveTemp(Entries), MoveTemp(PositionsM));
+	}
+
+	/** Session-on ranged flags with restore (the EnableDemoCombatPipeline
+	 *  pattern; the test restores whatever it changed). */
+	struct FRangedFlagScope
+	{
+		IConsoleVariable* Enable;
+		IConsoleVariable* Fire;
+		IConsoleVariable* Skirmish;
+		int32 OldEnable;
+		int32 OldFire;
+		int32 OldSkirmish;
+
+		explicit FRangedFlagScope(bool bSkirmishOn = true)
+		{
+			Enable = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Ranged.Enable"));
+			Fire = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Ranged.Fire"));
+			Skirmish = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Ranged.Skirmish"));
+			OldEnable = Enable ? Enable->GetInt() : 0;
+			OldFire = Fire ? Fire->GetInt() : 0;
+			OldSkirmish = Skirmish ? Skirmish->GetInt() : 0;
+			if (Enable) { Enable->Set(1, ECVF_SetByCode); }
+			if (Fire) { Fire->Set(1, ECVF_SetByCode); }
+			if (Skirmish && bSkirmishOn) { Skirmish->Set(1, ECVF_SetByCode); }
+		}
+		~FRangedFlagScope()
+		{
+			if (Enable) { Enable->Set(OldEnable, ECVF_SetByCode); }
+			if (Fire) { Fire->Set(OldFire, ECVF_SetByCode); }
+			if (Skirmish) { Skirmish->Set(OldSkirmish, ECVF_SetByCode); }
+		}
+	};
+
+	void ZeroReloadTimers(UWorld* World, UUnitRegistrySubsystem* Registry, const FUnitHandle& Handle)
+	{
+		UMassEntitySubsystem* Entities = World->GetSubsystem<UMassEntitySubsystem>();
+		FMassEntityManager& EM = Entities->GetMutableEntityManager();
+		if (const TArray<FMassEntityHandle>* Roster = Registry->FindRoster(Handle))
+		{
+			for (const FMassEntityHandle& Entity : *Roster)
+			{
+				if (FRangedStateFragment* Ranged = FMassEntityView(EM, Entity).GetFragmentDataPtr<FRangedStateFragment>())
+				{
+					Ranged->ReloadTimer = 0.f;
+				}
+			}
+		}
+	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCombat_RangedFirePass,
+	"Battle.Unit.Ranged.FirePass",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FCombat_RangedFirePass::RunTest(const FString& Parameters)
+{
+	constexpr float DT = 1.f / 60.f;
+	FRangedFlagScope Flags;
+
+	// ---- Flow A: the fire pipeline (RC1/RC5) + out-of-ammo + flags-off. --
+	{
+		UWorld* World = MakeCombatTestWorld();
+		UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>();
+		UBattleProjectileSubsystem* Projectiles = World->GetSubsystem<UBattleProjectileSubsystem>();
+		UMassEntitySubsystem* Entities = World->GetSubsystem<UMassEntitySubsystem>();
+		FMassEntityManager& EM = Entities->GetMutableEntityManager();
+		TArray<FEduUnit> Rows;
+		if (!LoadCombatFixture(Rows) || Rows.Num() < 3)
+		{
+			AddError(TEXT("EDU fixture unavailable"));
+			World->DestroyWorld(false);
+			return false;
+		}
+		const FUnitHandle Archers = SpawnRowAt(World, Rows[2], FVector2D(-40.f, 0.f), 0.f, 0);
+		const FUnitHandle Enemy = SpawnRowAt(World, Rows[0], FVector2D(40.f, 0.f), 180.f, 1);
+		TestTrue(TEXT("flow A spawned"), Archers.IsValid() && Enemy.IsValid());
+		TestTrue(TEXT("flow A attack order"), Registry->IssueAttackUnitOrder(Archers, Enemy));
+		ZeroReloadTimers(World, Registry, Archers);
+		BuildTestHash(World, Registry);
+
+		// First volley: every shooter eligible, every shot accounted (RC1/RC5).
+		RunRangedFirePass(World, DT);
+		const TArray<FMassEntityHandle>* Roster = Registry->FindRoster(Archers);
+		TestNotNull(TEXT("archer roster"), Roster);
+		int32 ShotsFiredSum = 0;
+		int32 AmmoSum = 0;
+		if (Roster)
+		{
+			for (const FMassEntityHandle& Entity : *Roster)
+			{
+				const FRangedStateFragment* Ranged = FMassEntityView(EM, Entity).GetFragmentDataPtr<FRangedStateFragment>();
+				if (Ranged)
+				{
+					ShotsFiredSum += Ranged->ShotsFired;
+					AmmoSum += Ranged->AmmoCount;
+					TestTrue(TEXT("reload armed after firing"), Ranged->ReloadTimer > 0.f);
+				}
+			}
+		}
+		const int32 RosterSize = Roster ? Roster->Num() : 0;
+		TestEqual(TEXT("shots == roster (one volley, one shot each)"), ShotsFiredSum, RosterSize);
+		TestEqual(TEXT("ammo decremented once per shot"), AmmoSum, RosterSize * 25 - RosterSize);
+		TestEqual(TEXT("pool holds the volley"), Projectiles->GetPool().GetLiveCount(), RosterSize);
+		TestEqual(TEXT("stamped attack term is the row's RangedAttack"), Projectiles->GetPool().RangedAttack[0], 6.f, 1e-4f);
+
+		// Immediate second pass: the reload cycle holds (0 shots, eligible held).
+		RunRangedFirePass(World, DT);
+		TestEqual(TEXT("reload cycle suppresses the second volley"), Projectiles->GetPool().GetLiveCount(), RosterSize);
+
+		// Drain to out-of-ammo: the flip fires exactly once (RC5/A14).
+		if (Roster)
+		{
+			for (const FMassEntityHandle& Entity : *Roster)
+			{
+				if (FRangedStateFragment* Ranged = FMassEntityView(EM, Entity).GetFragmentDataPtr<FRangedStateFragment>())
+				{
+					Ranged->AmmoCount = 1;
+					Ranged->ReloadTimer = 0.f;
+				}
+			}
+		}
+		RunRangedFirePass(World, DT);
+		const FUnitRuntimeState* State = Registry->FindUnitState(Archers);
+		TestNotNull(TEXT("archer state"), State);
+		TestTrue(TEXT("out-of-ammo flipped"), State != nullptr && State->bOutOfAmmo);
+		RunRangedFirePass(World, DT);
+		TestEqual(TEXT("spent unit never fires again"), Projectiles->GetPool().GetLiveCount(), 2 * RosterSize);
+
+		// Flags-off identity: the pass is a no-op with Enable=0 (B.8 item 6);
+		// the flag comes back ON inside this block -- flows B/C run after it.
+		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Ranged.Enable")))
+		{
+			C->Set(0, ECVF_SetByCode);
+			const uint32 PoolLiveBefore = Projectiles->GetPool().GetLiveCount();
+			RunRangedFirePass(World, DT);
+			TestEqual(TEXT("flags-off pass is a no-op"), Projectiles->GetPool().GetLiveCount(), PoolLiveBefore);
+			C->Set(1, ECVF_SetByCode);
+		}
+
+		World->DestroyWorld(false);
+	}
+
+	// ---- Flow B: the arced impact-zone friendly hold (A7). ----
+	{
+		UWorld* World = MakeCombatTestWorld();
+		UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>();
+		TArray<FEduUnit> Rows;
+		if (!LoadCombatFixture(Rows) || Rows.Num() < 3)
+		{
+			World->DestroyWorld(false);
+			return false;
+		}
+		const FUnitHandle Archers = SpawnRowAt(World, Rows[2], FVector2D(-40.f, 0.f), 0.f, 0);
+		const FUnitHandle Enemy = SpawnRowAt(World, Rows[0], FVector2D(40.f, 0.f), 180.f, 1);
+		SpawnRowAt(World, Rows[0], FVector2D(37.f, 0.f), 0.f, 0); // friendly INSIDE the impact zone
+		TestTrue(TEXT("flow B attack order"), Registry->IssueAttackUnitOrder(Archers, Enemy));
+		ZeroReloadTimers(World, Registry, Archers);
+		BuildTestHash(World, Registry);
+
+		RunRangedFirePass(World, DT);
+		TestTrue(TEXT("no spawn skipped the fixture"), Archers.IsValid());
+		TestEqual(TEXT("arced hold: no shots with friends in the zone"), World->GetSubsystem<UBattleProjectileSubsystem>()->GetPool().GetLiveCount(), 0);
+		// The Holds counter proves it was a RULE hold, not a bug-hold (R-R6):
+		// all 40 eligible shooters held.
+		UBattleDebugSubsystem* Debug = World->GetSubsystem<UBattleDebugSubsystem>();
+		TestEqual(TEXT("rule-holds counted for the whole unit"), Debug ? Debug->GetRangedHolds() : -1, 40);
+		World->DestroyWorld(false);
+	}
+
+	// ---- Flow C: skirmish retreat / resume / player cancel (RC7). ----
+	{
+		UWorld* World = MakeCombatTestWorld();
+		UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>();
+		UMassEntitySubsystem* Entities = World->GetSubsystem<UMassEntitySubsystem>();
+		FMassEntityManager& EM = Entities->GetMutableEntityManager();
+		TArray<FEduUnit> Rows;
+		if (!LoadCombatFixture(Rows) || Rows.Num() < 3)
+		{
+			World->DestroyWorld(false);
+			return false;
+		}
+		const FUnitHandle Archers = SpawnRowAt(World, Rows[2], FVector2D(0.f, 0.f), 0.f, 0);
+		const FUnitHandle Enemy = SpawnRowAt(World, Rows[0], FVector2D(15.f, 0.f), 180.f, 1);
+		TestTrue(TEXT("flow C spawned"), Archers.IsValid() && Enemy.IsValid());
+		// Skirmish defaults ON for the missile class (A8); assert the stamp.
+		{
+			bool bFAW = false, bSkirmish = false, bOoA = false;
+			Registry->GetUnitFireToggles(Archers, bFAW, bSkirmish, bOoA);
+			TestTrue(TEXT("skirmish stamped on at spawn"), bSkirmish);
+		}
+
+		// Inside the break distance + idle -> the auto-retreat move issues.
+		RunRangedFirePass(World, DT);
+		{
+			const FUnitOrder* Order = Registry->FindOrder(Archers);
+			const FUnitRuntimeState* State = Registry->FindUnitState(Archers);
+			TestNotNull(TEXT("retreat order issued"), Order);
+			TestEqual(TEXT("retreat is a Move"), Order ? static_cast<int32>(Order->Type) : -1, static_cast<int32>(FUnitOrder::EType::Move));
+			if (Order)
+			{
+				// Directly away from the threat: (0,0) - (15,0) -> anchor (-50, 0) m.
+				const int32 AnchorX = FMath::RoundToInt(Order->AnchorPos.X);
+				TestEqual(TEXT("retreat anchor is 50 m away, opposite the threat"), AnchorX, -5000);
+			}
+			TestTrue(TEXT("retreating latched"), State != nullptr && State->bRetreating);
+		}
+
+		// Re-run while retreating: no re-issue churn (the order stands).
+		RunRangedFirePass(World, DT);
+		{
+			const FUnitRuntimeState* State = Registry->FindUnitState(Archers);
+			TestTrue(TEXT("retreat still ours"), State != nullptr && State->bRetreating);
+		}
+
+		// The threat leaves past the resume distance -> stop + resume fire.
+		if (const TArray<FMassEntityHandle>* EnemyRoster = Registry->FindRoster(Enemy))
+		{
+			if (FUnitFormationSharedFragment* Formation =
+				EM.GetSharedFragmentDataPtr<FUnitFormationSharedFragment>((*EnemyRoster)[0]))
+			{
+				Formation->AnchorPos = FVector2D(10000.f, 0.f); // 100 m east
+			}
+		}
+		RunRangedFirePass(World, DT);
+		{
+			const FUnitOrder* Order = Registry->FindOrder(Archers);
+			const FUnitRuntimeState* State = Registry->FindUnitState(Archers);
+			TestEqual(TEXT("resume stops the retreat"), Order ? static_cast<int32>(Order->Type) : -1, static_cast<int32>(FUnitOrder::EType::Stop));
+			TestFalse(TEXT("retreating cleared at resume"), State ? State->bRetreating : true);
+		}
+
+		// Threat returns -> retreat again; a player Move then cancels it
+		// (the RC7 order-serial guard) and is never overridden.
+		if (const TArray<FMassEntityHandle>* EnemyRoster = Registry->FindRoster(Enemy))
+		{
+			if (FUnitFormationSharedFragment* Formation =
+				EM.GetSharedFragmentDataPtr<FUnitFormationSharedFragment>((*EnemyRoster)[0]))
+			{
+				Formation->AnchorPos = FVector2D(1500.f, 0.f); // 15 m east again
+			}
+		}
+		RunRangedFirePass(World, DT);
+		{
+			const FUnitRuntimeState* State = Registry->FindUnitState(Archers);
+			TestTrue(TEXT("second retreat latched"), State != nullptr && State->bRetreating);
+		}
+		const FVector2D PlayerAnchorCm(2000.f, 3000.f);
+		TestTrue(TEXT("player move issued"), Registry->IssueMoveOrder(Archers, PlayerAnchorCm, 0.f));
+		RunRangedFirePass(World, DT);
+		{
+			const FUnitOrder* Order = Registry->FindOrder(Archers);
+			const FUnitRuntimeState* State = Registry->FindUnitState(Archers);
+			const FVector2D Actual = Order ? Order->AnchorPos : FVector2D(-1.f, -1.f);
+			TestEqual(TEXT("player order survives the fire pass (X)"), Actual.X, PlayerAnchorCm.X, 1e-2);
+			TestEqual(TEXT("player order survives the fire pass (Y)"), Actual.Y, PlayerAnchorCm.Y, 1e-2);
+			TestFalse(TEXT("retreat cancelled by the player order"), State ? State->bRetreating : true);
+		}
+
+		World->DestroyWorld(false);
+	}
+
 	return true;
 }
 
