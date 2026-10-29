@@ -14,9 +14,12 @@
 #include "Engine/Engine.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
+#include "EnhancedActionKeyMapping.h"
 #include "HAL/IConsoleManager.h"
 #include "InputAction.h"
 #include "InputMappingContext.h"
+#include "Misc/PackageName.h"
+#include "UObject/SoftObjectPath.h"
 
 ADemoPlayerController::ADemoPlayerController()
 {
@@ -25,6 +28,10 @@ ADemoPlayerController::ADemoPlayerController()
 	bEnableClickEvents = true;
 	bEnableMouseOverEvents = false;
 	DefaultMouseCursor = EMouseCursor::Crosshairs;
+	// PR-2: the mapping table lives in editor data; this soft default is what
+	// the authoring step fills (Content/MassBattle/Demo/Input/IMC_Demo).
+	DemoIMCAsset = TSoftObjectPtr<UInputMappingContext>(
+		FSoftObjectPath(TEXT("/Game/MassBattle/Demo/Input/IMC_Demo.IMC_Demo")));
 }
 
 void ADemoPlayerController::BeginPlay()
@@ -41,7 +48,68 @@ void ADemoPlayerController::BeginPlay()
 	UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoPC ready"));
 }
 
-// -- programmatic Enhanced Input (no editor assets) ------------------------------
+// -- Enhanced Input: data (assets) + behavior (bindings, code) ------------------
+
+bool ADemoPlayerController::TryLoadAssetInput(FDemoActionSet& OutActions)
+{
+	// Quiet existence probe first: the fallback is a DESIGNED operating mode
+	// (CI/headless sessions run it forever), so a missing package must not
+	// trip the engine's load-failure warning -- that would degrade every
+	// automation test's report classification (measured 2026-10-29).
+	const FSoftObjectPath Path = DemoIMCAsset.ToSoftObjectPath();
+	if (!FPackageName::DoesPackageExist(Path.GetLongPackageName()))
+	{
+		UE_LOG(LogDemoBattle, Display,
+			TEXT("EXEC_RESULT DemoInput asset=%s not authored -- programmatic fallback in use (PR-2 rollback path)"),
+			*Path.ToString());
+		return false;
+	}
+	DemoIMC = DemoIMCAsset.LoadSynchronous();
+	if (!DemoIMC)
+	{
+		UE_LOG(LogDemoBattle, Display,
+			TEXT("EXEC_RESULT DemoInput asset=%s unloadable -- programmatic fallback in use (PR-2 rollback path)"),
+			*Path.ToString());
+		return false;
+	}
+
+	const auto Resolve = [this](const TCHAR* Name) -> const UInputAction*
+	{
+		const FName Wanted(Name);
+		for (const FEnhancedActionKeyMapping& M : DemoIMC->GetMappings())
+		{
+			if (M.Action && M.Action->GetFName() == Wanted)
+			{
+				return M.Action;
+			}
+		}
+		return nullptr;
+	};
+
+	OutActions = FDemoActionSet{
+		Resolve(TEXT("IA_Demo_Select")),  Resolve(TEXT("IA_Demo_Order")),
+		Resolve(TEXT("IA_Demo_Halt")),    Resolve(TEXT("IA_Demo_ZoomIn")),
+		Resolve(TEXT("IA_Demo_ZoomOut")), Resolve(TEXT("IA_Demo_PanFwd")),
+		Resolve(TEXT("IA_Demo_PanBack")), Resolve(TEXT("IA_Demo_PanLeft")),
+		Resolve(TEXT("IA_Demo_PanRight")), Resolve(TEXT("IA_Demo_RotLeft")),
+		Resolve(TEXT("IA_Demo_RotRight")),
+	};
+
+	const UInputAction* Missing[] = { OutActions.Select, OutActions.Order, OutActions.Halt,
+		OutActions.ZoomIn, OutActions.ZoomOut, OutActions.PanFwd, OutActions.PanBack,
+		OutActions.PanLeft, OutActions.PanRight, OutActions.RotLeft, OutActions.RotRight };
+	for (const UInputAction* A : Missing)
+	{
+		if (!A)
+		{
+			UE_LOG(LogDemoBattle, Warning,
+				TEXT("EXEC_RESULT DemoInput IMC_Demo missing action(s) -- programmatic fallback in use (PR-2 rollback path)"));
+			return false;
+		}
+	}
+	UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoInput IMC_Demo loaded actions=11"));
+	return true;
+}
 
 UInputAction* ADemoPlayerController::MakeBoolAction(const FName& Name, const FText& DisplayName)
 {
@@ -52,12 +120,12 @@ UInputAction* ADemoPlayerController::MakeBoolAction(const FName& Name, const FTe
 	return IA;
 }
 
-void ADemoPlayerController::AddMapping(UInputMappingContext* IMC, UInputAction* Action, FKey Key) const
+void ADemoPlayerController::AddMapping(UInputMappingContext* IMC, const UInputAction* Action, FKey Key) const
 {
 	IMC->MapKey(Action, Key); // default implicit Down trigger suits bool actions
 }
 
-void ADemoPlayerController::SetupEnhancedInput()
+void ADemoPlayerController::BuildProgrammaticInput(FDemoActionSet& OutActions)
 {
 	OwnedActions.Reset();
 	const auto Bool = [this](const TCHAR* Name, const TCHAR* Display) -> UInputAction*
@@ -65,58 +133,68 @@ void ADemoPlayerController::SetupEnhancedInput()
 		return MakeBoolAction(Name, FText::FromString(Display));
 	};
 
-	UInputAction* IA_Select = Bool(TEXT("IA_DemoSelect"), TEXT("Select / marquee"));
-	UInputAction* IA_Order = Bool(TEXT("IA_DemoOrder"), TEXT("Move / formation drag"));
-	UInputAction* IA_Halt = Bool(TEXT("IA_DemoHalt"), TEXT("Halt selection"));
-	UInputAction* IA_ZoomIn = Bool(TEXT("IA_DemoZoomIn"), TEXT("Zoom in"));
-	UInputAction* IA_ZoomOut = Bool(TEXT("IA_DemoZoomOut"), TEXT("Zoom out"));
-	UInputAction* IA_PanFwd = Bool(TEXT("IA_DemoPanFwd"), TEXT("Pan forward"));
-	UInputAction* IA_PanBack = Bool(TEXT("IA_DemoPanBack"), TEXT("Pan back"));
-	UInputAction* IA_PanLeft = Bool(TEXT("IA_DemoPanLeft"), TEXT("Pan left"));
-	UInputAction* IA_PanRight = Bool(TEXT("IA_DemoPanRight"), TEXT("Pan right"));
-	UInputAction* IA_RotLeft = Bool(TEXT("IA_DemoRotLeft"), TEXT("Rotate left"));
-	UInputAction* IA_RotRight = Bool(TEXT("IA_DemoRotRight"), TEXT("Rotate right"));
+	OutActions.Select = Bool(TEXT("IA_DemoSelect"), TEXT("Select / marquee"));
+	OutActions.Order = Bool(TEXT("IA_DemoOrder"), TEXT("Move / formation drag"));
+	OutActions.Halt = Bool(TEXT("IA_DemoHalt"), TEXT("Halt selection"));
+	OutActions.ZoomIn = Bool(TEXT("IA_DemoZoomIn"), TEXT("Zoom in"));
+	OutActions.ZoomOut = Bool(TEXT("IA_DemoZoomOut"), TEXT("Zoom out"));
+	OutActions.PanFwd = Bool(TEXT("IA_DemoPanFwd"), TEXT("Pan forward"));
+	OutActions.PanBack = Bool(TEXT("IA_DemoPanBack"), TEXT("Pan back"));
+	OutActions.PanLeft = Bool(TEXT("IA_DemoPanLeft"), TEXT("Pan left"));
+	OutActions.PanRight = Bool(TEXT("IA_DemoPanRight"), TEXT("Pan right"));
+	OutActions.RotLeft = Bool(TEXT("IA_DemoRotLeft"), TEXT("Rotate left"));
+	OutActions.RotRight = Bool(TEXT("IA_DemoRotRight"), TEXT("Rotate right"));
 
-	// B-4 note: the binding table below is code pending PR-2 (an
-	// editor-authored UInputMappingContext asset the owner can retune without
-	// a recompile). It lives in ONE function until then.
 	DemoIMC = NewObject<UInputMappingContext>(this, TEXT("IMC_Demo"));
-	AddMapping(DemoIMC, IA_Select, EKeys::LeftMouseButton);
-	AddMapping(DemoIMC, IA_Order, EKeys::RightMouseButton);
-	AddMapping(DemoIMC, IA_Halt, EKeys::H);
-	AddMapping(DemoIMC, IA_ZoomIn, EKeys::MouseScrollUp);
-	AddMapping(DemoIMC, IA_ZoomOut, EKeys::MouseScrollDown);
-	AddMapping(DemoIMC, IA_PanFwd, EKeys::W);
-	AddMapping(DemoIMC, IA_PanFwd, EKeys::Up);
-	AddMapping(DemoIMC, IA_PanBack, EKeys::S);
-	AddMapping(DemoIMC, IA_PanBack, EKeys::Down);
-	AddMapping(DemoIMC, IA_PanLeft, EKeys::A);
-	AddMapping(DemoIMC, IA_PanLeft, EKeys::Left);
-	AddMapping(DemoIMC, IA_PanRight, EKeys::D);
-	AddMapping(DemoIMC, IA_PanRight, EKeys::Right);
-	AddMapping(DemoIMC, IA_RotLeft, EKeys::Q);
-	AddMapping(DemoIMC, IA_RotRight, EKeys::E);
+	AddMapping(DemoIMC, OutActions.Select, EKeys::LeftMouseButton);
+	AddMapping(DemoIMC, OutActions.Order, EKeys::RightMouseButton);
+	AddMapping(DemoIMC, OutActions.Halt, EKeys::H);
+	AddMapping(DemoIMC, OutActions.ZoomIn, EKeys::MouseScrollUp);
+	AddMapping(DemoIMC, OutActions.ZoomOut, EKeys::MouseScrollDown);
+	AddMapping(DemoIMC, OutActions.PanFwd, EKeys::W);
+	AddMapping(DemoIMC, OutActions.PanFwd, EKeys::Up);
+	AddMapping(DemoIMC, OutActions.PanBack, EKeys::S);
+	AddMapping(DemoIMC, OutActions.PanBack, EKeys::Down);
+	AddMapping(DemoIMC, OutActions.PanLeft, EKeys::A);
+	AddMapping(DemoIMC, OutActions.PanLeft, EKeys::Left);
+	AddMapping(DemoIMC, OutActions.PanRight, EKeys::D);
+	AddMapping(DemoIMC, OutActions.PanRight, EKeys::Right);
+	AddMapping(DemoIMC, OutActions.RotLeft, EKeys::Q);
+	AddMapping(DemoIMC, OutActions.RotRight, EKeys::E);
+}
 
+void ADemoPlayerController::BindDemoInput(const FDemoActionSet& A)
+{
 	UEnhancedInputComponent* IC = CastChecked<UEnhancedInputComponent>(InputComponent);
-	IC->BindAction(IA_Select, ETriggerEvent::Started, this, &ADemoPlayerController::OnLMBPressed);
-	IC->BindAction(IA_Select, ETriggerEvent::Completed, this, &ADemoPlayerController::OnLMBReleased);
-	IC->BindAction(IA_Order, ETriggerEvent::Started, this, &ADemoPlayerController::OnRMBPressed);
-	IC->BindAction(IA_Order, ETriggerEvent::Completed, this, &ADemoPlayerController::OnRMBReleased);
-	IC->BindAction(IA_Halt, ETriggerEvent::Started, this, &ADemoPlayerController::OnHalt);
-	IC->BindAction(IA_ZoomIn, ETriggerEvent::Started, this, &ADemoPlayerController::OnZoomIn);
-	IC->BindAction(IA_ZoomOut, ETriggerEvent::Started, this, &ADemoPlayerController::OnZoomOut);
-	IC->BindActionValueLambda(IA_PanFwd, ETriggerEvent::Started, [this](const FInputActionValue&) { SetPanDir(FVector2D(1.f, 0.f), true); });
-	IC->BindActionValueLambda(IA_PanFwd, ETriggerEvent::Completed, [this](const FInputActionValue&) { SetPanDir(FVector2D(1.f, 0.f), false); });
-	IC->BindActionValueLambda(IA_PanBack, ETriggerEvent::Started, [this](const FInputActionValue&) { SetPanDir(FVector2D(-1.f, 0.f), true); });
-	IC->BindActionValueLambda(IA_PanBack, ETriggerEvent::Completed, [this](const FInputActionValue&) { SetPanDir(FVector2D(-1.f, 0.f), false); });
-	IC->BindActionValueLambda(IA_PanLeft, ETriggerEvent::Started, [this](const FInputActionValue&) { SetPanDir(FVector2D(0.f, -1.f), true); });
-	IC->BindActionValueLambda(IA_PanLeft, ETriggerEvent::Completed, [this](const FInputActionValue&) { SetPanDir(FVector2D(0.f, -1.f), false); });
-	IC->BindActionValueLambda(IA_PanRight, ETriggerEvent::Started, [this](const FInputActionValue&) { SetPanDir(FVector2D(0.f, 1.f), true); });
-	IC->BindActionValueLambda(IA_PanRight, ETriggerEvent::Completed, [this](const FInputActionValue&) { SetPanDir(FVector2D(0.f, 1.f), false); });
-	IC->BindAction(IA_RotLeft, ETriggerEvent::Started, this, &ADemoPlayerController::OnRotateLeftPressed);
-	IC->BindAction(IA_RotLeft, ETriggerEvent::Completed, this, &ADemoPlayerController::OnRotateLeftReleased);
-	IC->BindAction(IA_RotRight, ETriggerEvent::Started, this, &ADemoPlayerController::OnRotateRightPressed);
-	IC->BindAction(IA_RotRight, ETriggerEvent::Completed, this, &ADemoPlayerController::OnRotateRightReleased);
+	IC->BindAction(A.Select, ETriggerEvent::Started, this, &ADemoPlayerController::OnLMBPressed);
+	IC->BindAction(A.Select, ETriggerEvent::Completed, this, &ADemoPlayerController::OnLMBReleased);
+	IC->BindAction(A.Order, ETriggerEvent::Started, this, &ADemoPlayerController::OnRMBPressed);
+	IC->BindAction(A.Order, ETriggerEvent::Completed, this, &ADemoPlayerController::OnRMBReleased);
+	IC->BindAction(A.Halt, ETriggerEvent::Started, this, &ADemoPlayerController::OnHalt);
+	IC->BindAction(A.ZoomIn, ETriggerEvent::Started, this, &ADemoPlayerController::OnZoomIn);
+	IC->BindAction(A.ZoomOut, ETriggerEvent::Started, this, &ADemoPlayerController::OnZoomOut);
+	IC->BindActionValueLambda(A.PanFwd, ETriggerEvent::Started, [this](const FInputActionValue&) { SetPanDir(FVector2D(1.f, 0.f), true); });
+	IC->BindActionValueLambda(A.PanFwd, ETriggerEvent::Completed, [this](const FInputActionValue&) { SetPanDir(FVector2D(1.f, 0.f), false); });
+	IC->BindActionValueLambda(A.PanBack, ETriggerEvent::Started, [this](const FInputActionValue&) { SetPanDir(FVector2D(-1.f, 0.f), true); });
+	IC->BindActionValueLambda(A.PanBack, ETriggerEvent::Completed, [this](const FInputActionValue&) { SetPanDir(FVector2D(-1.f, 0.f), false); });
+	IC->BindActionValueLambda(A.PanLeft, ETriggerEvent::Started, [this](const FInputActionValue&) { SetPanDir(FVector2D(0.f, -1.f), true); });
+	IC->BindActionValueLambda(A.PanLeft, ETriggerEvent::Completed, [this](const FInputActionValue&) { SetPanDir(FVector2D(0.f, -1.f), false); });
+	IC->BindActionValueLambda(A.PanRight, ETriggerEvent::Started, [this](const FInputActionValue&) { SetPanDir(FVector2D(0.f, 1.f), true); });
+	IC->BindActionValueLambda(A.PanRight, ETriggerEvent::Completed, [this](const FInputActionValue&) { SetPanDir(FVector2D(0.f, 1.f), false); });
+	IC->BindAction(A.RotLeft, ETriggerEvent::Started, this, &ADemoPlayerController::OnRotateLeftPressed);
+	IC->BindAction(A.RotLeft, ETriggerEvent::Completed, this, &ADemoPlayerController::OnRotateLeftReleased);
+	IC->BindAction(A.RotRight, ETriggerEvent::Started, this, &ADemoPlayerController::OnRotateRightPressed);
+	IC->BindAction(A.RotRight, ETriggerEvent::Completed, this, &ADemoPlayerController::OnRotateRightReleased);
+}
+
+void ADemoPlayerController::SetupEnhancedInput()
+{
+	FDemoActionSet Actions;
+	if (!TryLoadAssetInput(Actions))
+	{
+		BuildProgrammaticInput(Actions);
+	}
+	BindDemoInput(Actions);
 }
 
 void ADemoPlayerController::SetPanDir(FVector2D Dir, bool bHeld)

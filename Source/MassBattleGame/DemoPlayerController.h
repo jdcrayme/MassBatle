@@ -1,7 +1,9 @@
 // DemoPlayerController.h -- Total War-style selection & orders for the demo
 // (interaction pattern adapted from the MassRTS RTSPlayerController). Input is
-// programmatic Enhanced Input (actions + mapping context built in C++, no
-// editor assets -- UE 5.8 deleted the legacy BindKey path). Pipeline: LMB
+// Enhanced Input with the mapping table in editor data (PR-2: IMC_Demo + the
+// IA_Demo_* assets under /Game/MassBattle/Demo/Input, retunable without a
+// recompile); the programmatic C++ construction is the one-release fallback
+// for a missing asset. Pipeline: LMB
 // click/marquee -> selection of player units (FUnitHandles via the visual
 // subsystem); RMB click = move preserving relative offsets; RMB drag >
 // threshold = formation gesture (the drag line is the FRONT line: start =
@@ -81,11 +83,45 @@ public:
 	void OnHalt();
 
 private:
-	/** Builds the demo's input actions + mapping context programmatically (no
-	 *  editor assets; UE 5.8 removed the legacy BindKey path on
-	 *  UEnhancedInputComponent). */
+	/** The input mapping table (which key fires which action) is editor data:
+	 *  IMC_Demo + the IA_Demo_* action assets (PR-2). Bindings stay in code --
+	 *  they are behavior. */
+	UPROPERTY(EditDefaultsOnly, Category = "Input")
+	TSoftObjectPtr<UInputMappingContext> DemoIMCAsset;
+
+	/** The active context (loaded asset, or the fallback-built IMC). Pushed in
+	 *  BeginPlay; kept referenced so bindings stay valid. */
+	UPROPERTY(Transient) TObjectPtr<UInputMappingContext> DemoIMC;
+
+	/** The 11 actions the bindings consume, in one place regardless of whether
+	 *  they came from the asset or the fallback construction. */
+	struct FDemoActionSet
+	{
+		const UInputAction* Select = nullptr;
+		const UInputAction* Order = nullptr;
+		const UInputAction* Halt = nullptr;
+		const UInputAction* ZoomIn = nullptr;
+		const UInputAction* ZoomOut = nullptr;
+		const UInputAction* PanFwd = nullptr;
+		const UInputAction* PanBack = nullptr;
+		const UInputAction* PanLeft = nullptr;
+		const UInputAction* PanRight = nullptr;
+		const UInputAction* RotLeft = nullptr;
+		const UInputAction* RotRight = nullptr;
+	};
+
+	/** Loads IMC_Demo and resolves the 11 actions by name from it. False on
+	 *  ANY missing piece (all-or-nothing: a partially bound controller is
+	 *  worse than the fallback table). */
+	bool TryLoadAssetInput(FDemoActionSet& OutActions);
+	/** The pre-PR-2 programmatic construction (B-4), retained as the PR-2
+	 *  one-release fallback; delete once PIE evidence is in. */
+	void BuildProgrammaticInput(FDemoActionSet& OutActions);
+	/** The bindings -- behavior, not data; shared by both input sources. */
+	void BindDemoInput(const FDemoActionSet& A);
+
 	void SetupEnhancedInput();
-	void AddMapping(UInputMappingContext* IMC, UInputAction* Action, FKey Key) const;
+	void AddMapping(UInputMappingContext* IMC, const UInputAction* Action, FKey Key) const;
 	UInputAction* MakeBoolAction(const FName& Name, const FText& DisplayName);
 	void SetPanDir(FVector2D Dir, bool bHeld);
 
@@ -127,9 +163,9 @@ private:
 	bool bPanRight = false;
 	TSet<FKey> HeldRotateKeys; // Q = left, E = right
 
-	/** Programmatic actions/IMC (kept referenced so bindings stay valid). */
+	/** Fallback-built actions (kept referenced so bindings stay valid; the
+	 *  asset path holds its actions through the IMC asset instead). */
 	UPROPERTY(Transient) TArray<TObjectPtr<UInputAction>> OwnedActions;
-	UPROPERTY(Transient) TObjectPtr<UInputMappingContext> DemoIMC;
 
 	ADemoCameraPawn* CameraPawn() const;
 	UDemoUnitVisualSubsystem* VisualSubsystem() const;
