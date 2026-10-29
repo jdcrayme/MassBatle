@@ -12,9 +12,10 @@ namespace
 {
 	TAutoConsoleVariable<int32> GCRangedEnable(
 		TEXT("Battle.Ranged.Enable"),
-		0,
-		TEXT("Master ranged flag. 0 = pre-ranged behavior (byte-identical; B.8 item 6). "
-			 "Flips to default 1 when the impact-resolution task lands end-to-end."),
+		1,
+		TEXT("Master ranged flag (fire + step + skirmish). Flipped to default 1 at "
+			 "task 5's impact resolution landing end-to-end (ground rule 7; B.8 item 6). "
+			 "0 = pre-ranged behavior: the pool stays empty and both passes early-out."),
 		ECVF_Default);
 
 	TAutoConsoleVariable<int32> GCRangedStep(
@@ -272,6 +273,7 @@ int32 SelectVolleyShots(
 		Shot.LaunchDir = LaunchDir;
 		Shot.FlightTimeS = Solution.FlightTimeS;
 		Shot.Seed = Seed;
+		Shot.ShotsFired = Shooter.ShotsFired; // pre-increment: this shot's roll count
 		OutShots.Add(Shot);
 		++ShotCount;
 

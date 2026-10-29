@@ -23,11 +23,13 @@
 #include "BattleProjectileSubsystem.h"
 #include "BattleDebugSubsystem.h"
 #include "RangedFireProcessor.h"
+#include "ProjectileStepProcessor.h"
 #include "BattleRngRegistry.h"
 #include "BattleEduParser.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "HAL/IConsoleManager.h"
+#include "MassCommandBuffer.h"
 #include "MassCommonFragments.h"
 #include "MassEntitySubsystem.h"
 #include "MassEntityView.h"
@@ -1132,6 +1134,257 @@ bool FCombat_RangedFirePass::RunTest(const FString& Parameters)
 			TestEqual(TEXT("player order survives the fire pass (Y)"), Actual.Y, PlayerAnchorCm.Y, 1e-2);
 			TestFalse(TEXT("retreat cancelled by the player order"), State ? State->bRetreating : true);
 		}
+
+		World->DestroyWorld(false);
+	}
+
+	return true;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3 task 5: impact resolution (RC6) -- arrows kill through the melee
+// machinery. Flow A: a volley against a formed line lands in the golden-rate
+// band, deaths land in the FRONTAL arc rows (DeathsByArc), and the deferred
+// FDeadTag count equals the arc ledger. Flow B: a friendly line behind the
+// target takes the team-blind stray hits (RC4's impact-point half). Flow C:
+// aimed shots walk the composite-HP ladder (mount drain -> kill through the
+// F2 death path) with no statistics involved.
+// ---------------------------------------------------------------------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCombat_RangedImpacts,
+	"Battle.Unit.Ranged.Impacts",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FCombat_RangedImpacts::RunTest(const FString& Parameters)
+{
+	constexpr float DT = 1.f / 60.f;
+	FRangedFlagScope Flags;
+
+	// ---- Flow A: the volley kill band + the frontal arc rows. ----
+	{
+		UWorld* World = MakeCombatTestWorld();
+		UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>();
+		UMassEntitySubsystem* Entities = World->GetSubsystem<UMassEntitySubsystem>();
+		UBattleDebugSubsystem* Debug = World->GetSubsystem<UBattleDebugSubsystem>();
+		FMassEntityManager& EM = Entities->GetMutableEntityManager();
+		TArray<FEduUnit> Rows;
+		if (!LoadCombatFixture(Rows) || Rows.Num() < 3)
+		{
+			AddError(TEXT("EDU fixture unavailable"));
+			World->DestroyWorld(false);
+			return false;
+		}
+		const FUnitHandle Archers = SpawnRowAt(World, Rows[2], FVector2D(-40.f, 0.f), 0.f, 0);
+		const FUnitHandle Enemy = SpawnRowAt(World, Rows[0], FVector2D(40.f, 0.f), 180.f, 1);
+		TestTrue(TEXT("flow A spawned"), Archers.IsValid() && Enemy.IsValid());
+		TestTrue(TEXT("flow A attack order"), Registry->IssueAttackUnitOrder(Archers, Enemy));
+		ZeroReloadTimers(World, Registry, Archers);
+		BuildTestHash(World, Registry);
+		RunRangedFirePass(World, DT);
+		UBattleProjectileSubsystem* Projectiles = World->GetSubsystem<UBattleProjectileSubsystem>();
+		TestEqual(TEXT("flow A volley in flight"), Projectiles->GetPool().GetLiveCount(), 40);
+
+		for (int32 Tick = 0; Tick < 300; ++Tick)
+		{
+			RunProjectileStepPass(World, DT);
+		}
+		TestEqual(TEXT("all projectiles resolved"), Projectiles->GetPool().GetLiveCount(), 0);
+		const int32 Impacts = Debug->GetRangedImpacts();
+		TestTrue(TEXT("the line was hit"), Impacts > 0);
+
+		EM.FlushCommands(); // the deferred FDeadTag batch lands; the observer fires
+		const TArray<FMassEntityHandle>* EnemyRoster = Registry->FindRoster(Enemy);
+		TestNotNull(TEXT("enemy roster"), EnemyRoster);
+		int32 Dead = 0;
+		if (EnemyRoster)
+		{
+			for (const FMassEntityHandle& Entity : *EnemyRoster)
+			{
+				if (FMassEntityView(EM, Entity).HasTag<FDeadTag>())
+				{
+					++Dead;
+				}
+			}
+		}
+		// The golden-rate band: frontal levy vs arrow volley. P derives from
+		// the VICTIM's actual stats (D = defense + shield frontal + armor,
+		// the levy fragment reads defense 2 / shield 0 / armor 0) times the
+		// shooter's lethality. Tolerance guards cross-machine float drift on
+		// the DETERMINISTIC roll sequence (same seed -> same rolls; only the
+		// numeric P moves across compilers).
+		float VictimDefense = 0.f;
+		float VictimShield = 0.f;
+		float VictimArmor = 0.f;
+		float ArcherLethality = 1.f;
+		if (EnemyRoster && EnemyRoster->Num() > 0)
+		{
+			if (const FBaseStatsFragment* Base = FMassEntityView(EM, (*EnemyRoster)[0]).GetFragmentDataPtr<FBaseStatsFragment>())
+			{
+				VictimDefense = Base->MeleeDefense;
+				VictimShield = Base->Shield;
+				VictimArmor = Base->Armor;
+			}
+		}
+		if (const TArray<FMassEntityHandle>* ShooterRoster = Registry->FindRoster(Archers))
+		{
+			if (const FBaseStatsFragment* Base = FMassEntityView(EM, (*ShooterRoster)[0]).GetFragmentDataPtr<FBaseStatsFragment>())
+			{
+				ArcherLethality = Base->Lethality;
+			}
+		}
+		const float P = FMeleeMath::HitChance(6.f,
+			VictimDefense + VictimShield + VictimArmor) * ArcherLethality;
+		const float Expected = static_cast<float>(Impacts) * P;
+		const int32 BandMin = FMath::Max(1, FMath::FloorToInt(0.45f * Expected));
+		const int32 BandMax = FMath::CeilToInt(1.55f * Expected) + 1;
+		TestTrue(FString::Printf(TEXT("kills %d in the golden band [%d, %d] of %d impacts (P=%.3f incl. lethality %.2f)"),
+			Dead, BandMin, BandMax, Impacts, P, ArcherLethality), Dead >= BandMin && Dead <= BandMax);
+		// Arc ledger == the deferred kills (the ranged rows joined DeathsByArc).
+		TestEqual(TEXT("DeathsByArc ledger equals the dead"), Dead,
+			Debug->GetDeathsByArc(0) + Debug->GetDeathsByArc(1) + Debug->GetDeathsByArc(2));
+		TestTrue(TEXT("frontal rows populated (arrows from the levy's front)"), Debug->GetDeathsByArc(0) > 0);
+		World->DestroyWorld(false);
+	}
+
+	// ---- Flow B: team-blind friendly strays behind the target. ----
+	{
+		UWorld* World = MakeCombatTestWorld();
+		UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>();
+		UBattleDebugSubsystem* Debug = World->GetSubsystem<UBattleDebugSubsystem>();
+		TArray<FEduUnit> Rows;
+		if (!LoadCombatFixture(Rows) || Rows.Num() < 3)
+		{
+			World->DestroyWorld(false);
+			return false;
+		}
+		const FUnitHandle Archers = SpawnRowAt(World, Rows[2], FVector2D(-40.f, 0.f), 0.f, 0);
+		const FUnitHandle Enemy = SpawnRowAt(World, Rows[0], FVector2D(40.f, 0.f), 180.f, 1);
+		SpawnRowAt(World, Rows[0], FVector2D(46.f, 0.f), 0.f, 0); // friendly line BEHIND the target
+		TestTrue(TEXT("flow B spawned"), Archers.IsValid() && Enemy.IsValid());
+		TestTrue(TEXT("flow B attack order"), Registry->IssueAttackUnitOrder(Archers, Enemy));
+		ZeroReloadTimers(World, Registry, Archers);
+		BuildTestHash(World, Registry);
+		RunRangedFirePass(World, DT);
+		for (int32 Tick = 0; Tick < 300; ++Tick)
+		{
+			RunProjectileStepPass(World, DT);
+		}
+		// RC4's impact-point half, made deterministic: one aimed over-flight
+		// shot climbs over the enemy line (Z 2.1 at x=40, above the 1.8 m
+		// bodies) and descends onto the friendly line behind (Z ~1.5 at
+		// x=46). The team-blind pick takes the friendly body.
+		{
+			UBattleProjectileSubsystem* Projectiles = World->GetSubsystem<UBattleProjectileSubsystem>();
+			uint32 Gen = 0;
+			FBattleProjectilePool& Pool = Projectiles->GetMutablePool();
+			const int32 Slot = Pool.Acquire(Gen);
+			TestTrue(TEXT("stray slot acquired"), Slot != FBattleProjectilePool::InvalidIndex);
+			if (Slot != FBattleProjectilePool::InvalidIndex)
+			{
+				Pool.PosX[Slot] = 30.f;
+				Pool.PosY[Slot] = 0.f;
+				Pool.PosZ[Slot] = 2.5f;
+				Pool.VelX[Slot] = 35.f;
+				Pool.VelY[Slot] = 0.f;
+				Pool.VelZ[Slot] = 0.f;
+				Pool.GravityScale[Slot] = 1.f;
+				Pool.TTL[Slot] = 5.f;
+				Pool.Kind[Slot] = static_cast<uint8>(EBattleProjectileKind::Arrow);
+				Pool.GenerationArray[Slot] = Gen;
+				Pool.OwnerUnit[Slot] = Archers;
+				Pool.ShooterEntity[Slot] = (*Registry->FindRoster(Archers))[1];
+				Pool.RangedAttack[Slot] = 100.f;
+				Pool.ShooterRollCount[Slot] = 0;
+				Pool.Lethality[Slot] = 1.f;
+			}
+			for (int32 Tick = 0; Tick < 120; ++Tick)
+			{
+				RunProjectileStepPass(World, DT);
+			}
+		}
+		TestTrue(TEXT("friendly strays demonstrable"), Debug->GetRangedFriendlyHits() > 0);
+		World->DestroyWorld(false);
+	}
+
+	// ---- Flow C: the composite-HP ladder on aimed shots (no statistics). ----
+	{
+		UWorld* World = MakeCombatTestWorld();
+		UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>();
+		UMassEntitySubsystem* Entities = World->GetSubsystem<UMassEntitySubsystem>();
+		UBattleProjectileSubsystem* Projectiles = World->GetSubsystem<UBattleProjectileSubsystem>();
+		FMassEntityManager& EM = Entities->GetMutableEntityManager();
+		TArray<FEduUnit> Rows;
+		if (!LoadCombatFixture(Rows) || Rows.Num() < 3)
+		{
+			World->DestroyWorld(false);
+			return false;
+		}
+		const FUnitHandle Archers = SpawnRowAt(World, Rows[2], FVector2D(-40.f, 0.f), 0.f, 0);
+		const FUnitHandle Enemy = SpawnRowAt(World, Rows[0], FVector2D(40.f, 0.f), 180.f, 1);
+		TestTrue(TEXT("flow C spawned"), Archers.IsValid() && Enemy.IsValid());
+		BuildTestHash(World, Registry);
+		Projectiles->ReserveForBattle();
+		const TArray<FMassEntityHandle>* EnemyRoster = Registry->FindRoster(Enemy);
+		if (!TestNotNull(TEXT("enemy roster"), EnemyRoster) || EnemyRoster->Num() == 0)
+		{
+			World->DestroyWorld(false);
+			return false;
+		}
+		const FMassEntityHandle Victim = (*EnemyRoster)[0];
+		const FTransformFragment* VictimTransform =
+			FMassEntityView(EM, Victim).GetFragmentDataPtr<FTransformFragment>();
+		FHealthFragment* VictimHealth = FMassEntityView(EM, Victim).GetFragmentDataPtr<FHealthFragment>();
+		if (!TestNotNull(TEXT("victim transform"), VictimTransform) || !TestNotNull(TEXT("victim health"), VictimHealth))
+		{
+			World->DestroyWorld(false);
+			return false;
+		}
+		const FVector VictimPos = VictimTransform->GetTransform().GetTranslation();
+		VictimHealth->MountCurHP = 2; // the composite ladder: two drains, then kill
+
+		auto FireAimedShot = [&]() -> void
+		{
+			uint32 Gen = 0;
+			FBattleProjectilePool& Pool = Projectiles->GetMutablePool();
+			const int32 Slot = Pool.Acquire(Gen);
+			if (Slot == FBattleProjectilePool::InvalidIndex)
+			{
+				return;
+			}
+			Pool.PosX[Slot] = VictimPos.X * 0.01f - 10.f;
+			Pool.PosY[Slot] = VictimPos.Y * 0.01f;
+			Pool.PosZ[Slot] = 1.0f;
+			Pool.VelX[Slot] = 35.f;
+			Pool.VelY[Slot] = 0.f;
+			Pool.VelZ[Slot] = 0.f;
+			Pool.GravityScale[Slot] = 1.f;
+			Pool.TTL[Slot] = 5.f;
+			Pool.Kind[Slot] = static_cast<uint8>(EBattleProjectileKind::Arrow);
+			Pool.GenerationArray[Slot] = Gen;
+			Pool.OwnerUnit[Slot] = Archers;
+			Pool.ShooterEntity[Slot] = (*Registry->FindRoster(Archers))[1];
+			Pool.RangedAttack[Slot] = 100.f; // near-certain land: P = 100/103
+			Pool.ShooterRollCount[Slot] = 0;
+			Pool.Lethality[Slot] = 1.f;
+		};
+
+		// Shot 1: the mount pool takes the hit (alive, drained to 1).
+		FireAimedShot();
+		for (int32 Tick = 0; Tick < 60; ++Tick) { RunProjectileStepPass(World, DT); }
+		TestEqual(TEXT("first hit drains the mount pool"), VictimHealth->MountCurHP, 1);
+		TestFalse(TEXT("drained victim still stands"), FMassEntityView(EM, Victim).HasTag<FDeadTag>());
+
+		// Shot 2: the pool drains to 0 -- the rider still stands.
+		FireAimedShot();
+		for (int32 Tick = 0; Tick < 60; ++Tick) { RunProjectileStepPass(World, DT); }
+		TestEqual(TEXT("pool at zero, no kill yet"), VictimHealth->MountCurHP, 0);
+		TestFalse(TEXT("zero-pool victim still stands"), FMassEntityView(EM, Victim).HasTag<FDeadTag>());
+
+		// Shot 3: a landed hit at an empty pool kills through the F2 path.
+		FireAimedShot();
+		for (int32 Tick = 0; Tick < 60; ++Tick) { RunProjectileStepPass(World, DT); }
+		EM.FlushCommands();
+		TestTrue(TEXT("kill deferred through the death path"), FMassEntityView(EM, Victim).HasTag<FDeadTag>());
 
 		World->DestroyWorld(false);
 	}

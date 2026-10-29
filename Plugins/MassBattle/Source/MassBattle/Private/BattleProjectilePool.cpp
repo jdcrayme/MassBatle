@@ -23,6 +23,8 @@ void FBattleProjectilePool::Reserve(int32 InCapacity)
 	OwnerUnit.Init(FUnitHandle(), Capacity);
 	ShooterEntity.Init(FMassEntityHandle(), Capacity);
 	RangedAttack.Init(0.f, Capacity);
+	ShooterRollCount.Init(0u, Capacity);
+	Lethality.Init(1.f, Capacity);
 
 	// LIFO free list: slot order is deterministic (index order on a fresh
 	// pool -- the state hash's pool block depends on it, spec §3.4).

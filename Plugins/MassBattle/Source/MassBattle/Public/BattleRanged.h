@@ -86,7 +86,9 @@ struct FVolleyTargetView
 /** One emitted shot (the pool write payload). LaunchDir is a unit vector
  *  (X/Y horizontal, Z up); Seed is the deterministic dispersion/roll seed
  *  (hash of entity identity + ShotsFired, computed by the caller so the
- *  pool entry stays plain data). */
+ *  pool entry stays plain data). ShotsFired is the shooter's lifetime count
+ *  AT EMISSION -- the impact roll's A13 run-invariant count input (spec
+ *  §4.6 draws CombatRoll01(ShooterIndex, Serial, ShotsFired)). */
 struct FVolleyShot
 {
 	FMassEntityHandle Entity;
@@ -96,6 +98,7 @@ struct FVolleyShot
 	FVector LaunchDir = FVector::ForwardVector;
 	float FlightTimeS = 0.f;
 	uint32 Seed = 0;
+	uint32 ShotsFired = 0;
 };
 
 /** Rank-limited volley selection (spec §4.4, RC1/RC4). Eligibility per

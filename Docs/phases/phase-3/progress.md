@@ -279,6 +279,68 @@
   `EXEC_RESULT SkirmishRetreat ... Serial=3` /
   `EXEC_RESULT SkirmishCancel Unit=1:1 PlayerOrderSerial=4`.
 
+## Task 5 -- impact resolution (RC6) + Enable flip
+
+- [task5.1] The step pass became the stepping + impact pass:
+  `RunProjectileStepPass(World, DT)` (exported; the processor is the per-tick
+  shim). Per tick: pre-step position snapshot (swept segments), the seam's
+  `StepPool`, then per survivor the R-R2 impact query -- ONE midpoint circle
+  (radius = half-segment + HitRadius + body radius), the height gate BEFORE
+  the query, the height at the closest-approach parameter (not the midpoint:
+  a body past this tick's segment end reads its true flyover height),
+  team-blind nearest body. `BattleMetrics` += `Impacts=%d FriendlyHits=%d`.
+- [task5.2] The transient one-roll context (spec 4.6): incoming angle ->
+  victim-frame byte (the ContactAngle convention) -> the shared
+  `SectorIndexFromAngle` -> melee arc bands -> `HitChance(attack, defense)`
+  -> `CombatRoll01(shooterIndex, shooterSerial, shotsFiredAtEmission)` ->
+  `Roll < P x Lethality`. Pool columns added (disclosed pool-layout growth):
+  `ShooterRollCount` (the A13 roll count; `FVolleyShot.ShotsFired` carries it
+  from the seam) + `Lethality` (the shooter's, stamped at fire -- a
+  projectile has no chunks). Landed: the victim's `FHealthFragment.MountCurHP`
+  drains first; at 0 the kill defers `FDeadTag` through `EM.Defer()` -- F2's
+  death path, unchanged. `EXEC_RESULT RangedKill ... Sector=.. Friendly=..`
+  is the ChargeMechanics-precedent evidence line.
+- [task5.3] Two impact-pick corrections found by the first Impacts run
+  (verbose diagnostics, `Tools/CI/impacts_verbose.log`):
+  (a) the rank-2 arrows GRAZED their own front rank (solved clearance 0.22 m
+  at the body plane, inside the 0.5 m hit radius -- 20 of 40 impacts were
+  own-unit rear hits, 17 of them landed kills). The seam's RC2 rule lets
+  arced volleys fire OVER friends, so the pick now EXCLUDES the shooter's own
+  unit; other friendly units still take the strays (RC4's team-blind half,
+  flow B). (b) Corpses never roll (the melee resolution's own query rule):
+  a killed-this-pass body stays addressable in the last-tick hash while its
+  FDeadTag is DEFERRED-invisible, so a killed-ledger TSet guards double
+  kills; it clears when the pool batch empties (per-volley semantics).
+- [task5.4] `Battle.Ranged.Enable` default 0 -> 1 (ground rule 7). The func
+  tier proves melee unregressed WITH the ranged passes live: **passed=19
+  failed=4 total=23**, the exact baseline (CombatSmoke + ChargeMechanics
+  green; the two by-design skeletons + the two phase-2 melts are the reds).
+  Identity mechanics: no ranged units -> the fire pass iterates and skips;
+  empty pool -> the step pass early-outs (R-R8).
+- [task5.5] `Battle.Unit.Ranged.Impacts` (MassBattleCombatTests.cpp), three
+  flows: (A) 40-arrow volley vs a formed frontal line -> 25 impacts, kills in
+  the golden band around Impacts x HitChance(6, defense 2) x lethality
+  (band +-55% guards cross-machine float drift on the DETERMINISTIC roll
+  sequence); DeathsByArc ledger == the deferred-dead count, frontal rows
+  populated; (B) the aimed over-flight stray: a shot climbing over the enemy
+  line descends onto the friendly line behind -> FriendlyHits > 0 and
+  `RangedKill ... Friendly=1` (the team-blind impact-point half; the
+  estimated-zone hold kept the volley itself legal); (C) the composite-HP
+  ladder on aimed shots: mount pool 2 -> drain -> drain -> kill, each stage
+  asserted with no statistics.
+- [task5.6] Facts surfaced by the run (AGENTS 4): the spawn library never
+  stamps `FBaseStatsFragment.{Lethality, Shield}` (defaults 1.0/0.0) -- the
+  EDU mapping fills `OutStats` but the spawn payload skips both fields; the
+  band asserts read the fragment's ACTUAL values, and the T6.1 constants
+  audit owns the payload completion. Also `Battle.Combat.SectorCount` (8)
+  is the ranged sector home -- one quantizer, two consumers as spec'd.
+- [task5.7] Build -> Succeeded. Unit tier: **passed=79 failed=0 total=79
+  completed=True exit=0 ok=True** (+1 = Impacts). Kill-chain evidence
+  (verbatim, `Tools/CI/last_run/unit.log`):
+  `EXEC_RESULT RangedKill Shooter=1:1 Unit=2:1 Victim=55:1 Sector=0 Friendly=0`
+  / `EXEC_RESULT RangedKill Shooter=2:1 Unit=3:1 Victim=110:1 Sector=4
+  Friendly=1` (10 RangedKill lines total across the flows).
+
 ## Open items carried
 
 - S4_ShieldWall / S5_Mob melts: pre-existing, owned by the phase-2 dossier's deferred

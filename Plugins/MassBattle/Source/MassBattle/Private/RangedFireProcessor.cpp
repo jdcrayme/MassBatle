@@ -394,13 +394,19 @@ void RunRangedFirePass(UWorld* World, float DeltaSeconds)
 			Pool.OwnerUnit[Slot] = Shot.Unit;
 			Pool.ShooterEntity[Slot] = Shot.Entity;
 			// The impact attack term, stamped at fire (spec 4.6):
-			// RangedAttack x RangedAttackMult x AccuracyMult.
+			// RangedAttack x RangedAttackMult x AccuracyMult. The roll-seed
+			// count + lethality ride along (the transient context's
+			// shooter-side inputs; a projectile has no chunks).
 			float BaseRanged = 0.f;
+			float ShooterLethality = 1.f;
 			if (const FBaseStatsFragment* Base = FMassEntityView(EM, Shot.Entity).GetFragmentDataPtr<FBaseStatsFragment>())
 			{
 				BaseRanged = Base->RangedAttack;
+				ShooterLethality = Base->Lethality;
 			}
 			Pool.RangedAttack[Slot] = BaseRanged * RangedAttackMult * AccuracyMult;
+			Pool.ShooterRollCount[Slot] = Shot.ShotsFired; // the A13 run-invariant roll count
+			Pool.Lethality[Slot] = ShooterLethality;
 		}
 
 		// B.2 trajectory rows (z-heighted segments; Task 8 completes the

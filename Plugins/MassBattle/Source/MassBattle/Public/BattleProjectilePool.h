@@ -73,6 +73,13 @@ struct MASSBATTLE_API FBattleProjectilePool
 	TArray<FUnitHandle> OwnerUnit;      // shooter's unit (attribution + friendly checks)
 	TArray<FMassEntityHandle> ShooterEntity; // roll-count identity for impact resolution
 	TArray<float> RangedAttack;         // stamped at fire (the impact attack term, spec §4.6)
+	// Task 5 (spec §4.6): the transient roll context's shooter-side inputs,
+	// stamped at fire so the impact pass never crosses chunks. ShooterRollCount
+	// is the shooter's ShotsFired AT EMISSION -- the A13 run-invariant roll
+	// seed; Lethality multiplies the impact hit chance (the melee pair path
+	// reads it from the attacker's stats; a projectile has no chunks).
+	TArray<uint32> ShooterRollCount;
+	TArray<float> Lethality;
 
 private:
 	int32 Capacity = 0;
