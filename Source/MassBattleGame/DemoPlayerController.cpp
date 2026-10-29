@@ -5,6 +5,7 @@
 #include "DemoUnitVisualSubsystem.h"
 
 #include "BattleRegistry.h"
+#include "BattleCostGrid.h"
 #include "BattleGarrisonSubsystem.h"
 
 #include "Camera/PlayerCameraManager.h"
@@ -710,13 +711,11 @@ bool ADemoPlayerController::IssueAttackOrders(const FVector2D& ScreenPos, const 
 
 FVector2D ADemoPlayerController::ClampToGridHelper(const FVector2D& P) const
 {
-	// The movement cost grid is a 256 m tile centered at the origin; orders
-	// clamp into it with a 3 m margin off the half-tile (128 m - 3 m). The
-	// tile extent belongs to the plugin's grid (BattleCostGrid) -- exposing
-	// it is PR-3; until then this is the demo's single named copy.
-	constexpr float TileHalfExtentCm = 12800.f;
+	// The movement tile extent is the plugin's grid geometry -- read from its
+	// one home (BattleGridGeo, PR-3), never re-typed here. The 3 m margin off
+	// the half-tile is demo-owned UX (orders keep off the impassable edge).
 	constexpr float EdgeMarginCm = 300.f;
-	constexpr float Limit = TileHalfExtentCm - EdgeMarginCm;
+	const float Limit = BattleGridGeo::TileHalfExtentM * 100.f - EdgeMarginCm;
 	return FVector2D(FMath::Clamp(P.X, -Limit, Limit), FMath::Clamp(P.Y, -Limit, Limit));
 }
 

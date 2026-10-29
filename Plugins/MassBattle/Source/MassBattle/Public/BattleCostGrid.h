@@ -7,6 +7,18 @@
 
 #include "CoreMinimal.h"
 
+/** The Phase-1 default tile geometry (arch §12), named beside the grid data so
+ *  consumers read one home instead of re-typing the extent (PR-3): 86x86 cells
+ *  at 3 m spans 258 m across, centered on the origin. UBattleCostGridSubsystem
+ *  builds its grid from these; the demo's order clamp reads TileHalfExtentM. */
+namespace BattleGridGeo
+{
+	constexpr int32 TileDimCells = 86;
+	constexpr float CellSizeM = 3.0f;
+	/** Half extent of the default tile, meters (86 * 3 / 2 = 129). */
+	constexpr float TileHalfExtentM = TileDimCells * CellSizeM * 0.5f;
+}
+
 /** 8-connected heightfield cost grid. Flat tile in Phase 1 (B.1); the height
  *  array + slope weight keep the cost model slope-aware for later terrain. */
 struct MASSBATTLE_API FBattleCostGrid
