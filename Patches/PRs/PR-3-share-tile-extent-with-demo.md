@@ -45,3 +45,12 @@ test cycle rather than a static-audit patch).
 ## Rollback
 
 Two-line revert; no schema or data impact.
+
+## Status (2026-10-29)
+
+EXECUTED (`45faecd`). BattleGridGeo namespace owns the tile (86x86 @ 3 m
+= 258 m across, half extent 129 m); the subsystem builds from it, the
+demo clamp reads it. Disclosed behavior delta: the demo limit moves
+12500 cm -> 12600 cm (the old literal encoded the doc's "256 m tile";
+the actual grid spans 258 m). Evidence: unit 79/79 at landing, func
+OrderSmoke + S1 green; PIE corner-click eyeball owner-scoped.

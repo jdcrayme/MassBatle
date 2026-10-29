@@ -52,3 +52,16 @@ not in the C++ module. This PR unifies the three channels behind one data format
 
 The C++ fallback tables are retained; reverting the asset assignment restores the exact prior
 behavior. The PR is additive at every step.
+
+## Status (2026-10-29)
+
+EXECUTED. Code: `UDemoScenarioAsset`/`FDemoScenarioSpawn` in
+`BattleScenarioAsset.h`, DemoGameMode asset channel + SpawnClash asset
+branch (`7c48d89`); assets DA_Wall/DA_Mob/DA_Charge authored via MCP
+(`3b3a528`), rows verbatim from the C++ fallback tables + matching
+AutoOrder. PIE evidence: `SpawnClash channel=asset variant=mob rows=3`
+-> `SpawnClash OK mob units: 1:1 2:1 3:1` -> the full M3/M4 chain ran on
+the authored asset. Residuals: the per-map game-mode assignment is an
+owner editor action (runtime CDO/BP-CDO edits do not reach PIE
+instances through the MCP reflection tools); IA-style FText
+ActionDescription is not tool-authorable (cosmetic; n/a here).

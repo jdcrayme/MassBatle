@@ -127,11 +127,13 @@ void ADemoGameMode::RegisterM3Sample()
 	}
 	BattleExec::CombatSpawnClash({TEXT("mob")}, World);
 	UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoGameMode M3 sample registered (SpawnClash mob)"));
-	// Phase 3 (task 6, M4 gray-box): the ranged sample rides the same
-	// no-level-units gate -- a skirmishing archer line vs an approaching
-	// threat, arrows as the debug overlay segments until PR-8's visual pass.
+	// Phase 3 (task 6, M4): the ranged sample rides the same no-level-units
+	// gate -- a skirmishing archer line vs an approaching threat. Arrows are
+	// VISIBLE since PR-8's gray-box feed (UBattleArrowVisualComponent, attached
+	// in BeginPlay when the ranged flags are on); the debug overlay stays the
+	// analytic view on top.
 	BattleExec::RangedSpawnVolley({TEXT("skirmish")}, World);
-	UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoGameMode M4 sample registered (SpawnVolley skirmish, overlay-only arrows)"));
+	UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoGameMode M4 sample registered (SpawnVolley skirmish, gray-box arrow feed)"));
 }
 
 void ADemoGameMode::SpawnScenarioAsset()

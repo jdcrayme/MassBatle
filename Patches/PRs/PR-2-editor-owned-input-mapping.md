@@ -57,3 +57,17 @@ demo module exists precisely for editor-authored UX.
 Keep the programmatic path behind a one-release fallback: if `IMC_Demo` fails to load, log a
 warning and fall back to the (temporarily retained) construction code; delete the fallback in
 the following phase once PIE evidence is in.
+
+## Status (2026-10-29)
+
+EXECUTED. Code: asset-first input with the programmatic construction
+retained as the one-release fallback (`074ce8f`); assets IMC_Demo + the
+11 IA_Demo_* actions (`3b3a528`), binding table verbatim from the audit
+table. Playbook quirk recorded: UE 5.8's IMC has a DEAD top-level
+Mappings array -- set_properties must target DefaultKeyMappings.
+PIE evidence: `DemoInput IMC_Demo loaded actions=11` (all actions
+resolved by name); a quiet package-existence probe keeps the
+pre-authoring fallback engine-silent in CI. Residuals: the live
+keybind-retune check and the interactive keypress pass are owner
+actions; the fallback construction deletes next phase per the rollback
+plan.

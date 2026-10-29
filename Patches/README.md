@@ -22,6 +22,23 @@ Each `.patch` file is one commit; apply in order with `git am`:
 
 PR writeups from that audit: `PRs/PR-1` .. `PR-5` (below).
 
+### Landing record (2026-10-29): the PR sweep
+
+The five audit PRs + PR-8's visual remainder were executed on the
+machine (commits `45faecd`, `074ce8f`, `7c48d89`, `46d0c1c`, `3b3a528`,
+`e085dbb` + the wrap-up): PR-3 (tile extent one home), PR-2 (asset-first
+input + retained fallback), PR-1 (scenario assets + the SpawnClash asset
+channel), PR-8 (gray-box arrow feed + SM_Arrow/M_ArrowGray), PR-4
+(registry homes + intent seam + the knockback as a seam function -- the
+writeup's dedicated processor was A/B-falsified, see the PR-4 status
+section). PR-5 was already executed as `2230eb5`; PR-6/7/9 were executed
+by the phase-3 run (phase-3 report section 6). Per-writeup status
+sections are in each `PRs/PR-*.md`. Tiers at wrap-up: unit 80/80, func
+19/23 with exactly the four known pre-existing failures. Editor-scoped
+residuals (owner actions): the live keybind-retune + keypress pass
+(PR-2), the PIE corner-click eyeball (PR-3), the per-map scenario-asset
+assignment via the editor UI (PR-1), the arrow-mass screenshot (PR-8).
+
 ## Phase-3 kickoff (2026-10-29)
 
 Branch: `phase3/kickoff` (from `main` @ `48f1553`).

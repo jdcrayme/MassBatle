@@ -93,6 +93,12 @@ Full registry: **70 toolsets** at last refresh (Niagara ×8, Sequencer ×8, PCG 
 | `-ExecCmds` drives console commands | Does not reach `FAutoConsoleCommandWithWorldAndArgs`; automation parses it itself (Phase 0) |
 | UBT runs any time | Blocked while editor open; restart cycle required (Phase 0) |
 | MCP session persists | Session id changes every editor restart (Phase 0) |
+| `ObjectTools.set_properties` takes a values OBJECT | The `values` param must be a JSON-encoded STRING; a passed object silently no-ops with `returnValue: False` (2026-10-29) |
+| IMC mappings live in the top-level `Mappings` array | Dead in UE 5.8 (deprecated parallel array); `GetMappings()` reads `DefaultKeyMappings.Mappings` -- reflection writes MUST target `DefaultKeyMappings` (2026-10-29; a write to the dead array loads an empty context at runtime) |
+| Runtime CDO edits flow into PIE game-mode instances | They do NOT (verified twice, incl. after an editor restart): native CDO and saved BP-CDO property edits both leave the PIE instance at its serialized defaults -- per-map configuration goes through the editor UI or a saved BP (2026-10-29) |
+| `BlueprintTools.get_default_object` resolves any BP path | The Blueprint asset must be LOADED first (`AssetTools.load_asset`), then the object path works (2026-10-29) |
+| `EditorAppToolset.CaptureViewport` captures PIE | It renders the EDITOR world from the given pose (editor billboards visible; PIE-only actors absent) -- PIE screenshots are unreachable via this surface (2026-10-29) |
+| `AssetTools.write_file` covers arbitrary text assets | Extension-blocked allowlist (.csv/.html/.json/.md/.py/.txt) and the path must be under the allowed roots written ABSOLUTE; write mesh sources (e.g. OBJ) with external file tools, then `StaticMeshTools.import_file` (2026-10-29) |
 
 ## 9. Provenance
 

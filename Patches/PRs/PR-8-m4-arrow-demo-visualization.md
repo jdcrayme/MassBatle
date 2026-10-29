@@ -32,3 +32,15 @@ M4 is the phase's milestone demo, and "arrow storm" is the M2TW signature the wh
 ## Rollback
 
 The component is demo-module-only and flag-gated; deleting the component registration leaves the sim untouched (the pool never knew about rendering).
+
+## Status (2026-10-29)
+
+EXECUTED (gray-box). Code: UBattleArrowVisualComponent + flag-gated
+attach (`46d0c1c`); assets SM_Arrow (+X forward, 21.5 cm, bounds
+verified) + M_ArrowGray unlit (`3b3a528`). PIE evidence: the feed
+attached (`DemoArrows visual feed attached`), and the ISM's StaticMesh
+= SM_Arrow in the live PIE world -- the component only assigns the mesh
+once the pool has live entries. Residual: the arrow-mass screenshot is
+not obtainable through the MCP capture surface (it renders the editor
+world, not the PIE viewport); the eyeball pass is owner-scoped. Phase 5
+owns the Niagara-per-volley replacement.

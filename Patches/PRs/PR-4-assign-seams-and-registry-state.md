@@ -67,3 +67,19 @@ The assign file is the combat-side sibling of that finding.
 
 Each seam (1-3) is independently revertible; land them as separate commits behind existing cvar
 gates where meaningful (the knockback step rides the same flags).
+
+## Status (2026-10-29)
+
+EXECUTED with one falsified premise (`e085dbb`). Registry homes:
+ContactProbeTicks/bPaceThrottled on FUnitRuntimeState (culls deleted).
+Intent seam: FCombatSolver::ResolveUnitIntents + the
+Battle.Unit.Combat.AssignIntents suite. Knockback: FCombatSolver::
+ApplyChargeKnockback -- the dedicated UBattleKnockbackProcessor was
+built and A/B-falsified (the write-back's waiter-ring math reads live
+transforms and knockback victims are themselves seekers, so a post-assign
+step drifts ChargeMechanics by one kill even with the count pinned);
+the call site stays in the write-back. A/B parity: knockbacks=12
+kills=10, PairLifecycle repaired=10, identical to the pre-PR-4 binary
+across three runs. Unit 80/80; func 19/23 (the four known); the
+nightly-soak item rides the next staged run. Optional step 4 (ring-point
+to the seam) not taken -- owner call, unchanged.
