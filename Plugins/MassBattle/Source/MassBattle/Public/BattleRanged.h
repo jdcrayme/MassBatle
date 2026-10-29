@@ -58,6 +58,21 @@ struct MASSBATTLE_API FProjectileProfile
 /** The profile table (one row per EBattleProjectileKind != None). */
 MASSBATTLE_API FProjectileProfile GetProjectileProfile(EBattleProjectileKind Kind);
 
+/** Fire-pass mechanism constants (named once; the A6 TUNABLES stay in the
+ *  CVAR block -- these are mechanism margins, not tuning knobs). */
+namespace FRangedConstants
+{
+	/** TTL safety margin past the solved flight time, seconds (the pool
+	 *  write's release backstop; ground hits end flight earlier). */
+	constexpr float TtlSafetyMarginS = 2.f;
+}
+
+/** A7's arced impact-zone estimate (ONE formula, two consumers): the
+ *  dispersion cone scaled to the horizontal distance, plus the hit radius.
+ *  The seam's hold-fire zone count and the fire pass's blocker QUERY (which
+ *  pads it) read the same number -- previously two re-typed derivations. */
+MASSBATTLE_API float ImpactZoneRadiusForDist(float HorizDistM, const FProjectileProfile& Profile);
+
 /** Volley pass input: one ranged entity's fire-relevant view (spec §4.4).
  *  Plain mirror assembled by the processor in roster order -- the seam never
  *  touches fragments or worlds. */

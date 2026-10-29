@@ -140,6 +140,15 @@ FProjectileProfile GetProjectileProfile(EBattleProjectileKind Kind)
 	return P;
 }
 
+float ImpactZoneRadiusForDist(float HorizDistM, const FProjectileProfile& Profile)
+{
+	// A7's arced hold-fire estimate: the dispersion cone scaled to the
+	// horizontal distance, plus the hit radius (ONE home; the fire pass's
+	// blocker query pads this -- never re-derive it).
+	const float ConeRad = FMath::DegreesToRadians(FMath::Max(Profile.DispersionDeg, 0.01f));
+	return HorizDistM * FMath::Tan(ConeRad) + Profile.HitRadiusM;
+}
+
 // -- Seam bodies (the task-0 stubs replaced; T3.3-locked) --
 
 namespace
@@ -176,12 +185,12 @@ int32 SelectVolleyShots(
 	const float MinRangeM = FRangedCVars::MinRangeM();
 	const float GravityMps2 = FBallisticsConstants::GravityMps2 * Profile.GravityScale;
 
-	// Arced impact-zone estimate (A7): the dispersion cone scaled to the
-	// horizontal distance, plus the hit radius. Friends inside -> hold when
-	// the count exceeds the tolerance.
-	const float HorizDist = FVector2D::Distance(InOutShooters.Num() > 0 ? InOutShooters[0].PosM : FVector2D::ZeroVector, Target.PosM);
-	const float ConeRad = FMath::DegreesToRadians(FMath::Max(Profile.DispersionDeg, 0.01f));
-	const float ImpactZoneRadiusM = (InOutShooters.Num() > 0 ? HorizDist : 0.f) * FMath::Tan(ConeRad) + Profile.HitRadiusM;
+	// Arced impact-zone estimate (A7), ONE formula (the seam helper): the
+	// fire pass's blocker query reads the same estimate padded. Friends
+	// inside -> hold when the count exceeds the tolerance.
+	const float ImpactZoneRadiusM = InOutShooters.Num() > 0
+		? ImpactZoneRadiusForDist(FVector2D::Distance(InOutShooters[0].PosM, Target.PosM), Profile)
+		: 0.f;
 	int32 FriendsInZone = 0;
 	for (const FVector2D& Friend : FriendlyLaneBlockersM)
 	{
@@ -218,11 +227,11 @@ int32 SelectVolleyShots(
 		{
 			const FVector2D Dir = (Target.PosM - Shooter.PosM).GetSafeNormal();
 			const FVector2D FrontageEnd = Shooter.PosM + Dir * FRangedCVars::FrontageClearM();
-			bClear = FBallisticsMath::MarchClear(Grid, Shooter.PosM, Shooter.EyeZM, FrontageEnd, Shooter.EyeZM, 0.3f);
+			bClear = FBallisticsMath::MarchClear(Grid, Shooter.PosM, Shooter.EyeZM, FrontageEnd, Shooter.EyeZM, FBallisticsConstants::LosClearanceM);
 		}
 		else
 		{
-			bClear = FBallisticsMath::MarchClear(Grid, Shooter.PosM, Shooter.EyeZM, Target.PosM, Target.ZM, 0.3f);
+			bClear = FBallisticsMath::MarchClear(Grid, Shooter.PosM, Shooter.EyeZM, Target.PosM, Target.ZM, FBallisticsConstants::LosClearanceM);
 			if (bClear)
 			{
 				for (const FVector2D& Friend : FriendlyLaneBlockersM)

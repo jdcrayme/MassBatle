@@ -60,7 +60,9 @@ namespace
 	TArray<FVector2D> GHashPositions;
 	TMap<FUnitHandle, FVector2D> GAnchorsM;
 	TMap<FUnitHandle, FUnitHandle> GEnemyOf;
-
+	/** Blocker-query pad, meters: the hash circle is a strict superset of the
+	 *  rule's geometry (the seam's zone estimate / the flat corridor bound). */
+	constexpr float BlockerQueryPadM = 2.f;
 	/** Formation anchor of a unit, meters (its first roster entity's shared
 	 *  fragment); false when the unit has no live formation chunk. */
 	bool FindUnitAnchorM(FMassEntityManager& EM, const TArray<FMassEntityHandle>& Roster, FVector2D& OutAnchorM)
@@ -79,27 +81,39 @@ namespace
 		return true;
 	}
 
+	/** Per-pass unit->actor cache (EC9): ONE actor sweep per fire pass --
+	 *  the previous per-unit TActorIterator scan was O(units x actors) per
+	 *  tick on the game thread. Reset at pass start; filled lazily on the
+	 *  first mirror call. */
+	TMap<FUnitHandle, TWeakObjectPtr<AUnitActor>> GActorsByUnit;
+
 	/** A14 UI mirror: the registry owns the fraction's authority; the unit
 	 *  actor's AmmoPool attribute mirrors it for HUD reads. No actor (unit
 	 *  tier worlds) -> no-op. */
 	void MirrorAmmoPoolToGas(UWorld* InWorld, const FUnitHandle& InHandle, float Fraction)
 	{
-		for (TActorIterator<AUnitActor> It(InWorld); It; ++It)
+		if (GActorsByUnit.Num() == 0)
 		{
-			AUnitActor* Actor = *It;
-			if (Actor->GetUnitHandle() != InHandle)
+			for (TActorIterator<AUnitActor> It(InWorld); It; ++It)
 			{
-				continue;
-			}
-			if (UAbilitySystemComponent* ASC = Actor->GetAbilitySystemComponent())
-			{
-				const FGameplayAttribute Attribute = UUnitAttributeSet::FindAttributeByName(TEXT("AmmoPool"));
-				if (Attribute.IsValid())
+				if (It->GetUnitHandle().IsValid())
 				{
-					ASC->SetNumericAttributeBase(Attribute, FMath::Clamp(Fraction, 0.f, 1.f));
+					GActorsByUnit.Add(It->GetUnitHandle(), TWeakObjectPtr<AUnitActor>(*It));
 				}
 			}
-			break;
+		}
+		AUnitActor* Actor = GActorsByUnit.FindRef(InHandle).Get();
+		if (!Actor)
+		{
+			return;
+		}
+		if (UAbilitySystemComponent* ASC = Actor->GetAbilitySystemComponent())
+		{
+			const FGameplayAttribute Attribute = UUnitAttributeSet::FindAttributeByName(TEXT("AmmoPool"));
+			if (Attribute.IsValid())
+			{
+				ASC->SetNumericAttributeBase(Attribute, FMath::Clamp(Fraction, 0.f, 1.f));
+			}
 		}
 	}
 }
@@ -132,7 +146,7 @@ void RunRangedFirePass(UWorld* World, float DeltaSeconds)
 
 	GAnchorsM.Reset();
 	GEnemyOf.Reset();
-
+	GActorsByUnit.Reset(); // per-pass: ONE sweep serves every mirror call
 	// Pass-level maps (sorted order -> deterministic first-wins): unit
 	// anchors (the skirmish geometry + the volley aim point) and the
 	// engagement-record enemy (the A11 target fallback).
@@ -202,11 +216,13 @@ void RunRangedFirePass(UWorld* World, float DeltaSeconds)
 					? (*MyAnchor - EnemyAnchorM) / FMath::Max(NearestEnemyDistM, 1e-3f)
 					: FVector2D(0.f, 1.f);
 				const FVector2D RetreatAnchorM = *MyAnchor + AwayDir * (BreakDist * 2.f);
+				// Facing from the SAME formation shared fragment the anchor
+				// read (no second registry lookup -- State->Roster IS the roster).
 				float FacingYaw = 0.f;
-				if (const TArray<FMassEntityHandle>* Roster = Registry->FindRoster(Handle))
+				if (State->Roster.Num() > 0)
 				{
 					if (const FUnitFormationSharedFragment* Formation =
-						EM.GetSharedFragmentDataPtr<FUnitFormationSharedFragment>((*Roster)[0]))
+						EM.GetSharedFragmentDataPtr<FUnitFormationSharedFragment>(State->Roster[0]))
 					{
 						FacingYaw = Formation->FacingYaw;
 					}
@@ -324,9 +340,11 @@ void RunRangedFirePass(UWorld* World, float DeltaSeconds)
 		if (Hash)
 		{
 			const float DistM = FVector2D::Distance(GShooters[0].PosM, Target.PosM);
+			// The blocker QUERY radius: the arced impact-zone estimate (the
+			// seam's ONE formula, padded) or the flat corridor's midpoint bound.
 			const float QueryRadiusM = Profile.bIndirect
-				? DistM * FMath::Tan(FMath::DegreesToRadians(FMath::Max(Profile.DispersionDeg, 0.01f))) + Profile.HitRadiusM + 2.f
-				: DistM * 0.5f + 2.f * BattleBody::RadiusM + Profile.HitRadiusM + 2.f;
+				? ImpactZoneRadiusForDist(DistM, Profile) + BlockerQueryPadM
+				: DistM * 0.5f + 2.f * BattleBody::RadiusM + Profile.HitRadiusM + BlockerQueryPadM;
 			const FVector2D QueryCenterM = Profile.bIndirect
 				? Target.PosM
 				: (*TargetAnchor + GShooters[0].PosM) * 0.5f;
@@ -434,7 +452,7 @@ void RunRangedFirePass(UWorld* World, float DeltaSeconds)
 			Pool.VelY[Slot] = Shot.LaunchDir.Y * Profile.MuzzleSpeedMps;
 			Pool.VelZ[Slot] = Shot.LaunchDir.Z * Profile.MuzzleSpeedMps;
 			Pool.GravityScale[Slot] = Profile.GravityScale;
-			Pool.TTL[Slot] = Shot.FlightTimeS + 2.f; // safety net past impact
+			Pool.TTL[Slot] = Shot.FlightTimeS + FRangedConstants::TtlSafetyMarginS; // release backstop past impact
 			Pool.Kind[Slot] = static_cast<uint8>(Shot.Kind);
 			Pool.GenerationArray[Slot] = Generation;
 			Pool.OwnerUnit[Slot] = Shot.Unit;
@@ -495,7 +513,7 @@ void RunRangedFirePass(UWorld* World, float DeltaSeconds)
 			if (UnitAnchorM)
 			{
 				const float Fraction = FMath::Clamp(
-					static_cast<float>(AmmoSum) / FMath::Max(1, State->RangedInitialAmmo * State->InitialRosterSize), 0.f, 1.f);
+					ComputeAmmoFraction(AmmoSum, State->RangedInitialAmmo, State->InitialRosterSize), 0.f, 1.f);
 				const float BarH = 2.5f * Fraction;
 				FBattleOverlayLine Bar;
 				Bar.Shape = EBattleOverlayShape::Segment;
@@ -517,8 +535,8 @@ void RunRangedFirePass(UWorld* World, float DeltaSeconds)
 		}
 		if (Debug)
 		{
-			MirrorAmmoPoolToGas(World, Handle, static_cast<float>(AmmoSum)
-				/ static_cast<float>(FMath::Max(1, State->RangedInitialAmmo * State->InitialRosterSize)));
+			MirrorAmmoPoolToGas(World, Handle,
+				ComputeAmmoFraction(AmmoSum, State->RangedInitialAmmo, State->InitialRosterSize));
 		}
 
 		if (Debug)

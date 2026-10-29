@@ -4,9 +4,16 @@
 #include "BattleProjectileSubsystem.h"
 #include "BattleRanged.h"
 
+namespace
+{
+	/** Floor for the cvar read: a pool smaller than this cannot serve even a
+	 *  pair of volleys; the cvar is the tuning knob, this is the sanity bound. */
+	constexpr int32 MinPoolReserve = 16;
+}
+
 void UBattleProjectileSubsystem::ReserveForBattle()
 {
-	Pool.Reserve(FMath::Max(16, FRangedCVars::PoolCapacity()));
+	Pool.Reserve(FMath::Max(MinPoolReserve, FRangedCVars::PoolCapacity()));
 }
 
 void UBattleProjectileSubsystem::ResetForBattle()

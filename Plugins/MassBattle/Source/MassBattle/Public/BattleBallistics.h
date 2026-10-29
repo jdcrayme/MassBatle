@@ -22,6 +22,10 @@ namespace FBallisticsConstants
 	/** Numerical guards. */
 	constexpr float DistanceEpsilonM = 1e-4f;
 	constexpr float ConeEpsilonDeg = 1e-4f;
+	/** Default LOS clearance above terrain, meters (the march's occlusion
+	 *  margin -- the ranged fire-rule call sites read this; was the
+	 *  re-typed 0.3f, phase-3 audit). */
+	constexpr float LosClearanceM = 0.3f;
 }
 
 /** Launch solution for one shot (spec §4.1). */
