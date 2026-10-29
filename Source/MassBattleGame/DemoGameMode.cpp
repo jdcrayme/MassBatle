@@ -9,10 +9,17 @@
 #include "BattleRegistry.h"
 #include "BattleGarrisonSubsystem.h"
 #include "BattleExecCommands.h"
+#include "BattleSpawnLibrary.h"
+#include "BattleEduParser.h"
+#include "BattleRanged.h"
+#include "BattleArrowVisualComponent.h"
+#include "Components/SceneComponent.h"
 #include "HAL/IConsoleManager.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "MassEntitySubsystem.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
 #include "TimerManager.h"
 
 ADemoGameMode::ADemoGameMode()
@@ -35,6 +42,25 @@ void ADemoGameMode::BeginPlay()
 	BattleExec::EnableDemoCombatPipeline();
 	UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoCombat pipeline on (hash/clusters/tally/assign session-on)"));
 
+	// PR-8: the gray-box arrow feed -- one ISM batched from the projectile
+	// pool each frame, attached when the ranged flags are on. Flag-gated so a
+	// Battle.Ranged.Enable=0 session stays visually identical to pre-ranged.
+	UWorld* World = GetWorld();
+	if (FRangedCVars::Enable() && World)
+	{
+		if (AActor* Host = World->SpawnActor<AActor>(AActor::StaticClass()))
+		{
+			USceneComponent* Root = NewObject<USceneComponent>(Host, TEXT("ArrowHostRoot"));
+			Root->SetMobility(EComponentMobility::Movable);
+			Root->RegisterComponent();
+			Host->SetRootComponent(Root);
+			ArrowVisuals = NewObject<UBattleArrowVisualComponent>(Host, TEXT("ArrowVisuals"));
+			ArrowVisuals->SetupAttachment(Root);
+			ArrowVisuals->RegisterComponent();
+			UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoArrows visual feed attached (PR-8 gray-box)"));
+		}
+	}
+
 	// Scenario authoring is level-driven: every ADemoUnitActor placed in the
 	// map defines one unit (position = anchor, yaw = facing, EduRowIndex /
 	// SoldierCount / NumRanks / FormationSpacing editable in the details
@@ -45,17 +71,25 @@ void ADemoGameMode::BeginPlay()
 	}
 	UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoGameMode discovered %d level units"), LevelUnits.Num());
 
-	// Phase 2 (task 8, M3 geometry-only): the DEMO map with nothing
-	// level-placed registers the representative mob sample through the
-	// plugin's public Exec fixture (ADR-18 pattern: the game module consumes
-	// plugin public API only). Gated to the demo map: the automation maps
+	// PR-1: the map-assigned scenario asset is the first authoring channel
+	// (data-driven composition). Empty-asset maps keep today's M3 sample
+	// fallback -- gated to the demo map exactly as before: the automation maps
 	// have no placed units either, and a stray sample would poison their
 	// world-state asserts (measured 2026-10-27: 56 extra live entities on
 	// L_MassBattle_T0_Functional). The morale beat re-runs after Phase 4.
-	if (LevelUnits.Num() == 0 && GetWorld()->GetMapName().Contains(TEXT("Demo")))
+	if (LevelUnits.Num() == 0)
 	{
-		UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoGameMode no level units -- registering the M3 mob sample (geometry-only)"));
-		GetWorldTimerManager().SetTimerForNextTick(this, &ADemoGameMode::RegisterM3Sample);
+		if (ScenarioAsset)
+		{
+			UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoGameMode spawning scenario asset %s (%d rows)"),
+				*ScenarioAsset->GetName(), ScenarioAsset->Spawns.Num());
+			GetWorldTimerManager().SetTimerForNextTick(this, &ADemoGameMode::SpawnScenarioAsset);
+		}
+		else if (GetWorld()->GetMapName().Contains(TEXT("Demo")))
+		{
+			UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoGameMode no level units -- registering the M3 mob sample (geometry-only)"));
+			GetWorldTimerManager().SetTimerForNextTick(this, &ADemoGameMode::RegisterM3Sample);
+		}
 	}
 
 	// Entity creation must land on the game thread with Mass idle (the soak
@@ -98,6 +132,105 @@ void ADemoGameMode::RegisterM3Sample()
 	// threat, arrows as the debug overlay segments until PR-8's visual pass.
 	BattleExec::RangedSpawnVolley({TEXT("skirmish")}, World);
 	UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoGameMode M4 sample registered (SpawnVolley skirmish, overlay-only arrows)"));
+}
+
+void ADemoGameMode::SpawnScenarioAsset()
+{
+	UWorld* World = GetWorld();
+	if (!World || !ScenarioAsset || bScenarioSpawned)
+	{
+		return;
+	}
+	// Spawn needs Mass idle (the level-unit path waits out the same grace).
+	if (!World->HasBegunPlay() || World->GetSubsystem<UMassEntitySubsystem>() == nullptr)
+	{
+		GetWorldTimerManager().SetTimerForNextTick(this, &ADemoGameMode::SpawnScenarioAsset);
+		return;
+	}
+
+	// The golden EDU is the unit-type catalog; rows match by dictionary name
+	// (B-3). Same fixture file the plugin's SpawnClash reads.
+	const FString FixturePath = FPaths::ProjectContentDir() / TEXT("Data/EDU/golden_edu_v1.txt");
+	FString EduText;
+	TArray<FEduUnit> Rows;
+	FEduParseError Err;
+	if (!FFileHelper::LoadFileToString(EduText, *FixturePath)
+		|| !FBattleEduParser::Parse(EduText, Rows, Err))
+	{
+		UE_LOG(LogDemoBattle, Error, TEXT("EXEC_RESULT DemoScenario FAIL EDU fixture (%s)"),
+			Err.bFailed ? *Err.Message : TEXT("unreadable"));
+		bScenarioSpawned = true;
+		return;
+	}
+
+	const auto FindRow = [&Rows](const FName& Dictionary) -> int32
+	{
+		for (int32 i = 0; i < Rows.Num(); ++i)
+		{
+			const FEduField* Dict = Rows[i].FindField(TEXT("dictionary"));
+			if (Dict && Dict->GetValue().Equals(Dictionary.ToString(), ESearchCase::IgnoreCase))
+			{
+				return i;
+			}
+		}
+		return INDEX_NONE;
+	};
+
+	TArray<FUnitHandle> Spawned;
+	for (const FDemoScenarioSpawn& RowDef : ScenarioAsset->Spawns)
+	{
+		const int32 EduRow = FindRow(RowDef.Dictionary);
+		if (EduRow == INDEX_NONE)
+		{
+			UE_LOG(LogDemoBattle, Error, TEXT("EXEC_RESULT DemoScenario FAIL unknown EDU dictionary '%s'"),
+				*RowDef.Dictionary.ToString());
+			return;
+		}
+		FUnitSpawnSpec Spec;
+		Spec.EduRowIndex = EduRow;
+		Spec.SoldierCount = RowDef.Count;
+		Spec.SpawnPos = RowDef.PosM * 100.f;
+		Spec.SpawnYaw = RowDef.YawDeg;
+		Spec.NumRanks = RowDef.NumRanks;
+		Spec.TeamId = RowDef.TeamId;
+		FBattleSpawnResult Result;
+		FString Error;
+		if (!UBattleSpawnLibrary::SpawnUnitFromEduRow(World, Spec, Rows[EduRow], Result, Error)
+			|| !Result.Unit.IsValid())
+		{
+			UE_LOG(LogDemoBattle, Error, TEXT("EXEC_RESULT DemoScenario FAIL spawn '%s': %s"),
+				*RowDef.Dictionary.ToString(), *Error);
+			return;
+		}
+		Spawned.Add(Result.Unit);
+	}
+
+	switch (ScenarioAsset->AutoOrder)
+	{
+	case EDemoScenarioAutoOrder::LastAttackMoveOrigin:
+		if (UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>())
+		{
+			Registry->IssueAttackMoveOrder(Spawned.Last(), FVector2D(0.f, 0.f), 0.f);
+		}
+		break;
+	case EDemoScenarioAutoOrder::LastAttacksFirst:
+		if (UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>())
+		{
+			Registry->IssueAttackUnitOrder(Spawned.Last(), Spawned[0]);
+		}
+		break;
+	default:
+		break;
+	}
+
+	bScenarioSpawned = true;
+	FString Ids;
+	for (const FUnitHandle& H : Spawned)
+	{
+		Ids += FString::Printf(TEXT(" %u:%u"), H.Index, H.Serial);
+	}
+	UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoScenario OK asset=%s rows=%d units:%s"),
+		*ScenarioAsset->GetName(), Spawned.Num(), *Ids);
 }
 
 void ADemoGameMode::VerifyGarrisonStructures()

@@ -8,9 +8,11 @@
 #include "CoreMinimal.h"
 #include "GameFramework/GameModeBase.h"
 #include "DemoTypes.h"
+#include "BattleScenarioAsset.h"
 #include "DemoGameMode.generated.h"
 
 class ADemoUnitActor;
+class UBattleArrowVisualComponent;
 
 UCLASS()
 class MASSBATTLEGAME_API ADemoGameMode : public AGameModeBase
@@ -28,7 +30,18 @@ private:
 	/** Deferred spawn pump: retries until the world + Mass are ready. */
 	void TrySpawnLevelUnits();
 	void RegisterM3Sample();
+	/** PR-1: spawns the map-assigned scenario asset's rows (data-driven
+	 *  composition; the M3 sample below is the empty-asset fallback). */
+	void SpawnScenarioAsset();
 	void AdoptVisuals();
+
+	/** PR-1: the authored scenario (spawn rows + auto order) assigned in the
+	 *  map. Empty keeps the M3 sample fallback. */
+	UPROPERTY(EditAnywhere, Category = "Battle|Demo")
+	TObjectPtr<UDemoScenarioAsset> ScenarioAsset;
+
+	/** True once the scenario asset spawned (or none was assigned). */
+	bool bScenarioSpawned = false;
 
 	/** One-time click-path probe after the level settles: resolves each
 	 *  registered structure's own footprint center through the SAME static
@@ -44,4 +57,8 @@ private:
 
 	/** Level-placed unit actors found at BeginPlay (authored in the map). */
 	UPROPERTY() TArray<TObjectPtr<ADemoUnitActor>> LevelUnits;
+
+	/** PR-8: the gray-box arrow feed (one ISM batched from the projectile
+	 *  pool), attached when the ranged flags are on. */
+	UPROPERTY(Transient) TObjectPtr<UBattleArrowVisualComponent> ArrowVisuals;
 };

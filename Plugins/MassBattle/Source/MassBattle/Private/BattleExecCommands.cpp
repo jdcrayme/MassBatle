@@ -13,6 +13,7 @@
 #include "BattleCostGridSubsystem.h"
 #include "BattleSave.h"
 #include "BattleSpawnLibrary.h"
+#include "BattleScenarioAsset.h"
 #include "BattleStateHash.h"
 #include "BattleUnitTrait.h"
 #include "BattleGarrison.h"
@@ -755,10 +756,13 @@ namespace
 	// must not silently swap knight for peasant in a scenario.
 	struct FClashUnitSpec
 	{
-		const TCHAR* Dictionary; // EDU 'dictionary' value (unique per row)
+		FString Dictionary; // EDU 'dictionary' value (unique per row; FString so
+		                    // asset-row aggregate init can't dangle)
 		int32 Count;
 		FVector2D PosM = FVector2D::ZeroVector;
 		float YawDeg = 0.f;
+		int32 NumRanks = 3;
+		uint8 TeamId = 0;
 	};
 
 	int32 FindEduRowIndexByDictionary(const TArray<FEduUnit>& Rows, const FString& Dictionary)
@@ -780,7 +784,7 @@ namespace
 		if (EduRow == INDEX_NONE)
 		{
 			UE_LOG(LogMassBattle, Display,
-				TEXT("EXEC_RESULT SpawnClash FAIL unknown EDU dictionary '%s'"), Unit.Dictionary);
+				TEXT("EXEC_RESULT SpawnClash FAIL unknown EDU dictionary '%s'"), *Unit.Dictionary);
 			return FUnitHandle();
 		}
 		FBattleRowStats Stats;
@@ -795,7 +799,8 @@ namespace
 		Spec.UnitName = Stats.TypeName;
 		Spec.SpawnPos = Unit.PosM * 100.f;
 		Spec.SpawnYaw = Unit.YawDeg;
-		Spec.NumRanks = 3;
+		Spec.NumRanks = Unit.NumRanks;
+		Spec.TeamId = Unit.TeamId;
 		const FBattleSpawnResult Result = UBattleSpawnLibrary::SpawnUnit(World, Spec, Stats);
 		return Result.Unit;
 	}
@@ -814,46 +819,89 @@ void CombatSpawnClash(const TArray<FString>& Args, UWorld* World)
 	// The demo fixture rides the combat machinery persistently (visual demo).
 	EnableDemoCombatPipeline();
 
-	// Fixture compositions (B-3): scenario DATA lives here as a table --
-	// unit type by EDU dictionary name, count, spawn transform -- not as
-	// scattered typed literals in call arguments. Adding a variant or
-	// retuning a clash shape means editing THIS table only.
+	// Fixture composition (PR-1): scenario DATA is authored data --
+	// /Game/MassBattle/Data/Scenarios/DA_<variant> (UDemoScenarioAsset),
+	// reviewable in a diff and tunable without a recompile. The C++ tables
+	// below are the CI fallback when the asset is missing (backwards-compat;
+	// audit B-3's original one-home rule now reads from the asset channel).
 	const FString Variant = Args[0];
-	TArray<FClashUnitSpec> WallUnits = {
-		{TEXT("Peasant_Levy"), 40, FVector2D(0.f, 0.f), 180.f},
-		{TEXT("Sergeant_Spearmen"), 40, FVector2D(-24.f, 0.f), 0.f},
-	};
-	TArray<FClashUnitSpec> MobUnits = {
-		{TEXT("Sergeant_Spearmen"), 8, FVector2D(0.f, -3.f), 180.f},
-		{TEXT("Sergeant_Spearmen"), 8, FVector2D(0.f, 3.f), 180.f},
-		{TEXT("Peasant_Levy"), 40, FVector2D(-20.f, 0.f), 0.f},
-	};
-	TArray<FClashUnitSpec> ChargeUnits = {
-		{TEXT("Peasant_Levy"), 12, FVector2D(0.f, 0.f), 180.f},
-		{TEXT("Peasant_Levy"), 12, FVector2D(-24.f, 0.f), 0.f},
-	};
-	const TCHAR* VariantName = nullptr;
-	TArray<FClashUnitSpec>* Units = nullptr;
+	EDemoScenarioAutoOrder AutoOrder = EDemoScenarioAutoOrder::None;
+	TArray<FClashUnitSpec> Units;
+	FString Channel;
+	// The authored scenario names are fixed (DA_Wall/DA_Mob/DA_Charge); an
+	// unknown variant skips the asset lookup and fails in the table branch.
+	const TCHAR* AssetBase = nullptr;
 	if (Variant == TEXT("wall"))
 	{
-		VariantName = TEXT("wall");
-		Units = &WallUnits;
+		AssetBase = TEXT("DA_Wall");
 	}
 	else if (Variant == TEXT("mob"))
 	{
-		VariantName = TEXT("mob");
-		Units = &MobUnits;
+		AssetBase = TEXT("DA_Mob");
 	}
 	else if (Variant == TEXT("charge"))
 	{
-		VariantName = TEXT("charge");
-		Units = &ChargeUnits;
+		AssetBase = TEXT("DA_Charge");
 	}
-	else
+	if (AssetBase)
 	{
-		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SpawnClash FAIL unknown variant %s"), *Variant);
-		return;
+		const FString AssetPath = FString::Printf(TEXT("/Game/MassBattle/Data/Scenarios/%s.%s"), AssetBase, AssetBase);
+		if (const UDemoScenarioAsset* Scenario = LoadObject<UDemoScenarioAsset>(nullptr, *AssetPath))
+		{
+			for (const FDemoScenarioSpawn& Row : Scenario->Spawns)
+			{
+				Units.Add({*Row.Dictionary.ToString(), Row.Count, Row.PosM, Row.YawDeg, Row.NumRanks, Row.TeamId});
+			}
+			AutoOrder = Scenario->AutoOrder;
+			Channel = TEXT("asset");
+		}
 	}
+	if (Units.Num() == 0)
+	{
+		if (!Channel.IsEmpty())
+		{
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SpawnClash FAIL %s asset has no spawns"), *Variant);
+			return;
+		}
+		// Fallback tables (audit B-3's C++ one-home, kept for CI until the
+		// scenario assets are verified on the reference machine).
+		TArray<FClashUnitSpec> WallUnits = {
+			{TEXT("Peasant_Levy"), 40, FVector2D(0.f, 0.f), 180.f},
+			{TEXT("Sergeant_Spearmen"), 40, FVector2D(-24.f, 0.f), 0.f},
+		};
+		TArray<FClashUnitSpec> MobUnits = {
+			{TEXT("Sergeant_Spearmen"), 8, FVector2D(0.f, -3.f), 180.f},
+			{TEXT("Sergeant_Spearmen"), 8, FVector2D(0.f, 3.f), 180.f},
+			{TEXT("Peasant_Levy"), 40, FVector2D(-20.f, 0.f), 0.f},
+		};
+		TArray<FClashUnitSpec> ChargeUnits = {
+			{TEXT("Peasant_Levy"), 12, FVector2D(0.f, 0.f), 180.f},
+			{TEXT("Peasant_Levy"), 12, FVector2D(-24.f, 0.f), 0.f},
+		};
+		if (Variant == TEXT("wall"))
+		{
+			Units = WallUnits;
+			AutoOrder = EDemoScenarioAutoOrder::LastAttacksFirst;
+		}
+		else if (Variant == TEXT("mob"))
+		{
+			Units = MobUnits;
+			AutoOrder = EDemoScenarioAutoOrder::LastAttackMoveOrigin;
+		}
+		else if (Variant == TEXT("charge"))
+		{
+			Units = ChargeUnits;
+			AutoOrder = EDemoScenarioAutoOrder::LastAttacksFirst;
+		}
+		else
+		{
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SpawnClash FAIL unknown variant %s"), *Variant);
+			return;
+		}
+		Channel = TEXT("cpp-fallback");
+	}
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SpawnClash channel=%s variant=%s rows=%d"),
+		*Channel, *Variant, Units.Num());
 
 	// Load the EDU once per command; rows are matched by dictionary name.
 	const FString FixturePath = FPaths::ProjectContentDir() / TEXT("Data/EDU/golden_edu_v1.txt");
@@ -869,27 +917,29 @@ void CombatSpawnClash(const TArray<FString>& Args, UWorld* World)
 	}
 
 	TArray<FUnitHandle> Spawned;
-	Spawned.Reserve(Units->Num());
-	for (const FClashUnitSpec& Unit : *Units)
+	Spawned.Reserve(Units.Num());
+	for (const FClashUnitSpec& Unit : Units)
 	{
 		const FUnitHandle Handle = SpawnClashUnitExec(World, Rows, Unit);
 		if (!Handle.IsValid())
 		{
-			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SpawnClash FAIL %s spawn"), VariantName);
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SpawnClash FAIL %s spawn"), *Variant);
 			return;
 		}
 		Spawned.Add(Handle);
 	}
-	// Orders by convention: wall/charge = last unit attacks the first; mob =
-	// the peasants (spawn order: knights first, peasants last) attack-move to
-	// the origin.
-	if (Variant == TEXT("mob"))
+	// Orders by the scenario's convention (asset AutoOrder; the fallback
+	// tables set the historical equivalents).
+	switch (AutoOrder)
 	{
+	case EDemoScenarioAutoOrder::LastAttackMoveOrigin:
 		Registry->IssueAttackMoveOrder(Spawned.Last(), FVector2D(0.f, 0.f), 0.f);
-	}
-	else
-	{
+		break;
+	case EDemoScenarioAutoOrder::LastAttacksFirst:
 		Registry->IssueAttackUnitOrder(Spawned.Last(), Spawned[0]);
+		break;
+	default:
+		break;
 	}
 	FString Ids;
 	for (const FUnitHandle& H : Spawned)
@@ -900,7 +950,7 @@ void CombatSpawnClash(const TArray<FString>& Args, UWorld* World)
 		? TEXT(" (command Battle.Movement.WalkSpeed 6 to reach the fresh-contact gate)")
 		: TEXT("");
 	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SpawnClash OK %s%s units:%s"),
-		VariantName, *ChargeHint, *Ids);
+		*Variant, *ChargeHint, *Ids);
 }
 
 void CombatPerfStress(const TArray<FString>& Args, UWorld* World)
