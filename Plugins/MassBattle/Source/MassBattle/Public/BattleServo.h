@@ -27,6 +27,7 @@ struct FAvoidanceNeighbor
 	FVector2D Vel = FVector2D::ZeroVector;
 	float Radius = 0.4f;     // m
 	uint32 HandleIndex = 0;
+	uint32 CanonicalKey = 0; // A13 identity (unit + roster slot): parity/asymmetry + canonical sum order (RC8)
 };
 
 namespace FUnitServo

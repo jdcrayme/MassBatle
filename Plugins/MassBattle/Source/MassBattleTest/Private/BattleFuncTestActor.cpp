@@ -5630,6 +5630,17 @@ void ADeterminismTwoRunTest::SetCvars()
 			C->Set(1, ECVF_SetByCode);
 		}
 	}
+	static const TCHAR* RangedNames[4] = {
+		TEXT("Battle.Ranged.Enable"), TEXT("Battle.Ranged.Fire"),
+		TEXT("Battle.Ranged.Step"), TEXT("Battle.Ranged.Skirmish") };
+	for (int32 i = 0; i < 4; ++i)
+	{
+		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(RangedNames[i]))
+		{
+			SavedRanged[i] = C->GetInt();
+			C->Set(1, ECVF_SetByCode);
+		}
+	}
 }
 
 void ADeterminismTwoRunTest::RestoreCvars()
@@ -5641,12 +5652,110 @@ void ADeterminismTwoRunTest::RestoreCvars()
 			C->Set(SavedCvars[i], ECVF_SetByCode);
 		}
 	}
+	static const TCHAR* RangedNames[4] = {
+		TEXT("Battle.Ranged.Enable"), TEXT("Battle.Ranged.Fire"),
+		TEXT("Battle.Ranged.Step"), TEXT("Battle.Ranged.Skirmish") };
+	for (int32 i = 0; i < 4; ++i)
+	{
+		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(RangedNames[i]))
+		{
+			C->Set(SavedRanged[i], ECVF_SetByCode);
+		}
+	}
 }
 
 void ADeterminismTwoRunTest::Destroyed()
 {
 	RestoreCvars();
 	Super::Destroyed();
+}
+
+void ADeterminismTwoRunTest::SpawnMixedFixture()
+{
+	// Phase 3 (RC8): archers + infantry on BOTH sides. Team 0 west, team 1
+	// east; the infantries clash at 50 m, the archers (100 m, outside the
+	// clash) volley at the enemy infantry. Deterministic: fixed actor spawn
+	// order + transforms; the runs differ only by the RNG root's draws.
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+	if (UBattleProjectileSubsystem* Projectiles = World->GetSubsystem<UBattleProjectileSubsystem>())
+	{
+		Projectiles->ReserveForBattle();
+	}
+	struct FSide { int32 Row; int32 Count; float X; float Y; float Yaw; uint8 Team; const TCHAR* Name; };
+	const FSide Sides[] = {
+		{ 0, 24, -25.f, 0.f, 0.f, 0, TEXT("infA") },    // team 0 infantry
+		{ 2, 16, -100.f, 0.f, 0.f, 0, TEXT("archA") },  // team 0 archers
+		{ 0, 24, 25.f, 0.f, 180.f, 1, TEXT("infB") },   // team 1 infantry
+		{ 2, 16, 100.f, 0.f, 180.f, 1, TEXT("archB") }, // team 1 archers
+	};
+	UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>();
+	FUnitHandle InfA, ArchA, InfB, ArchB;
+	for (const FSide& Side : Sides)
+	{
+		FActorSpawnParameters Params;
+		Params.ObjectFlags |= RF_Transient;
+		AUnitActor* Actor = World->SpawnActor<AUnitActor>(
+			FVector(Side.X * 100.f, Side.Y * 100.f, 100.f), FRotator(0.f, Side.Yaw, 0.f), Params);
+		if (!Actor)
+		{
+			continue;
+		}
+		Actor->EduRowIndex = Side.Row;
+		Actor->SoldierCount = Side.Count;
+		Actor->TeamId = Side.Team;
+		FBattleSpawnResult R;
+		FString E;
+		if (!Actor->SpawnEntities(R, E))
+		{
+			UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT DeterminismTwoRun spawn FAIL %s: %s"), Side.Name, *E);
+			continue;
+		}
+		if (Side.Team == 0)
+		{
+			if (Side.Row == 0) { InfA = Actor->GetUnitHandle(); }
+			else { ArchA = Actor->GetUnitHandle(); }
+		}
+		else
+		{
+			if (Side.Row == 0) { InfB = Actor->GetUnitHandle(); }
+			else { ArchB = Actor->GetUnitHandle(); }
+		}
+	}
+	// Mutual attack orders (both sides advance + volley).
+	Registry->IssueAttackUnitOrder(InfA, InfB);
+	Registry->IssueAttackUnitOrder(InfB, InfA);
+	Registry->IssueAttackUnitOrder(ArchA, InfB);
+	Registry->IssueAttackUnitOrder(ArchB, InfA);
+	UE_LOG(LogMassBattle, Display,
+		TEXT("EXEC_RESULT DeterminismTwoRun fixture inf=24+24 archers=16+16 teams 0/1"));
+}
+
+void ADeterminismTwoRunTest::DestroyFixture()
+{
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+	for (AUnitActor* Actor : TActorRange<AUnitActor>(World))
+	{
+		if (Actor)
+		{
+			Actor->Destroy();
+		}
+	}
+	if (UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>())
+	{
+		Registry->ResetBattleState();
+	}
+	if (UBattleRngSubsystem* Rng = World->GetSubsystem<UBattleRngSubsystem>())
+	{
+		Rng->Seed(20261027); // the shared root for BOTH runs
+	}
 }
 
 void ADeterminismTwoRunTest::StartTest()
@@ -5669,13 +5778,24 @@ void ADeterminismTwoRunTest::StartTest()
 	{
 		CostGrid->ResetToFlat();
 	}
-	if (UBattleRngSubsystem* Rng = World->GetSubsystem<UBattleRngSubsystem>())
-	{
-		Rng->Seed(20261027); // the shared root for BOTH runs
-	}
-	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT DeterminismTwoRun root=20261027 run1 begin"));
+	// Archetype warm-up: the state hash folds DebugGetArchetypesCount (the
+	// B.4 growth watch). Run 1 previously CREATED the ranged compositions
+	// (first ranged spawns of the session) while run 2 reused them -- every
+	// sample diverged on the count (measured 2026-10-29). Spawn + tear down
+	// once so both runs start from the same composition set.
+	SpawnMixedFixture();
+	DestroyFixture();
+	DestroyOtherUnitActors(World);
+	DestroyFixture(); // seed + reset live here
+	// The fixture spawns at tick 1 of EACH run (the actor's Tick) -- the
+	// spawn-to-Mass-tick frame phase must be identical across runs; run 1's
+	// StartTest-phase spawn vs run 2's transition-phase spawn offset the
+	// march by one tick and every transform hash diverged (measured
+	// 2026-10-29: a uniform ~2 cm anchor delta at the first sample).
 	Phase = EPhase::Run1;
 	TicksDone = 0;
+	bNeedSpawn = true;
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT DeterminismTwoRun root=20261027 run1 begin"));
 }
 
 void ADeterminismTwoRunTest::Tick(float DeltaSeconds)
@@ -5695,6 +5815,11 @@ void ADeterminismTwoRunTest::Tick(float DeltaSeconds)
 	// One engine tick = one fixed 1/60 step under the test-mode contract
 	// (ApplyTestMode's fixed delta); the scenario just counts them.
 	++TicksDone;
+	if (bNeedSpawn && TicksDone == 1)
+	{
+		SpawnMixedFixture();
+		bNeedSpawn = false;
+	}
 
 	if (Phase == EPhase::Run1)
 	{
@@ -5705,24 +5830,13 @@ void ADeterminismTwoRunTest::Tick(float DeltaSeconds)
 		if (TicksDone >= 2400)
 		{
 			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT DeterminismTwoRun run1 done samples=%d"), Run1Hashes.Num());
-			// Between the runs: teardown + reset + re-seed.
-			for (AUnitActor* Actor : TActorRange<AUnitActor>(World))
-			{
-				if (Actor)
-				{
-					Actor->Destroy();
-				}
-			}
-			if (UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>())
-			{
-				Registry->ResetBattleState();
-			}
-			if (UBattleRngSubsystem* Rng = World->GetSubsystem<UBattleRngSubsystem>())
-			{
-				Rng->Seed(20261027);
-			}
+			// Between the runs: teardown + reset + re-seed + RE-SPAWN (the
+			// phase-2 shape hashed an empty second run -- both runs now
+			// replay the identical mixed fixture).
+			DestroyFixture();
 			Phase = EPhase::Run2;
 			TicksDone = 0;
+			bNeedSpawn = true;
 			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT DeterminismTwoRun run2 begin"));
 		}
 	}

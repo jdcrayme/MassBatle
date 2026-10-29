@@ -12,8 +12,11 @@
 
 struct MASSBATTLE_API FBattleStateHash
 {
-	/** Full sim-state hash of the world's battle data (CityHash64). */
-	static uint64 Compute(UWorld* World);
+	/** Full sim-state hash of the world's battle data (CityHash64). When
+	 *  OutSectionHashes is provided it receives one CityHash64 per SECTION
+	 *  (bookkeeping, entity state, archetype count, shared/formation/combat
+	 *  state, pool) -- the RC8 divergence bisector. */
+	static uint64 Compute(UWorld* World, TArray<uint64>* OutSectionHashes = nullptr);
 
 	/** Quantize helper: value at 1e-2 precision, as int64 (stable across runs). */
 	static int64 Quantize2(float Value);

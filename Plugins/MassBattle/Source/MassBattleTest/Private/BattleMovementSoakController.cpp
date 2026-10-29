@@ -1,4 +1,7 @@
 #include "BattleMovementSoakController.h"
+#include "BattleRanged.h"
+#include "BattleDebugSubsystem.h"
+#include "BattleProjectileSubsystem.h"
 #include "BattleEngagement.h"
 #include "BattleFragments.h"
 #include "BattleMovementFragments.h"
@@ -144,17 +147,26 @@ void UBattleMovementSoakController::OnTick(float TimeDelta)
 
 		// UnitsPerRow x UnitRows grid, 30 m columns / 30 m rows, facing north
 		// (audit M16: the grid scales for the 1k-entity movement smoke).
+		// Phase 3 volley mix (Battle.Ranged.SoakVolley=1, F13/F14): every 4th
+		// unit (~25%) spawns as the ARCHER row on team 1, the rest stay the
+		// baseline draw on team 0; the archers get an immediate attack order
+		// at the field center. Flag off = the T1.8 baseline byte-for-byte
+		// (no row changes, no TeamId writes, no orders, no stream draws).
+		const bool bVolleySoak = FRangedCVars::SoakVolley();
 		const int32 TotalUnits = UnitsPerRow * UnitRows;
+		int32 ArcherUnits = 0;
 		for (int32 i = 0; i < TotalUnits; ++i)
 		{
 			const int32 Col = i % UnitsPerRow;
 			const int32 Row = i / UnitsPerRow;
+			const bool bArcher = bVolleySoak && (i % 4 == 3);
 			FUnitSpawnSpec Spec;
-			Spec.EduRowIndex = i % Rows.Num();
+			Spec.EduRowIndex = bArcher ? FMath::Min(2, Rows.Num() - 1) : (i % Rows.Num());
 			Spec.SoldierCount = 40;
 			Spec.UnitName = FString::Printf(TEXT("Soak_%d"), i);
 			Spec.SpawnPos = FVector2D(-4500.f + Col * 3000.f, Row * 3000.f);
 			Spec.SpawnYaw = 90.f;
+			Spec.TeamId = bArcher ? 1 : 0;
 			FBattleSpawnResult Result;
 			FString Error;
 			if (!UBattleSpawnLibrary::SpawnUnitFromEduRow(World, Spec, Rows[Spec.EduRowIndex], Result, Error) || !Result.Unit.IsValid())
@@ -163,6 +175,15 @@ void UBattleMovementSoakController::OnTick(float TimeDelta)
 				FinishTest(1);
 				return;
 			}
+			if (bArcher)
+			{
+				Registry->IssueAttackMoveOrder(Result.Unit, FVector2D(0.f, 0.f), 90.f, 0.f);
+				++ArcherUnits;
+			}
+		}
+		if (bVolleySoak)
+		{
+			UE_LOG(LogGauntlet, Display, TEXT("GAUNTLET BattleMovementSoak volleyMix archerUnits=%d of %d"), ArcherUnits, TotalUnits);
 		}
 
 		// Seeded determinism (audit L13 fix): the world is up in the
@@ -578,14 +599,23 @@ void UBattleMovementSoakController::OnTick(float TimeDelta)
 			&& SeparationViolations <= SepBudget
 			&& bDressOk;
 		UE_LOG(LogGauntlet, Display,
-			TEXT("GAUNTLET BattleMovementSoak FINAL settled stuck=%d separation=%d archetypes=%d (spawn %d) garrisoned=%d unsettled=%d phases=[None=%d App=%d Queue=%d Ingress=%d Occupy=%d Settled=%d Egress=%d] duringSoak escalations=%d/%d duringSoak separationEvents=%d/%d duringSoak maxDeepStuck=%d/%d dressErr=%.2f/%.1fm(phase2=%d) fieldWide=%d skippedUnits=%d clashOrders=%d testMode=%d ok=%d"),
+			// F14: the volley counters APPEND after the existing fields --
+			// the write_baseline regex parses positionally, existing fields
+			// never move. Flag off prints 0/0/0/0 (the line length changes;
+			// the parsed positions do not).
+			TEXT("GAUNTLET BattleMovementSoak FINAL settled stuck=%d separation=%d archetypes=%d (spawn %d) garrisoned=%d unsettled=%d phases=[None=%d App=%d Queue=%d Ingress=%d Occupy=%d Settled=%d Egress=%d] duringSoak escalations=%d/%d duringSoak separationEvents=%d/%d duringSoak maxDeepStuck=%d/%d dressErr=%.2f/%.1fm(phase2=%d) fieldWide=%d skippedUnits=%d clashOrders=%d testMode=%d ok=%d volleys=%d inFlightPeak=%d friendlyHits=%d poolDrops=%d"),
 			StuckNow, SeparatedNow, ArchetypesNow, ArchetypeCountAtSpawn,
 			GarrisonedNow, GarrisonedUnsettled,
 			PhaseCounts[0], PhaseCounts[1], PhaseCounts[2], PhaseCounts[3], PhaseCounts[4], PhaseCounts[5], PhaseCounts[6],
 			DuringEsc, EscBudget, SeparationViolations, SepBudget, MaxDuringStuckDeep, DeepStuckBudget,
 			MaxDressErrorM, DressBoundM, bPhase2FlagsOn ? 1 : 0,
 			FieldWideOrders, SkippedUnitsAtAssert, ClashOrders,
-			bTestModeOk ? 1 : 0, bOk ? 1 : 0);
+			bTestModeOk ? 1 : 0, bOk ? 1 : 0,
+			Debug ? Debug->GetRangedShots() : 0,
+			Debug ? Debug->GetInFlightPeak() : 0,
+			Debug ? Debug->GetRangedFriendlyHits() : 0,
+			(World->GetSubsystem<UBattleProjectileSubsystem>()
+				? World->GetSubsystem<UBattleProjectileSubsystem>()->GetPool().GetDrops() : 0));
 		Phase = EPhase::Done;
 		FinishTest(bOk ? 0 : 1);
 	}

@@ -1217,6 +1217,87 @@ void RangedSpawnVolley(const TArray<FString>& Args, UWorld* World)
 		bSkirmish ? TEXT("skirmish") : TEXT("line"), Archers.Index, Archers.Serial, Target.Index, Target.Serial);
 }
 
+void RangedPerfStress(const TArray<FString>& Args, UWorld* World)
+{
+	// T3.6 (the T2.9 pattern): two 500-man archer units at 100 m, mutual
+	// attack orders; the VolleyRanks cvar rides to 20 for the session (the
+	// A6 default 2 would limit 500-man blocks to 2 ranks = 50 shooters) and
+	// the ranged perf probe dumps the verdict ~12 s in (steady volley:
+	// ~1,000+ in flight). Evidence: the EXEC_RESULT RangedPerf line.
+	UUnitRegistrySubsystem* Registry = World ? World->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	if (!Registry || !World)
+	{
+		UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT RangedPerfStress FAIL no world/registry"));
+		return;
+	}
+	const FString FixturePath = FPaths::ProjectContentDir() / TEXT("Data/EDU/golden_edu_v1.txt");
+	FString EduText;
+	TArray<FEduUnit> Rows;
+	FEduParseError Err;
+	if (!FFileHelper::LoadFileToString(EduText, *FixturePath) || !FBattleEduParser::Parse(EduText, Rows, Err) || Rows.Num() < 3)
+	{
+		UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT RangedPerfStress FAIL bad EDU fixture (%s)"), *Err.Message);
+		return;
+	}
+	Registry->ResetBattleState();
+	BattleExec::EnableDemoCombatPipeline();
+	for (const TCHAR* Name : { TEXT("Battle.Ranged.Enable"), TEXT("Battle.Ranged.Fire"),
+		TEXT("Battle.Ranged.Step"), TEXT("Battle.Ranged.Skirmish") })
+	{
+		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(Name))
+		{
+			C->Set(1, ECVF_SetByCode);
+		}
+	}
+	// The fixture-session rank bump (disclosed): 20 ranks of shooters.
+	if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Ranged.VolleyRanks")))
+	{
+		C->Set(20, ECVF_SetByCode);
+	}
+	if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Ranged.SkirmishBreakDistM")))
+	{
+		// The archers stand 100 m apart; keep the skirmish machine out of
+		// the perf window (no retreat marches mid-measurement).
+		C->Set(1.f, ECVF_SetByCode);
+	}
+
+	auto SpawnLine = [&](int32 RowIdx, int32 Count, const FVector2D& PosM, float YawDeg, uint8 TeamId) -> FUnitHandle
+	{
+		FBattleRowStats Stats;
+		FString Error;
+		if (!FBattleRowStats::FromEdu(Rows[RowIdx], Stats, Error))
+		{
+			return FUnitHandle();
+		}
+		FUnitSpawnSpec Spec;
+		Spec.EduRowIndex = RowIdx;
+		Spec.SoldierCount = Count;
+		Spec.UnitName = Stats.TypeName;
+		Spec.SpawnPos = PosM * 100.f;
+		Spec.SpawnYaw = YawDeg;
+		Spec.NumRanks = 20; // deep blocks: 25 x 20 = 500 per side
+		Spec.TeamId = TeamId;
+		return UBattleSpawnLibrary::SpawnUnit(World, Spec, Stats).Unit;
+	};
+	const FUnitHandle A = SpawnLine(2, 500, FVector2D(-50.f, 0.f), 0.f, 0);
+	const FUnitHandle B = SpawnLine(2, 500, FVector2D(50.f, 0.f), 180.f, 1);
+	if (!A.IsValid() || !B.IsValid())
+	{
+		UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT RangedPerfStress FAIL spawn"));
+		return;
+	}
+	Registry->IssueAttackUnitOrder(A, B);
+	Registry->IssueAttackUnitOrder(B, A);
+	if (UBattleDebugSubsystem* Debug = World->GetSubsystem<UBattleDebugSubsystem>())
+	{
+		Debug->ResetDiagnostics();
+		Debug->ArmRangedPerfProbe(700); // ~11.7 s: the steady volley
+	}
+	UE_LOG(LogMassBattle, Display,
+		TEXT("EXEC_RESULT RangedPerfStress OK A=%u:%u B=%u:%u (1000 archers at 100 m; the probe dumps RangedPerf at tick 700)"),
+		A.Index, A.Serial, B.Index, B.Serial);
+}
+
 // ---- Command registration (Task 4 portion) ----
 
 static FAutoConsoleCommandWithWorldAndArgs GBattleDumpRegistry(
@@ -1352,6 +1433,11 @@ static FAutoConsoleCommandWithWorldAndArgs GBattleRangedDump(
 	TEXT("Battle.Ranged.Dump"),
 	TEXT("[UnitIndex] -- toggles, ammo fraction + per-entity histogram, pool attribution; EXEC_RESULT RangedDump lines"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BattleExec::RangedDump));
+
+static FAutoConsoleCommandWithWorldAndArgs GBattleRangedPerfStress(
+	TEXT("Battle.Ranged.PerfStress"),
+	TEXT("T3.6: two 500-man archer units at 100 m, mutual attacks, VolleyRanks 20; the probe dumps EXEC_RESULT RangedPerf at tick 700"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BattleExec::RangedPerfStress));
 
 static FAutoConsoleCommandWithWorldAndArgs GBattleRangedSpawnVolley(
 	TEXT("Battle.Ranged.SpawnVolley"),

@@ -61,6 +61,8 @@ void UBattleDebugSubsystem::ResetDiagnostics()
 	// Phase 3 (task 5): impacts.
 	RangedImpacts = 0;
 	RangedFriendlyHits = 0;
+	// Phase 3 (task 7): the in-flight peak.
+	InFlightPeak = 0;
 }
 
 void UBattleDebugSubsystem::RecordGarrisonSettled(int32 FilingTicks, int32 QueueWaitTicks)
@@ -84,6 +86,25 @@ void UBattleDebugSubsystem::DumpGarrisonMetrics(int32 BookedUnits, int32 QueueWa
 
 void UBattleDebugSubsystem::Tick(float DeltaTime)
 {
+	// T3.6 ranged probe (the T2.9 pattern): one BattleMetrics-style verdict
+	// line at the armed tick, then disarm.
+	if (RangedPerfProbeTicks > 0 && --RangedPerfProbeTicks == 0)
+	{
+		RangedPerfProbeTicks = -1;
+		int32 PoolDropsNow = 0;
+		int32 InFlightNow = 0;
+		if (UBattleProjectileSubsystem* Projectiles = GetWorld() ? GetWorld()->GetSubsystem<UBattleProjectileSubsystem>() : nullptr)
+		{
+			PoolDropsNow = Projectiles->GetPool().GetDrops();
+			InFlightNow = Projectiles->GetPool().GetLiveCount();
+		}
+		const double RangedMs = ProjectileStepMs + RangedFireMs;
+		UE_LOG(LogMassBattle, Display,
+			TEXT("EXEC_RESULT RangedPerf InFlightNow=%d InFlightPeak=%d StepMs=%.3f FireMs=%.3f RangedMs=%.3f BudgetMs=0.300 PoolDrops=%d Verdict=%s"),
+			InFlightNow, InFlightPeak, ProjectileStepMs, RangedFireMs, RangedMs, PoolDropsNow,
+			RangedMs < 0.3 ? TEXT("PASS") : TEXT("OVER"));
+	}
+
 
 	// T2.9 perf probe (task 9): the steady-state metrics dump.
 	if (PerfProbeTicks > 0 && --PerfProbeTicks == 0)
@@ -321,11 +342,11 @@ void UBattleDebugSubsystem::DumpMetrics()
 	}
 
 	UE_LOG(LogMassBattle, Display,
-	       TEXT("EXEC_RESULT BattleMetrics Frame=%d Archetypes=%d Units=%d UnitSyncMs=%.3f BookkeepingHash=%u OverlayHook=%d CombatHashMs=%.3f TallyMs=%.3f AssignMs=%.3f Rolls=%d/%d ChargeConnects=%d DeathsF/F/R=%d/%d/%d InFlight=%d StepMs=%.3f GroundHits=%d TtlExpired=%d PoolDrops=%d PoolCapacity=%d FireMs=%.3f Shots=%d Holds=%d Impacts=%d FriendlyHits=%d"),
+	       TEXT("EXEC_RESULT BattleMetrics Frame=%d Archetypes=%d Units=%d UnitSyncMs=%.3f BookkeepingHash=%u OverlayHook=%d CombatHashMs=%.3f TallyMs=%.3f AssignMs=%.3f Rolls=%d/%d ChargeConnects=%d DeathsF/F/R=%d/%d/%d InFlight=%d StepMs=%.3f GroundHits=%d TtlExpired=%d PoolDrops=%d PoolCapacity=%d FireMs=%.3f Shots=%d Holds=%d Impacts=%d FriendlyHits=%d InFlightPeak=%d"),
 	       LastMetrics.Frame, ArchetypeCount, LastMetrics.UnitCount,
 	       LastMetrics.UnitSyncMs, static_cast<uint32>(LastMetrics.RegistryHash32), BattleDebugShowOverlay,
 	       CombatHashMs, TallyMs, AssignMs, CombatRolls.load(), CombatRollsLanded.load(), ChargeConnects.load(),
 	       DeathsByArc[0], DeathsByArc[1], DeathsByArc[2],
 	       PoolInFlight, ProjectileStepMs, ProjectileGroundHits, ProjectileTtlExpired, PoolDrops, PoolCapacity,
-	       RangedFireMs, RangedShots, RangedHolds, RangedImpacts, RangedFriendlyHits);
+	       RangedFireMs, RangedShots, RangedHolds, RangedImpacts, RangedFriendlyHits, InFlightPeak);
 }

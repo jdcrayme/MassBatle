@@ -29,6 +29,30 @@ inline uint32 GetTypeHash(const FUnitHandle& Handle)
 	return HashCombine(::GetTypeHash(Handle.Index), ::GetTypeHash(Handle.Serial));
 }
 
+/** A13 canonical per-entity identity (Phase 3, RC8): a deterministic
+ *  function of the owning unit + the roster slot -- INVARIANT across
+ *  entity-slot churn. Mass reuses slots with new generations after a battle
+ *  reset, and every hash-family draw keyed on raw FMassEntityHandle values
+ *  permuted across the two-run equality (measured 2026-10-29: reload
+ *  staggers, shot seeds, and combat rolls all diverged). One home; the
+ *  stagger/seed/roll call sites feed these instead of handle parts. */
+inline uint32 BattleCanonicalEntityKey(const FUnitHandle& Unit, int32 RosterIndex)
+{
+	uint32 H = Unit.Index * 2654435761u;
+	H ^= Unit.Serial * 40503u;
+	H ^= static_cast<uint32>(RosterIndex) * 2685821657u;
+	H ^= H >> 15;
+	return H;
+}
+
+/** The roll/stagger count input: the per-entity count in the low 16 bits,
+ *  the roster slot above it -- one uint32, run-stable, collision-free
+ *  within a battle (rosters are <= 4096). */
+inline uint32 BattleCanonicalCount(int32 RosterIndex, uint32 Count)
+{
+	return (static_cast<uint32>(RosterIndex) << 16) | (Count & 0xFFFFu);
+}
+
 /** Weapon reach class (spec §4.5: >= Spear grants the second-rank budget
  *  bonus; arch §9.1 spear reach). Mapped from the EDU stat_pri tech type at
  *  spawn (task 2 step 1); the class SET and mapping are A6 placeholders the

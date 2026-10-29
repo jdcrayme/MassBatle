@@ -190,6 +190,12 @@ FBattleSpawnResult UBattleSpawnLibrary::SpawnUnit(UWorld* World, const FUnitSpaw
 	FormationPayload.SpeedLimit = 0.f;
 	FormationPayload.SpacingScale = 1.f;
 	FormationPayload.Generation = 1;
+	// The spawn layout IS the locality answer: stamping AssignedGeneration
+	// skips the first-tick unbounded re-assign, whose entity-to-slot
+	// tie-breaking iterates in chunk order -- entity-creation-dependent
+	// across a battle reset, and every two-run transform hash diverged on
+	// the swapped slots (measured 2026-10-29, RC8).
+	FormationPayload.AssignedGeneration = FormationPayload.Generation;
 	FormationPayload.NumFiles = FMath::Max(1, FMath::CeilToInt(static_cast<float>(Spec.SoldierCount) / FMath::Max(1, Spec.NumRanks)));
 	FormationPayload.NumSlots = Spec.SoldierCount;
 	FormationPayload.RankSpacing = Spec.FormationSpacing * 100.f;
@@ -329,7 +335,7 @@ FBattleSpawnResult UBattleSpawnLibrary::SpawnUnit(UWorld* World, const FUnitSpaw
 			Ranged.InitialAmmo = static_cast<uint16>(FMath::Clamp(Row.AmmoPerMan, 0, 65535));
 			Ranged.AmmoCount = static_cast<int16>(Ranged.InitialAmmo);
 			Ranged.ReloadTimer = FMeleeMath::StaggeredPhaseOffset(
-				Entities[i].Index, FRangedCVars::ReloadInterval());
+				BattleCanonicalEntityKey(Unit, i), FRangedCVars::ReloadInterval());
 			Ranged.ShotsFired = 0;
 		}
 

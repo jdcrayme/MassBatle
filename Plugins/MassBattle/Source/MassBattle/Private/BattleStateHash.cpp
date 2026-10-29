@@ -18,7 +18,7 @@ int64 FBattleStateHash::Quantize2(float Value)
 	return static_cast<int64>(FMath::RoundToDouble(static_cast<double>(Value) * 100.0));
 }
 
-uint64 FBattleStateHash::Compute(UWorld* World)
+uint64 FBattleStateHash::Compute(UWorld* World, TArray<uint64>* OutSectionHashes)
 {
 	UUnitRegistrySubsystem* Registry = World ? World->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
 	UMassEntitySubsystem* EntitySubsystem = World ? World->GetSubsystem<UMassEntitySubsystem>() : nullptr;
@@ -38,11 +38,22 @@ uint64 FBattleStateHash::Compute(UWorld* World)
 	{
 		Append(&V, sizeof(V));
 	};
+	// Section boundaries: when bisecting, each section's bytes are hashed
+	// into OutSectionHashes at its end (the RC8 divergence bisector).
+	auto EndSection = [OutSectionHashes, &Bytes]()
+	{
+		if (OutSectionHashes)
+		{
+			OutSectionHashes->Add(CityHash64(reinterpret_cast<const char*>(Bytes.GetData()),
+				static_cast<uint32>(Bytes.Num())));
+		}
+	};
 
 	// 1. Registry bookkeeping (sorted handles -> serials -> roster sizes;
 	// dirty flags excluded -- transient pipeline state, audit M4).
 	uint64 Bookkeeping = Registry->ComputeBookkeepingHash();
 	AppendU64(Bookkeeping);
+	EndSection();
 
 	// 2. Per-unit entity state, in roster order: HP (quantized 1e-2), dead flag,
 	// transform (quantized 1 cm; yaw at 0.1 deg -- phase-1 ground rule 7).
@@ -77,6 +88,7 @@ uint64 FBattleStateHash::Compute(UWorld* World)
 		}
 	}
 
+	EndSection();
 	// 3. Archetype count (unbounded-growth watch, B.4). Debug-only engine API:
 	// absent in Shipping (WITH_MASSENTITY_DEBUG off) -- folds 0 there, keeping
 	// the term position-stable without shipping the debug build.
@@ -87,6 +99,7 @@ uint64 FBattleStateHash::Compute(UWorld* World)
 		0;
 #endif
 	AppendU64(static_cast<uint64>(ArchetypeCount));
+	EndSection();
 
 	// 4. Per-unit shared stat values (quantized), in the same sorted order.
 	for (const FUnitHandle& Handle : Registry->GetSortedHandles())
@@ -137,14 +150,34 @@ uint64 FBattleStateHash::Compute(UWorld* World)
 			const FMassEntityView EntityView(EntityManager, Entity);
 			if (const FCombatPairFragment* Pair = EntityView.GetFragmentDataPtr<FCombatPairFragment>())
 			{
-				AppendU64(Pair->Target.Index);
-				AppendU64(Pair->Target.SerialNumber);
+				// The pair target hashes as its CANONICAL reference --
+				// (owner unit handle, roster index) -- never the raw
+				// FMassEntityHandle: entity slots/generations differ across a
+				// battle reset, and the RC8 two-run equality with REAL units
+				// diverged on exactly that (measured 2026-10-29: the phase-2
+				// gate hashed an empty world and never saw it). Zero-filled
+				// when the target is invalid or unresolvable.
+				FUnitHandle TargetUnit;
+				int32 TargetRosterIndex = -1;
+				if (Pair->Target.IsValid())
+				{
+					if (const FOwnerUnitFragment* TargetOwner =
+						FMassEntityView(EntityManager, Pair->Target).GetFragmentDataPtr<FOwnerUnitFragment>())
+					{
+						TargetUnit = TargetOwner->Owner;
+						TargetRosterIndex = TargetOwner->RosterIndex;
+					}
+				}
+				AppendU64(TargetUnit.Index);
+				AppendU64(TargetUnit.Serial);
+				AppendU64(static_cast<uint64>(FMath::Max(0, TargetRosterIndex)));
 				AppendU64(Pair->ContactAngle);
 				AppendU64(static_cast<uint64>(Pair->State));
 				AppendU64(static_cast<uint64>(Quantize2(Pair->AttackTimer)));
 			}
 			else
 			{
+				AppendU64(0);
 				AppendU64(0);
 				AppendU64(0);
 				AppendU64(0);
@@ -204,6 +237,7 @@ uint64 FBattleStateHash::Compute(UWorld* World)
 		? ProjectileSubsystem->GetPool()
 		: FBattleProjectilePool::EmptyPool();
 	AppendU64(static_cast<uint64>(Pool.GetLiveCount()));
+	EndSection();
 	for (int32 Slot = 0; Slot < Pool.GetCapacity(); ++Slot)
 	{
 		if (!Pool.IsLive(Slot))
@@ -219,5 +253,6 @@ uint64 FBattleStateHash::Compute(UWorld* World)
 		AppendU64(static_cast<uint64>(Quantize2(Pool.TTL[Slot])));
 	}
 
+	EndSection();
 	return CityHash64(reinterpret_cast<const char*>(Bytes.GetData()), static_cast<uint32>(Bytes.Num()));
 }

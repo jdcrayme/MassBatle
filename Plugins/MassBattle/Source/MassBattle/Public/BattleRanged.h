@@ -65,6 +65,7 @@ struct FVolleyShooterView
 {
 	FMassEntityHandle Entity;
 	FUnitHandle Unit;
+	int32 RosterIndex = -1;   // canonical identity input (A13, RC8)
 	FVector2D PosM = FVector2D::ZeroVector;   // planar position, meters
 	float EyeZM = 1.6f;                       // launch height, meters
 	EBattleProjectileKind Kind = EBattleProjectileKind::None;
@@ -99,6 +100,9 @@ struct FVolleyShot
 	float FlightTimeS = 0.f;
 	uint32 Seed = 0;
 	uint32 ShotsFired = 0;
+	/** The impact roll's canonical count input (roster slot << 16 | shots
+	 *  fired -- BattleTypes' A13 fold); the pool stores it verbatim. */
+	uint32 RollCountInput = 0;
 };
 
 /** Rank-limited volley selection (spec §4.4, RC1/RC4). Eligibility per

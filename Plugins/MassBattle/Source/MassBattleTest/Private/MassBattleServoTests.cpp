@@ -135,13 +135,16 @@ bool FServo_PerStateAvoidanceWeights::RunTest(const FString& Parameters)
 	TestTrue(TEXT("filtered (teammates-only) list honored"),
 		FUnitServo::ComputeAvoidanceDeflection(MyPos, Desired, 0.4f, 1, Empty, 0.5f).IsNearlyZero());
 
-	// Asymmetric handle-ordered tie-break: same conflict, both entities full
-	// weight -- the yielder (higher handle) deflects 4x the priority entity
-	// (multipliers 2.0 vs 0.5).
+	// Asymmetric canonical-identity tie-break (RC8: the A13 canonical key
+	// replaced the raw handle -- entity slots permute across a battle reset):
+	// same conflict, both entities full weight -- the yielder (higher
+	// canonical key) deflects 4x the priority entity (multipliers 2.0 vs 0.5).
 	FAvoidanceNeighbor NLow = N;
 	NLow.HandleIndex = 1;
+	NLow.CanonicalKey = 1;
 	FAvoidanceNeighbor NHigh = N;
 	NHigh.HandleIndex = 2;
+	NHigh.CanonicalKey = 2;
 	const FVector2D DeflectAsPriority = FUnitServo::ComputeAvoidanceDeflection(FVector2D(0.f, 0.3f), FVector2D(5.f, 0.f), 0.4f, 1, { NHigh }, 1.0f);
 	const FVector2D DeflectAsYielder = FUnitServo::ComputeAvoidanceDeflection(FVector2D(0.f, 0.3f), FVector2D(5.f, 0.f), 0.4f, 2, { NLow }, 1.0f);
 	TestTrue(TEXT("yielder (higher handle) deflects 4x the priority entity"),

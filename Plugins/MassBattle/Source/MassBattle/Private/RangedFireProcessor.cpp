@@ -239,6 +239,7 @@ void RunRangedFirePass(UWorld* World, float DeltaSeconds)
 			{
 				NumFiles = FMath::Max(1, Formation->NumFiles);
 			}
+			int32 RosterIdx = 0;
 			for (const FMassEntityHandle& Entity : Roster)
 			{
 				// Non-const view: the reload advance writes the fragment here
@@ -255,6 +256,7 @@ void RunRangedFirePass(UWorld* World, float DeltaSeconds)
 				FVolleyShooterView Shooter;
 				Shooter.Entity = Entity;
 				Shooter.Unit = Handle;
+				Shooter.RosterIndex = RosterIdx++;
 				Shooter.PosM = FVector2D(P.X, P.Y) * 0.01f;
 				Shooter.EyeZM = 1.6f; // A6 placeholder launch height
 				Shooter.Kind = Ranged->Kind;
@@ -449,7 +451,10 @@ void RunRangedFirePass(UWorld* World, float DeltaSeconds)
 				ShooterLethality = Base->Lethality;
 			}
 			Pool.RangedAttack[Slot] = BaseRanged * RangedAttackMult * AccuracyMult;
-			Pool.ShooterRollCount[Slot] = Shot.ShotsFired; // the A13 run-invariant roll count
+			// The roll count input is the seam's CANONICAL fold (roster slot
+			// << 16 | shots fired); the impact roll reads it with the OWNER
+			// unit's handle (A13 run-invariant identity, RC8).
+			Pool.ShooterRollCount[Slot] = Shot.RollCountInput;
 			Pool.Lethality[Slot] = ShooterLethality;
 		}
 
@@ -486,6 +491,10 @@ void RunRangedFirePass(UWorld* World, float DeltaSeconds)
 				/ static_cast<float>(FMath::Max(1, State->RangedInitialAmmo * State->InitialRosterSize)));
 		}
 
+		if (Debug)
+		{
+			Debug->RecordInFlight(Pool.GetLiveCount()); // T3.6 peak sampling
+		}
 		UE_LOG(LogMassBattle, Display,
 			TEXT("EXEC_RESULT RangedFire Unit=%u:%u Shots=%d Holds=%d AmmoSum=%d PoolLive=%d"),
 			Handle.Index, Handle.Serial, Fired, Holds, AmmoSum, Pool.GetLiveCount());

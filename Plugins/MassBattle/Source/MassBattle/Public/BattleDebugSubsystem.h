@@ -107,6 +107,16 @@ public:
 	int32 GetRangedImpacts() const { return RangedImpacts; }
 	int32 GetRangedFriendlyHits() const { return RangedFriendlyHits; }
 
+	/** Phase 3 (task 7, T3.6): the in-flight peak, sampled by both ranged
+	 *  passes each tick (game thread; the metric's home is here, the pool
+	 *  stays pure data). */
+	void RecordInFlight(int32 LiveCount) { InFlightPeak = FMath::Max(InFlightPeak, LiveCount); }
+	int32 GetInFlightPeak() const { return InFlightPeak; }
+
+	/** T3.6 probe (the T2.9 pattern): dump the ranged perf verdict at N ticks
+	 *  after arming; disarms after the dump. */
+	void ArmRangedPerfProbe(int32 InTicks) { RangedPerfProbeTicks = InTicks; }
+
 	/** T2.9 perf probe: dump the metrics line at N ticks after arming (the
 	 *  Exec fixtures run before the sim advances; the probe samples the
 	 *  steady state). Disarms after the dump. */
@@ -197,6 +207,8 @@ private:
 	int32 RangedHolds = 0;
 	int32 RangedImpacts = 0;
 	int32 RangedFriendlyHits = 0;
+	int32 InFlightPeak = 0;
+	int32 RangedPerfProbeTicks = -1;
 
 	/** Task 10 corpse ledger (capped FIFO; the overlay draws yaw-aligned
 	 *  rectangles). Game thread only (the death signal receiver). */

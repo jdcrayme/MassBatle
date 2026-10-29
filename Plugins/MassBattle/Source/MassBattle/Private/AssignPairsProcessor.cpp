@@ -365,6 +365,7 @@ void UAssignPairsProcessor::Execute(FMassEntityManager& EntityManager, FMassExec
 				continue; // no combat intent: not a seeker this tick
 			}
 			FCombatSolver::FAssignSeekerState S;
+			S.RosterIndex = Owners[i].RosterIndex;
 			S.Entity = Context.GetEntity(i);
 			S.OwnerUnit = OwnerUnit;
 			S.IntentTarget = OrderTarget;

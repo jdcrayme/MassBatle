@@ -45,7 +45,7 @@ namespace FUnitServo
 	}
 
 	FVector2D ComputeAvoidanceDeflection(const FVector2D& MyPos, const FVector2D& MyDesiredVel,
-		float MyRadius, uint32 MyHandleIndex, const TArray<FAvoidanceNeighbor>& Neighbors,
+		float MyRadius, uint32 MyCanonicalKey, const TArray<FAvoidanceNeighbor>& Neighbors,
 		float Weight, float HorizonSeconds)
 	{
 		if (Weight <= 0.f || Neighbors.Num() == 0)
@@ -78,7 +78,7 @@ namespace FUnitServo
 					// the parity of my index alone -- same-parity co-located
 					// pairs fled as one blob under the old rule.
 					Away = FVector2D(-MyDesiredVel.Y, MyDesiredVel.X).GetSafeNormal()
-						* ((MyHandleIndex < N.HandleIndex) ? 1.f : -1.f);
+						* ((MyCanonicalKey < N.CanonicalKey) ? 1.f : -1.f); // canonical parity (RC8)
 				}
 				Deflection += Away * Combined;
 				continue;
@@ -117,7 +117,7 @@ namespace FUnitServo
 			const float Urgency = (1.f - FMath::Sqrt(MissSq) / Combined) * (1.f - Tc / DT);
 			// Asymmetric handle-ordered tie-break (A1): the lower index has
 			// priority and deflects half; the higher index yields double.
-			const float Asymmetry = (MyHandleIndex > N.HandleIndex) ? 2.f : 0.5f;
+			const float Asymmetry = (MyCanonicalKey > N.CanonicalKey) ? 2.f : 0.5f; // canonical asymmetry (RC8)
 			Deflection += Perp * Urgency * Combined * Asymmetry;
 		}
 		return Deflection * Weight;

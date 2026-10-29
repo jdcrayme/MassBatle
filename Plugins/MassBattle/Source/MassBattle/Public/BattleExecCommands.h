@@ -70,4 +70,7 @@ namespace BattleExec
 
 	// -- Phase 3 task 4 (the volley fixture; M4's gray-box sample) --
 	MASSBATTLE_API void RangedSpawnVolley(const TArray<FString>& Args, UWorld* World);
+
+	// -- Phase 3 task 7 (T3.6 perf gate; the T2.9 pattern) --
+	MASSBATTLE_API void RangedPerfStress(const TArray<FString>& Args, UWorld* World);
 }

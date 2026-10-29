@@ -174,6 +174,7 @@ void UFormationSlotResolveProcessor::ConfigureQueries(const TSharedRef<FMassEnti
 	ResolveQuery.AddRequirement<FSlotTargetFragment>(EMassFragmentAccess::ReadWrite);
 	ResolveQuery.AddRequirement<FTransformFragment>(EMassFragmentAccess::ReadOnly);
 	ResolveQuery.AddRequirement<FMassVelocityFragment>(EMassFragmentAccess::ReadOnly);
+	ResolveQuery.AddRequirement<FOwnerUnitFragment>(EMassFragmentAccess::ReadOnly); // canonical order source (RC8)
 	// Task 10 debug pass: the slot-circle colors ride the combat pair state
 	// (written by the assign pass, game thread -- read-only here, worker-safe).
 	ResolveQuery.AddRequirement<FCombatPairFragment>(EMassFragmentAccess::ReadOnly);
@@ -603,6 +604,29 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 					}
 					TArray<FIntPoint> Pairs;
 					FSlotAssigner::FindCrossingPairs(EntityPosM, VelM, NewAssignment, SlotPosM, 1.0f, 0.5f, Pairs);
+					// Canonical swap order (RC8): overlapping swaps cascade in
+					// application order, and FindCrossingPairs enumerates in
+					// the chunk's array order -- entity-creation-dependent
+					// across a battle reset. Sort the pairs by the endpoints'
+					// roster indices (the A13 canonical identity) first.
+					const auto RosterOf = [NumEntities](const FOwnerUnitFragment* OwnersData, int32 ChunkIdx) -> int32
+					{
+						return OwnersData && ChunkIdx >= 0 && ChunkIdx < NumEntities ? OwnersData[ChunkIdx].RosterIndex : ChunkIdx;
+					};
+					const FOwnerUnitFragment* OwnersData = nullptr;
+					if (Context.GetNumEntities() > 0)
+					{
+						OwnersData = Context.GetFragmentView<FOwnerUnitFragment>().GetData();
+					}
+					Pairs.Sort([&RosterOf, OwnersData, NumEntities](const FIntPoint& A, const FIntPoint& B)
+					{
+						const int32 RA0 = RosterOf(OwnersData, A.X), RA1 = RosterOf(OwnersData, A.Y);
+						const int32 RB0 = RosterOf(OwnersData, B.X), RB1 = RosterOf(OwnersData, B.Y);
+						const int32 MinA = FMath::Min(RA0, RA1), MaxA = FMath::Max(RA0, RA1);
+						const int32 MinB = FMath::Min(RB0, RB1), MaxB = FMath::Max(RB0, RB1);
+						if (MinA != MinB) { return MinA < MinB; }
+						return MaxA < MaxB;
+					});
 					FSlotAssigner::ApplyPredictiveSwaps(NewAssignment, Pairs, EntityPosM, SlotPosM);
 				}
 

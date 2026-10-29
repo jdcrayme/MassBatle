@@ -156,6 +156,7 @@ namespace FCombatSolver
 	{
 		FMassEntityHandle Entity;
 		FUnitHandle OwnerUnit;
+		int32 RosterIndex = -1;   // canonical identity input (A13, RC8)
 		FUnitHandle IntentTarget;      // enemy UNIT this seeker's owner engages
 		FVector2D PosM = FVector2D::ZeroVector;
 		float PairAge = 0.f;

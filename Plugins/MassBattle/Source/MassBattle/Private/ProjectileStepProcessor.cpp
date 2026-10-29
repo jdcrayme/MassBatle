@@ -137,6 +137,10 @@ void RunProjectileStepPass(UWorld* World, float DeltaSeconds)
 	// 2. Integrate + release on ground/TTL (the seam; causes counted).
 	const FBallisticsMath::FPoolStepCounts Counts =
 		FBallisticsMath::StepPool(Pool, &Grid, DeltaSeconds);
+	if (Debug)
+	{
+		Debug->RecordInFlight(Pool.GetLiveCount()); // T3.6 peak sampling
+	}
 
 	// 3. Impacts for the survivors (R-R2: ONE midpoint circle per projectile
 	//    per tick; the height gate runs BEFORE the query -- most shots are
@@ -248,8 +252,10 @@ void RunProjectileStepPass(UWorld* World, float DeltaSeconds)
 			+ VictimStats->Shield * FMeleeMath::ShieldArcWindow(Sector, SectorCount)
 			+ VictimStats->Armor * FMeleeMath::ArmorMultiplier(Profile.bArmorPiercing);
 		const float P = FMeleeMath::HitChance(Pool.RangedAttack[Slot], Defense);
+		// Canonical roll identity (A13/RC8): the OWNER unit's handle + the
+		// seam's folded count -- never the shooter's raw entity handle.
 		const float Roll = FMeleeMath::CombatRoll01(
-			Pool.ShooterEntity[Slot].Index, Pool.ShooterEntity[Slot].SerialNumber, Pool.ShooterRollCount[Slot]);
+			Pool.OwnerUnit[Slot].Index, Pool.OwnerUnit[Slot].Serial, Pool.ShooterRollCount[Slot]);
 		const bool bLanded = Roll < P * FMath::Max(0.f, Pool.Lethality[Slot]);
 		++Impacts;
 		if (Debug)

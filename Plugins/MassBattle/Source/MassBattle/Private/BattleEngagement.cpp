@@ -560,11 +560,14 @@ namespace FCombatSolver
 
 			if (!Chosen)
 			{
-				// Failed seek: back off 1-3 ticks (jittered) and press.
+				// Failed seek: back off 1-3 ticks (jittered) and press. The
+				// jitter is CANONICAL per entity (A13 identity) -- the old
+				// shuffle-stream draw assigned values in the seeker array's
+				// chunk order, which permutes across a battle reset, and the
+				// backoff differences moved the servo per entity (measured
+				// 2026-10-29, RC8: the uniform-per-tick trace divergence).
 				S.State = static_cast<uint8>(ECombatPairState::Pressing);
-				S.BackoffTicks = Context.ShuffleStream
-					? static_cast<uint8>(Context.ShuffleStream->RandRange(1, 3))
-					: static_cast<uint8>(1 + (S.Entity.Index % 3));
+				S.BackoffTicks = static_cast<uint8>(1 + (BattleCanonicalEntityKey(S.OwnerUnit, S.RosterIndex) % 3));
 				continue;
 			}
 
@@ -583,7 +586,8 @@ namespace FCombatSolver
 			S.Target = Chosen->Entity;
 			S.ContactAngle = ChosenAngle;
 			S.State = static_cast<uint8>(ECombatPairState::Pressing);
-			S.AttackTimer = FMeleeMath::StaggeredPhaseOffset(S.Entity.Index, Interval);
+			S.AttackTimer = FMeleeMath::StaggeredPhaseOffset(
+				BattleCanonicalEntityKey(S.OwnerUnit, S.RosterIndex), Interval);
 		}
 	}
 }

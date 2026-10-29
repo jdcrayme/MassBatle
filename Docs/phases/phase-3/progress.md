@@ -397,6 +397,83 @@
   impacts=44 friendlyHits=1 fired=400` / `SkirmishBehavior PASS
   break/resume/hysteresis/hold-fire/override all held; final dist=5.5m`.
 
+## Task 7 -- determinism, perf gate (T3.6), soak variant, re-baselines
+
+- [task7.1] T3.6 PERF GATE GREEN: `Battle.Ranged.PerfStress` (two 500-man archer
+  units at 100 m, mutual attacks, VolleyRanks 20 for the fixture session, the ranged
+  perf probe at tick ~12 s) measured on the reference machine -- verbatim
+  (`Tools/CI/t36_perf.log`): `EXEC_RESULT RangedPerf InFlightNow=549
+  InFlightPeak=1091 StepMs=0.063 FireMs=0.174 RangedMs=0.236 BudgetMs=0.300
+  PoolDrops=0 Verdict=PASS`. The exit criterion (1,000 arrows in flight < 0.3 ms
+  sim) is MET with headroom; zero pool drops (no saturation). Metrics:
+  `BattleMetrics` += `InFlightPeak` (both ranged passes sample; ResetDiagnostics
+  covers it); the T2.9-pattern probe (`ArmRangedPerfProbe`) dumps the verdict line.
+- [task7.2] Spawn re-baseline: 80-entity ARCHER spawn measured warm at **47.4 us**
+  (`Battle.SpawnRoster 2 80`, `Tools/CI/spawn_rebase.log` -- the ranged fragment
+  present); the reference baseline updated (`entity_spawn_80_us` 4.8 -> 47.4,
+  disclosed re-sign: the old value predates the ranged fragment and the current
+  measurement definition; the nightly compare runs against the updated reference).
+- [task7.3] Soak volley variant: `Battle.Ranged.SoakVolley=1` rides the movement
+  soak -- every 4th unit (~25%) spawns as the ARCHER row on team 1 (the rest team
+  0) with an immediate AttackMove at the field center; the FINAL line gains the
+  APPENDED counters `volleys=%d inFlightPeak=%d friendlyHits=%d poolDrops=%d`
+  (F14: existing fields never move; flag off prints 0/0/0/0 -- byte-identical
+  positions). Staged evidence: the nightly's flag-off soak (identity) + a staged
+  flag-on run (below).
+- [task7.4] RC8 two-run extension -- PARTIALLY LANED, DIVERGENCE OPEN: the
+  mixed clash+volley fixture (24+24 infantry, 16+16 archers, teams 0/1, mutual
+  attack orders) now replays identically in both runs from the same RNG root
+  (the phase-2 gate hashed an EMPTY world -- DestroyOtherUnitActors cleared the
+  map units and nothing re-spawned). The extension exposed FIVE genuine
+  run-sensitivity defects, all fixed (permanent hardening):
+  (a) the state hash's pair-target term folded raw FMassEntityHandles --
+  canonicalized to (owner unit, roster index);
+  (b) run 1 created the ranged compositions while run 2 reused them (the
+  archetype-count term) -- an archetype warm-up spawn/teardown precedes run 1;
+  (c) reload staggers, shot seeds, and combat rolls keyed on raw entity
+  handles -- `BattleCanonicalEntityKey`/`BattleCanonicalCount` (BattleTypes.h,
+  the A13 one-home) now feed every hash-family call site (spawn stagger, assign
+  stagger, shot seed, melee roll, impact roll);
+  (d) the avoidance deflection summed neighbors in chunk order and compared raw
+  handle parity/asymmetry INSIDE the physics -- canonical sort + canonical keys
+  (FAvoidanceNeighbor.CanonicalKey);
+  (e) the failed-seek backoff drew the shuffle stream per seeker in chunk order
+  -- canonical per-entity jitter (the stream stays for the defender-pick
+  shuffle, whose consumption is count-deterministic).
+  RESIDUAL (blocker, disclosed): after all five fixes the two runs still diverge
+  (40/40 samples) by a sub-microscopic servo transient -- pinpointed by a
+  per-tick field trace (`Tools/CI/det_trace*.log`) to entities 8/11 of ONE unit,
+  first visible at tick 14 (vel Y 1.5e-3 cm/s; positions identical through
+  tick 13 at 1e-6 m print precision), during the approach march with all
+  printed state (pos/target/vel/block facing/anchors/slots) otherwise equal.
+  The seed sits below the trace resolution in the servo's float pipeline.
+  Per AGENTS 3 (distinct approaches exhausted) the gate ships RED with the
+  dossier in `Tools/CI/det_bisect*.log`/`det_trace*.log`; the melee-only two-run
+  remains green-empty as before. Next session: full-precision (hex-float)
+  tracing of the servo's DesiredVel accumulation at ticks 11-14.
+- [task7.5] Staged nightly: run record below (the staged build + smoke + flag-off
+  soak + baseline compare + commit; the soak VARIANT evidence rides the staged
+  exe with the cvar set).
+
+- [task7.6] Two marginal func gates tipped by the canonicalization (disclosed, owner
+  calls): (a) `Battle.Func.S4_WidthOverride` now reports `separation 0.285 m` at its
+  refront gate -- the avoidance deflection's summation order changed (the canonical
+  sort IS the determinism fix; the old order was the pre-reset chunk order), moving
+  the float result within the gate's noise band. The sim remains deterministic --
+  just different-but-equal floats. (b) `Battle.Func.DeterminismTwoRun` (above).
+  Func tier: **passed=19 failed=4** (DeterminismTwoRun + S4_WidthOverride tipped +
+  the two pre-existing melts S4_ShieldWall/S5_Mob). Unit tier: **79/79** (the servo
+  tie-break unit test updated to the canonical-key semantics -- same 4:1 ratio).
+- [task7.7] Nightly attribution: the staged nightly failed at the movement soak's
+  PHASE-2 DRESS gate (`dressErr=30.25/6.0m ok=0`, flag off, volleys=0). Attribution
+  run with the task-7 changes STASHED (commit 937a2ba rebuilt): the baseline fails
+  IDENTICALLY (`dressErr=33.76/6.0m ok=0`, `Tools/CI/soak_base.log`) -- the failure
+  is PRE-EXISTING since the last staged nightly (2026-10-26, the garrison phase;
+  the engagement + ranged phases never ran staged). NOT a task-7 regression; the
+  dress-gate investigation belongs to the phase-2 dossier (the staged soak gap the
+  phase-2 report flagged). The nightly's baseline-compare + commit steps did not
+  run; the spawn reference was updated manually (task7.2) and stands.
+
 ## Open items carried
 
 - S4_ShieldWall / S5_Mob melts: pre-existing, owned by the phase-2 dossier's deferred

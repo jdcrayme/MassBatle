@@ -199,6 +199,7 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 		FVector2D Vel;
 		FUnitHandle Owner;
 		uint32 HandleIndex;
+		uint32 CanonicalKey = 0; // A13 identity (unit + roster slot) -- RC8
 		float RadiusM;
 	};
 	TArray<FSnapshotEntry> Snapshot;
@@ -216,6 +217,7 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 			Entry.Vel = FVector2D(Velocities[i].Value.X, Velocities[i].Value.Y) * 0.01f;
 			Entry.Owner = Owners[i].Owner;
 			Entry.HandleIndex = Context.GetEntity(i).Index;
+			Entry.CanonicalKey = BattleCanonicalEntityKey(Owners[i].Owner, Owners[i].RosterIndex);
 			Entry.RadiusM = FCombatSolver::Contact::BodyRadiusM; // fact 1.9; cavalry widens in Task 9
 			Snapshot.Add(Entry);
 		}
@@ -547,13 +549,14 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 			// Charge / HoldSlot / Flee: none (charge has phase-1 no-avoidance).
 
 			const uint32 MyHandle = Context.GetEntity(i).Index;
+			const uint32 MyCanonicalKey = BattleCanonicalEntityKey(Owners[i].Owner, Owners[i].RosterIndex);
 			const FUnitHandle MyOwner = Owners[i].Owner;
 			if (Weight > 0.f)
 			{
 				Neighbors.Reset();
 				for (const FSnapshotEntry& Entry : Snapshot)
 				{
-					if (Entry.HandleIndex == MyHandle)
+					if (Entry.CanonicalKey == MyCanonicalKey)
 					{
 						continue;
 					}
@@ -582,10 +585,19 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 					N.Vel = Entry.Vel;
 					N.Radius = Entry.RadiusM;
 					N.HandleIndex = Entry.HandleIndex;
+					N.CanonicalKey = Entry.CanonicalKey;
 				}
+				// Canonical summation order (RC8): the deflection accumulates
+				// over neighbors in canonical-key order -- the snapshot's chunk
+				// order is entity-creation-dependent and the float sum is not
+				// associative (measured 2026-10-29: 3 mm per-entity drift).
+				Neighbors.Sort([](const FAvoidanceNeighbor& A, const FAvoidanceNeighbor& B)
+				{
+					return A.CanonicalKey < B.CanonicalKey;
+				});
 				const float WeightMul = FUnstuckLadder::AvoidanceWeightMultiplier(ServoStates[i].LadderLevel);
 				FVector2D Deflection = FUnitServo::ComputeAvoidanceDeflection(
-					PosM, DesiredVel, FCombatSolver::Contact::BodyRadiusM, MyHandle, Neighbors, Weight * WeightMul);
+					PosM, DesiredVel, FCombatSolver::Contact::BodyRadiusM, MyCanonicalKey, Neighbors, Weight * WeightMul);
 				// Audit M4: the accumulated push is unbounded by construction
 				// (full Combined per overlapping neighbor); clamp it so the
 				// blended velocity can never ratchet past the §8.2 unit limit.

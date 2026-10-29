@@ -632,10 +632,18 @@ private:
 	enum class EPhase : int32 { Run1, Run2, Done };
 	EPhase Phase = EPhase::Done;
 	int32 SavedCvars[4] = {};
+	int32 SavedRanged[4] = {};
 	int32 TicksDone = 0;
+	bool bNeedSpawn = false;
 	TArray<uint64> Run1Hashes;
 	void SetCvars();
 	void RestoreCvars();
+	// Phase 3 (RC8): the mixed clash+volley fixture -- archers + infantry on
+	// BOTH sides, spawned deterministically at each run's start (the phase-2
+	// shape hashed an empty world: DestroyOtherUnitActors cleared the map
+	// units and nothing re-spawned -- measured 2026-10-29).
+	void SpawnMixedFixture();
+	void DestroyFixture();
 };
 
 // ---------------------------------------------------------------------------

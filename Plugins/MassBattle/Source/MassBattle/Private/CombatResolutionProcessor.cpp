@@ -1,6 +1,7 @@
 // CombatResolutionProcessor.cpp -- arch §4 row 10 (task 7; spec §4.8).
 #include "CombatResolutionProcessor.h"
 #include "BattleCombatFragments.h"
+#include "BattleTypes.h"
 #include "BattleFragments.h"
 #include "BattleMelee.h"
 #include "BattleEngagement.h"
@@ -104,9 +105,11 @@ void UCombatResolutionProcessor::Execute(FMassEntityManager& EntityManager, FMas
 				// GFrameCounter differs across two runs of the same seed and
 				// would diverge T2.8). The hash lives in FMeleeMath beside
 				// the stagger hash (B-2: one home for the Knuth multipliers).
+				// Canonical roll identity (A13/RC8): owner unit + roster slot
+				// fold -- entity slots permute across a battle reset.
 				const float Roll = FMeleeMath::CombatRoll01(
-					Context.GetEntity(i).Index, Context.GetEntity(i).SerialNumber,
-					static_cast<uint32>(Pair.RollCount));
+					Owners[i].Owner.Index, Owners[i].Owner.Serial,
+					BattleCanonicalCount(Owners[i].RosterIndex, static_cast<uint32>(Pair.RollCount)));
 				++Pair.RollCount;
 				const bool bLanded = Roll < P * FMath::Max(0.f, Stats[i].Lethality);
 

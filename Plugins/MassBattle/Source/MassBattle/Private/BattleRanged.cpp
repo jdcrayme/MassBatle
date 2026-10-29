@@ -260,8 +260,13 @@ int32 SelectVolleyShots(
 		{
 			continue; // out of envelope: hold, never force-fire
 		}
+		// The seed's identity inputs are CANONICAL (unit + roster slot --
+		// BattleTypes' A13 helpers), never the raw entity handle: entity
+		// slots permute across a battle reset and the two-run equality
+		// diverged on exactly this (RC8, measured 2026-10-29).
 		const uint32 Seed = FBallisticsMath::ShotSeed(
-			Shooter.Entity.Index, Shooter.Entity.SerialNumber, Shooter.ShotsFired);
+			Shooter.Unit.Index, Shooter.Unit.Serial,
+			BattleCanonicalCount(Shooter.RosterIndex, Shooter.ShotsFired));
 		const float ConeDeg = Profile.DispersionDeg / FMath::Max(AccuracyMult, 0.05f);
 		const FVector LaunchDir = FBallisticsMath::PerturbDirection(Solution.LaunchDir, ConeDeg, Seed);
 
@@ -274,6 +279,7 @@ int32 SelectVolleyShots(
 		Shot.FlightTimeS = Solution.FlightTimeS;
 		Shot.Seed = Seed;
 		Shot.ShotsFired = Shooter.ShotsFired; // pre-increment: this shot's roll count
+		Shot.RollCountInput = BattleCanonicalCount(Shooter.RosterIndex, Shooter.ShotsFired);
 		OutShots.Add(Shot);
 		++ShotCount;
 
