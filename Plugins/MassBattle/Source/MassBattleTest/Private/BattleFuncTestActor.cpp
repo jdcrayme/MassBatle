@@ -4917,6 +4917,38 @@ namespace
 		}
 	}
 
+	// The ranged session-on list (ONE home, the phase-3 audit's C-tier fix):
+	// previously re-typed as local arrays in three scenario classes.
+	constexpr const TCHAR* RangedCvars[] = {
+		TEXT("Battle.Ranged.Enable"),
+		TEXT("Battle.Ranged.Fire"),
+		TEXT("Battle.Ranged.Step"),
+		TEXT("Battle.Ranged.Skirmish"),
+	};
+
+	void RangedSetCvars(int32 (&Saved)[4])
+	{
+		for (int32 i = 0; i < 4; ++i)
+		{
+			if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(RangedCvars[i]))
+			{
+				Saved[i] = C->GetInt();
+				C->Set(1, ECVF_SetByCode);
+			}
+		}
+	}
+
+	void RangedRestoreCvars(int32 (&Saved)[4])
+	{
+		for (int32 i = 0; i < 4; ++i)
+		{
+			if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(RangedCvars[i]))
+			{
+				C->Set(Saved[i], ECVF_SetByCode);
+			}
+		}
+	}
+
 	AUnitActor* ClashSpawnActor(UWorld* World, int32 EduRow, int32 Count, const FVector2D& PosM, float YawDeg)
 	{
 		FActorSpawnParameters Params;
@@ -5630,17 +5662,7 @@ void ADeterminismTwoRunTest::SetCvars()
 			C->Set(1, ECVF_SetByCode);
 		}
 	}
-	static const TCHAR* RangedNames[4] = {
-		TEXT("Battle.Ranged.Enable"), TEXT("Battle.Ranged.Fire"),
-		TEXT("Battle.Ranged.Step"), TEXT("Battle.Ranged.Skirmish") };
-	for (int32 i = 0; i < 4; ++i)
-	{
-		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(RangedNames[i]))
-		{
-			SavedRanged[i] = C->GetInt();
-			C->Set(1, ECVF_SetByCode);
-		}
-	}
+	RangedSetCvars(SavedRanged);
 }
 
 void ADeterminismTwoRunTest::RestoreCvars()
@@ -5652,16 +5674,7 @@ void ADeterminismTwoRunTest::RestoreCvars()
 			C->Set(SavedCvars[i], ECVF_SetByCode);
 		}
 	}
-	static const TCHAR* RangedNames[4] = {
-		TEXT("Battle.Ranged.Enable"), TEXT("Battle.Ranged.Fire"),
-		TEXT("Battle.Ranged.Step"), TEXT("Battle.Ranged.Skirmish") };
-	for (int32 i = 0; i < 4; ++i)
-	{
-		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(RangedNames[i]))
-		{
-			C->Set(SavedRanged[i], ECVF_SetByCode);
-		}
-	}
+	RangedRestoreCvars(SavedRanged);
 }
 
 void ADeterminismTwoRunTest::Destroyed()
@@ -5924,9 +5937,6 @@ void AS6VolleyTest::SetCvars()
 	static const TCHAR* CombatNames[5] = {
 		TEXT("Battle.Combat.SpatialHash"), TEXT("Battle.Combat.Clusters"),
 		TEXT("Battle.Combat.Tally"), TEXT("Battle.Combat.Assign"), TEXT("Battle.Combat.Resolve") };
-	static const TCHAR* RangedNames[4] = {
-		TEXT("Battle.Ranged.Enable"), TEXT("Battle.Ranged.Fire"),
-		TEXT("Battle.Ranged.Step"), TEXT("Battle.Ranged.Skirmish") };
 	for (int32 i = 0; i < 5; ++i)
 	{
 		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(CombatNames[i]))
@@ -5935,14 +5945,7 @@ void AS6VolleyTest::SetCvars()
 			C->Set(1, ECVF_SetByCode);
 		}
 	}
-	for (int32 i = 0; i < 4; ++i)
-	{
-		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(RangedNames[i]))
-		{
-			SavedRanged[i] = C->GetInt();
-			C->Set(1, ECVF_SetByCode);
-		}
-	}
+	RangedSetCvars(SavedRanged);
 	// The drain phase needs 25 reload cycles; the A6 3 s cycle makes that a
 	// 75 s phase. The scenario runs at the 0.5 s cycle (saved/restored).
 	if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Ranged.ReloadInterval")))
@@ -5957,9 +5960,6 @@ void AS6VolleyTest::RestoreCvars()
 	static const TCHAR* CombatNames[5] = {
 		TEXT("Battle.Combat.SpatialHash"), TEXT("Battle.Combat.Clusters"),
 		TEXT("Battle.Combat.Tally"), TEXT("Battle.Combat.Assign"), TEXT("Battle.Combat.Resolve") };
-	static const TCHAR* RangedNames[4] = {
-		TEXT("Battle.Ranged.Enable"), TEXT("Battle.Ranged.Fire"),
-		TEXT("Battle.Ranged.Step"), TEXT("Battle.Ranged.Skirmish") };
 	for (int32 i = 0; i < 5; ++i)
 	{
 		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(CombatNames[i]))
@@ -5967,13 +5967,7 @@ void AS6VolleyTest::RestoreCvars()
 			C->Set(SavedCombat[i], ECVF_SetByCode);
 		}
 	}
-	for (int32 i = 0; i < 4; ++i)
-	{
-		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(RangedNames[i]))
-		{
-			C->Set(SavedRanged[i], ECVF_SetByCode);
-		}
-	}
+	RangedRestoreCvars(SavedRanged);
 	if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Ranged.ReloadInterval")))
 	{
 		C->Set(SavedReload, ECVF_SetByCode);
@@ -6523,9 +6517,6 @@ void ASkirmishBehaviorTest::SetCvars()
 	static const TCHAR* CombatNames[5] = {
 		TEXT("Battle.Combat.SpatialHash"), TEXT("Battle.Combat.Clusters"),
 		TEXT("Battle.Combat.Tally"), TEXT("Battle.Combat.Assign"), TEXT("Battle.Combat.Resolve") };
-	static const TCHAR* RangedNames[4] = {
-		TEXT("Battle.Ranged.Enable"), TEXT("Battle.Ranged.Fire"),
-		TEXT("Battle.Ranged.Step"), TEXT("Battle.Ranged.Skirmish") };
 	for (int32 i = 0; i < 5; ++i)
 	{
 		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(CombatNames[i]))
@@ -6534,14 +6525,7 @@ void ASkirmishBehaviorTest::SetCvars()
 			C->Set(1, ECVF_SetByCode);
 		}
 	}
-	for (int32 i = 0; i < 4; ++i)
-	{
-		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(RangedNames[i]))
-		{
-			SavedRanged[i] = C->GetInt();
-			C->Set(1, ECVF_SetByCode);
-		}
-	}
+	RangedSetCvars(SavedRanged);
 	if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Ranged.ReloadInterval")))
 	{
 		SavedReload = C->GetFloat();
@@ -6554,9 +6538,6 @@ void ASkirmishBehaviorTest::RestoreCvars()
 	static const TCHAR* CombatNames[5] = {
 		TEXT("Battle.Combat.SpatialHash"), TEXT("Battle.Combat.Clusters"),
 		TEXT("Battle.Combat.Tally"), TEXT("Battle.Combat.Assign"), TEXT("Battle.Combat.Resolve") };
-	static const TCHAR* RangedNames[4] = {
-		TEXT("Battle.Ranged.Enable"), TEXT("Battle.Ranged.Fire"),
-		TEXT("Battle.Ranged.Step"), TEXT("Battle.Ranged.Skirmish") };
 	for (int32 i = 0; i < 5; ++i)
 	{
 		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(CombatNames[i]))
@@ -6564,13 +6545,7 @@ void ASkirmishBehaviorTest::RestoreCvars()
 			C->Set(SavedCombat[i], ECVF_SetByCode);
 		}
 	}
-	for (int32 i = 0; i < 4; ++i)
-	{
-		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(RangedNames[i]))
-		{
-			C->Set(SavedRanged[i], ECVF_SetByCode);
-		}
-	}
+	RangedRestoreCvars(SavedRanged);
 	if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Ranged.ReloadInterval")))
 	{
 		C->Set(SavedReload, ECVF_SetByCode);
