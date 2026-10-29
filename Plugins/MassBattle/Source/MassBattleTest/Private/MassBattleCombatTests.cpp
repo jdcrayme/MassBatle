@@ -210,6 +210,102 @@ bool FCombat_RecordLifecycle::RunTest(const FString& Parameters)
 }
 
 // ---------------------------------------------------------------------------
+// PR-4 (audit D-4 step 2): the assign pass's intent table on the seam --
+// auto-engage nearest-by-rank, demo-fix3 defensive reaction, order-exclusion.
+// Pure: orders + live record keys -> intents, no world.
+// ---------------------------------------------------------------------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCombat_AssignIntents,
+	"Battle.Unit.Combat.AssignIntents",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FCombat_AssignIntents::RunTest(const FString& Parameters)
+{
+	// Handles with distinct (index, serial) ranks: A=1:1, B=2:1, C=3:1.
+	const FUnitHandle A(1, 1);
+	const FUnitHandle B(2, 1);
+	const FUnitHandle C(3, 1);
+	TestTrue(TEXT("probe handles"), A.IsValid() && B.IsValid() && C.IsValid());
+
+	// -- Targetless AttackMove auto-engages the lowest-rank live-record enemy. --
+	{
+		TMap<FUnitHandle, FUnitOrder> Orders;
+		Orders.Add(A, FUnitOrder{ /*Type*/ FUnitOrder::EType::AttackMove });
+		TArray<FEngagementKey> Records;
+		Records.Add({ A, C }); // higher rank first: the pick must still be the LOWEST
+		Records.Add({ A, B });
+		TMap<FUnitHandle, FCombatSolver::FAssignIntent> Intents;
+		FCombatSolver::ResolveUnitIntents(Orders, Records, Intents);
+		const FCombatSolver::FAssignIntent* Resolved = Intents.Find(A);
+		TestNotNull(TEXT("auto-engage intent"), Resolved);
+		if (Resolved)
+		{
+			TestEqual(TEXT("auto-engage target = lowest rank"), Resolved->TargetUnit, B);
+			TestEqual(TEXT("auto-engage flag"), Resolved->bAutoEngage, 1);
+			TestTrue(TEXT("auto-engage has intent"), Resolved->bHasIntent);
+		}
+	}
+
+	// -- demo-fix3: an UNORDERED unit under fire defends against the lowest
+	//    aggressor rank; a Move-ordered unit under fire gets NO intent. --
+	{
+		TMap<FUnitHandle, FUnitOrder> Orders;
+		FUnitOrder Retreat;
+		Retreat.Type = FUnitOrder::EType::Move;
+		Orders.Add(B, Retreat);
+		TArray<FEngagementKey> Records;
+		Records.Add({ C, B }); // higher-rank aggressor
+		Records.Add({ A, B }); // lower-rank aggressor
+		TMap<FUnitHandle, FCombatSolver::FAssignIntent> Intents;
+		FCombatSolver::ResolveUnitIntents(Orders, Records, Intents);
+		TestFalse(TEXT("Move-ordered unit has no defensive intent"), Intents.Contains(B));
+	}
+
+	{
+		TArray<FEngagementKey> Records;
+		Records.Add({ C, B });
+		Records.Add({ A, B });
+		TMap<FUnitHandle, FCombatSolver::FAssignIntent> Intents;
+		FCombatSolver::ResolveUnitIntents(TMap<FUnitHandle, FUnitOrder>(), Records, Intents);
+		const FCombatSolver::FAssignIntent* Resolved = Intents.Find(B);
+		TestNotNull(TEXT("defensive intent"), Resolved);
+		if (Resolved)
+		{
+			TestEqual(TEXT("defends lowest aggressor"), Resolved->TargetUnit, A);
+			TestEqual(TEXT("defensive is not auto-engage"), Resolved->bAutoEngage, 0);
+		}
+	}
+
+	// -- Designated AttackMove / AttackUnit never enter the table; the table
+	//    RESETS between calls. (The record's DEFENDER must also be ordered
+	//    away here, or demo-fix3 would give it a defensive intent.) --
+	{
+		TMap<FUnitHandle, FUnitOrder> Orders;
+		FUnitOrder Designated;
+		Designated.Type = FUnitOrder::EType::AttackMove;
+		Designated.TargetUnit = C;
+		Orders.Add(A, Designated);
+		FUnitOrder Away;
+		Away.Type = FUnitOrder::EType::Move;
+		Orders.Add(B, Away);
+		TArray<FEngagementKey> Records;
+		Records.Add({ A, B });
+		TMap<FUnitHandle, FCombatSolver::FAssignIntent> Intents;
+		FCombatSolver::ResolveUnitIntents(Orders, Records, Intents);
+		TestEqual(TEXT("designated AttackMove stays with the order path"), Intents.Num(), 0);
+
+		// Reset semantics: a call with an unordered defender under fire fills
+		// the table; the next call with no records must clear it.
+		FCombatSolver::ResolveUnitIntents(TMap<FUnitHandle, FUnitOrder>(), Records, Intents);
+		TestTrue(TEXT("idle unit under fire defends"), Intents.Contains(B));
+		FCombatSolver::ResolveUnitIntents(Orders, TArray<FEngagementKey>(), Intents);
+		TestEqual(TEXT("table resets with the record set"), Intents.Num(), 0);
+	}
+
+	return true;
+}
+
+// ---------------------------------------------------------------------------
 // Task 2: attack order surface (A4) -- serial bump, no-op re-issue, A9 guard.
 // ---------------------------------------------------------------------------
 

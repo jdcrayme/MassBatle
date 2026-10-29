@@ -13,6 +13,9 @@
 
 struct FCombatTallyTable;
 struct FRandomStream;
+struct FEngagementKey;
+struct FChargeFragment;
+struct FMassEntityManager;
 
 /** Battle.Combat.* CVAR block (spec §4.11 table; brief task 0 step 4; B.8
  *  item 6). Defined in BattleEngagement.cpp; read through these accessors
@@ -227,6 +230,49 @@ namespace FCombatSolver
 	 *  sorts it; callers MUST sort handle-wise before searching). Exposed
 	 *  so processors can stop linear-scanning the mirror (A-4). */
 	MASSBATTLE_API const FAssignDefenderState* FindDefender(const TArray<FAssignDefenderState>& Defenders, FMassEntityHandle Entity);
+
+	/** PR-4 (audit D-4 step 2): the assign pass's per-unit intent table,
+	 *  extracted from AssignPairsProcessor so it is unit-testable on the
+	 *  seam. Pure: reads the order surface + the live engagement record
+	 *  keys, writes OutIntents (cleared first). Semantics (A4 + demo-fix3,
+	 *  owner report 2026-10-28):
+	 *  - a targetless AttackMove auto-engages the lowest-(index, serial)
+	 *    enemy unit among its live records (bAutoEngage 1);
+	 *  - an UNORDERED unit with an incoming record defends against the
+	 *    lowest-(index, serial) aggressor (bAutoEngage 0);
+	 *  - everything else (AttackUnit, designated AttackMove, Move/Stop --
+	 *    and idle units with no record) resolves in the processor's
+	 *    per-chunk order path, never enters this table. */
+	struct FAssignIntent
+	{
+		FUnitHandle TargetUnit;
+		uint8 bAutoEngage = 0;
+		bool bHasIntent = false;
+	};
+	MASSBATTLE_API void ResolveUnitIntents(
+		const TMap<FUnitHandle, FUnitOrder>& Orders,
+		const TArray<FEngagementKey>& LiveRecords,
+		TMap<FUnitHandle, FAssignIntent>& OutIntents);
+
+	/** PR-4 (audit D-4 step 1): the charge knockback's one-shot application
+	 *  (spec §4.9), extracted from AssignPairsProcessor's write-back as a
+	 *  seam function. THE CALL SITE STAYS IN THE WRITE-BACK: the write-back's
+	 *  waiter-ring math reads live transforms, and knockback victims are
+	 *  themselves seekers (demo-fix3), so applying the displacement from a
+	 *  LATER step changes the ring geometry of the same pass (A/B'd
+	 *  2026-10-29: a dedicated post-assign processor drifts ChargeMechanics'
+	 *  kill count by one even with the knockback count pinned -- the writeup's
+	 *  "a dedicated step satisfies the timing equally" premise is falsified;
+	 *  see the PR-4 landing note). Consumes the one-shot latch (bConnected &&
+	 *  !bKnockbackApplied) and stamps bKnockbackApplied REGARDLESS of the
+	 *  impulse size (the event is consumed either way). Returns true when the
+	 *  latch was consumed by a VALID application (target valid, ImpactSpeed
+	 *  > 0); on a positive impulse displaces the victim's transform along the
+	 *  attacker's velocity heading. OutImpulseM/OutHeading carry the applied
+	 *  values (0/zero below the threshold) for the caller's metric + line. */
+	MASSBATTLE_API bool ApplyChargeKnockback(FChargeFragment& Charge, const FMassEntityHandle& TargetEntity,
+		const FVector& AttackerVel, float ChargeSpeedThreshold, FMassEntityManager& Entities,
+		float& OutImpulseM, FVector2D& OutHeading);
 
 	// -- Cluster pass pure math (task 5; spec §4.2). The processors are thin
 	//    shims: gather unit bodies + contact pairs, call these, write records. --

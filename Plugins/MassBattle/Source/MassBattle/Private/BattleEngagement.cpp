@@ -5,6 +5,9 @@
 #include "BattleMelee.h"
 #include "HAL/IConsoleManager.h"
 
+#include "MassCommonFragments.h" // FTransformFragment (knockback victim write)
+#include "MassEntityManager.h"
+
 // -- Battle.Combat.* CVAR block (spec §4.11; defaults are A6 placeholders) --
 namespace
 {
@@ -274,6 +277,120 @@ namespace FCombatSolver
 			}
 		}
 		return nullptr;
+	}
+
+	void ResolveUnitIntents(const TMap<FUnitHandle, FUnitOrder>& Orders,
+		const TArray<FEngagementKey>& LiveRecords, TMap<FUnitHandle, FAssignIntent>& OutIntents)
+	{
+		OutIntents.Reset();
+		// AttackMove's auto-engage: the nearest live-record enemy unit (the
+		// records exist once contact forms; the resolution runs before the seek
+		// gather so the seekers read the RESOLVED target).
+		for (const TPair<FUnitHandle, FUnitOrder>& OrderPair : Orders)
+		{
+			if (OrderPair.Value.Type != FUnitOrder::EType::AttackMove
+				|| OrderPair.Value.TargetUnit.IsValid())
+			{
+				continue; // AttackUnit carries its target; designated AttackMoves keep theirs
+			}
+			FAssignIntent Intent;
+			Intent.bAutoEngage = 1;
+			Intent.bHasIntent = true;
+			FUnitHandle Best;
+			for (const FEngagementKey& Key : LiveRecords)
+			{
+				const FUnitHandle Enemy = Key.Attacker == OrderPair.Key ? Key.Defender
+					: Key.Defender == OrderPair.Key ? Key.Attacker : FUnitHandle();
+				if (!Enemy.IsValid())
+				{
+					continue;
+				}
+				// Anchor distance via the unit chunks is not available here; the
+				// deterministic nearest = the lowest (index, serial) enemy unit.
+				const uint32 Rank = (Enemy.Index << 16) | Enemy.Serial;
+				const uint32 BestRank = Best.IsValid() ? (Best.Index << 16) | Best.Serial : MAX_uint32;
+				if (Rank < BestRank)
+				{
+					Best = Enemy;
+				}
+			}
+			Intent.TargetUnit = Best;
+			OutIntents.Add(OrderPair.Key, Intent);
+		}
+
+		// demo-fix3 (owner report 2026-10-28): DEFENSIVE REACTION. An idle unit
+		// (order None / no order) that is under attack fights back: the cluster
+		// pass emits a record for BOTH directions of a contacted pair once either
+		// side wants combat, so the (defender -> aggressor) record already exists
+		// and the seam treats the defender's entities as ordinary seekers against
+		// the aggressor's line. This revises the ADR-05 attacker-authoritative
+		// posture for UNORDERED units: the owner's demo expectation is that an
+		// attacked unit defends itself (its front rank pairs, presses, and rolls
+		// -- return casualties on the attacker and visible defender movement).
+		// Deterministic with multiple aggressors: defend against the lowest
+		// (index, serial); the other aggressors still pair INTO this unit through
+		// their own orders. Re-tasked units (Move/Stop) keep the disengage
+		// semantics -- their orders resolve in the processor's per-chunk path
+		// and never reach this table.
+		for (const FEngagementKey& Key : LiveRecords)
+		{
+			const FUnitHandle& UnderFire = Key.Defender;
+			const FUnitHandle& Aggressor = Key.Attacker;
+			if (!Aggressor.IsValid())
+			{
+				continue;
+			}
+			const FUnitOrder* UnderFireOrder = Orders.Find(UnderFire);
+			if (UnderFireOrder && UnderFireOrder->Type != FUnitOrder::EType::None)
+			{
+				continue; // ordered: attack intents resolved above; Move/Stop disengage
+			}
+			FAssignIntent& Defense = OutIntents.FindOrAdd(UnderFire);
+			const uint32 Rank = (Aggressor.Index << 16) | Aggressor.Serial;
+			const uint32 CurrentRank = Defense.TargetUnit.IsValid()
+				? (Defense.TargetUnit.Index << 16) | Defense.TargetUnit.Serial
+				: MAX_uint32;
+			if (!Defense.bHasIntent || Rank < CurrentRank)
+			{
+				Defense.TargetUnit = Aggressor;
+				Defense.bAutoEngage = 0;
+				Defense.bHasIntent = true;
+			}
+		}
+	}
+
+	bool ApplyChargeKnockback(FChargeFragment& Charge, const FMassEntityHandle& TargetEntity,
+		const FVector& AttackerVel, float ChargeSpeedThreshold, FMassEntityManager& Entities,
+		float& OutImpulseM, FVector2D& OutHeading)
+	{
+		OutImpulseM = 0.f;
+		OutHeading = FVector2D::ZeroVector;
+		if (Charge.bConnected == 0 || Charge.bKnockbackApplied != 0
+			|| !TargetEntity.IsValid() || Charge.ImpactSpeed <= 0.f)
+		{
+			return false;
+		}
+		// Mark applied REGARDLESS (one shot per connect; a zero impulse below
+		// the threshold still consumed the event).
+		Charge.bKnockbackApplied = 1;
+
+		const float ImpulseM = FMeleeMath::KnockbackImpulse(Charge.ImpactSpeed, ChargeSpeedThreshold);
+		FVector2D Heading(AttackerVel.X, AttackerVel.Y);
+		Heading = Heading.GetSafeNormal();
+		if (ImpulseM <= 0.f || Heading.SizeSquared() <= KINDA_SMALL_NUMBER)
+		{
+			return true;
+		}
+		if (FTransformFragment* TargetTransform = Entities.GetFragmentDataPtr<FTransformFragment>(TargetEntity))
+		{
+			FVector Pos = TargetTransform->GetTransform().GetTranslation();
+			Pos.X += Heading.X * ImpulseM * 100.f;
+			Pos.Y += Heading.Y * ImpulseM * 100.f;
+			TargetTransform->GetMutableTransform().SetTranslation(Pos);
+			OutImpulseM = ImpulseM;
+			OutHeading = Heading;
+		}
+		return true;
 	}
 
 	namespace

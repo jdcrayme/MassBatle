@@ -633,6 +633,12 @@ const FUnitRuntimeState* UUnitRegistrySubsystem::FindUnitState(FUnitHandle Handl
 	return Units.Find(Handle);
 }
 
+FUnitRuntimeState* UUnitRegistrySubsystem::FindMutableUnitState(FUnitHandle Handle)
+{
+	UE_MT_SCOPED_WRITE_ACCESS(AccessDetector);
+	return Units.Find(Handle);
+}
+
 TArray<FUnitHandle> UUnitRegistrySubsystem::GetSortedHandles() const
 {
 	UE_MT_SCOPED_READ_ACCESS(AccessDetector);

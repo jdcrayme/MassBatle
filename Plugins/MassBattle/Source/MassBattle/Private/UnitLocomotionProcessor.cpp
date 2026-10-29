@@ -954,29 +954,21 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 					}
 					// Contact probe (audit H3 wiring evidence): first 3 ticks per
 					// unit, then every 240th, with the resolved policy and the
-					// post-Min3 limit. Audit A-2: culled of stale handles on a
-					// cheap cadence -- the map must not accumulate every handle
-					// generation ever seen across a session.
-					static TMap<FUnitHandle, int32> ProbeTicks;
-					if ((ProbeTicks.Num() & 15) == 0) // amortized: 1 in 16 inserts
+					// post-Min3 limit. PR-4 (audit A-2 root): the counter is
+					// registry per-unit state (cleared with the battle) -- the
+					// function-local static map and its stale-handle culls are
+					// gone; unknown handles skip (nothing accumulates).
+					if (FUnitRuntimeState* UnitState = Registry->FindMutableUnitState(Unit))
 					{
-						for (auto It = ProbeTicks.CreateIterator(); It; ++It)
+						const int32 TickCount = ++UnitState->ContactProbeTicks;
+						if (TickCount <= 3 || TickCount % 240 == 0)
 						{
-							if (!Registry->IsHandleValid(It.Key()))
-							{
-								It.RemoveCurrent();
-							}
+							UE_LOG(LogMassBattle, Display,
+								TEXT("EXEC_RESULT PassThroughProbe Unit=%u:%u tick=%d anchorX=%.2f selfCav=%d otherCav=%d policy=%d limit=%.1f"),
+								Unit.Index, Unit.Serial, TickCount, Formation.AnchorPos.X * 0.01f,
+								bSelfCavalry ? 1 : 0, bOtherCavalry ? 1 : 0,
+								bPassThroughActive ? 1 : 0, Formation.SpeedLimit);
 						}
-					}
-					int32& TickCount = ProbeTicks.FindOrAdd(Unit);
-					++TickCount;
-					if (TickCount <= 3 || TickCount % 240 == 0)
-					{
-						UE_LOG(LogMassBattle, Display,
-							TEXT("EXEC_RESULT PassThroughProbe Unit=%u:%u tick=%d anchorX=%.2f selfCav=%d otherCav=%d policy=%d limit=%.1f"),
-							Unit.Index, Unit.Serial, TickCount, Formation.AnchorPos.X * 0.01f,
-							bSelfCavalry ? 1 : 0, bOtherCavalry ? 1 : 0,
-							bPassThroughActive ? 1 : 0, Formation.SpeedLimit);
 					}
 				}
 			}
@@ -1056,35 +1048,28 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 					GBattleMovementDressBreak.GetValueOnGameThread(),
 					GBattleMovementPaceGain.GetValueOnGameThread());
 				CurrentLimit *= PaceFactor;
-			// Phase 2 D2 observability: one line per throttle engagement and
-			// per recovery (event rate, game thread). Audit A-2: culled of
-			// stale handles on a cheap cadence (same discipline as ProbeTicks).
-			static TMap<FUnitHandle, bool> PaceThrottled;
-			if ((PaceThrottled.Num() & 15) == 0)
-			{
-				for (auto It = PaceThrottled.CreateIterator(); It; ++It)
+				// Phase 2 D2 observability: one line per throttle engagement and
+				// per recovery (event rate, game thread). PR-4 (audit A-2 root):
+				// the latch is registry per-unit state (cleared with the battle),
+				// not a function-local static map.
+				if (FUnitRuntimeState* UnitState = Registry->FindMutableUnitState(Unit))
 				{
-					if (!Registry->IsHandleValid(It.Key()))
+					const bool bWas = UnitState->bPaceThrottled;
+					if (PaceFactor < 1.f && !bWas)
 					{
-						It.RemoveCurrent();
+						UnitState->bPaceThrottled = true;
+						UE_LOG(LogMassBattle, Display,
+							TEXT("EXEC_RESULT StragglerThrottle Unit=%u:%u ON meanErr=%.2fm factor=%.2f"),
+							Unit.Index, Unit.Serial, Formation.MaxSlotErrorM, PaceFactor);
+					}
+					else if (PaceFactor >= 1.f && bWas)
+					{
+						UnitState->bPaceThrottled = false;
+						UE_LOG(LogMassBattle, Display,
+							TEXT("EXEC_RESULT StragglerThrottle Unit=%u:%u OFF meanErr=%.2fm"),
+							Unit.Index, Unit.Serial, Formation.MaxSlotErrorM);
 					}
 				}
-			}
-			const bool bWas = PaceThrottled.FindOrAdd(Unit) == true;
-			if (PaceFactor < 1.f && !bWas)
-			{
-				PaceThrottled[Unit] = true;
-				UE_LOG(LogMassBattle, Display,
-					TEXT("EXEC_RESULT StragglerThrottle Unit=%u:%u ON meanErr=%.2fm factor=%.2f"),
-					Unit.Index, Unit.Serial, Formation.MaxSlotErrorM, PaceFactor);
-			}
-			else if (PaceFactor >= 1.f && bWas)
-			{
-				PaceThrottled[Unit] = false;
-				UE_LOG(LogMassBattle, Display,
-					TEXT("EXEC_RESULT StragglerThrottle Unit=%u:%u OFF meanErr=%.2fm"),
-					Unit.Index, Unit.Serial, Formation.MaxSlotErrorM);
-			}
 			}
 		}
 

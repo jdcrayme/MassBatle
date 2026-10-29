@@ -445,6 +445,12 @@ public:
 	int32 GetUnitCount() const;
 	const FUnitRuntimeState* FindUnitState(FUnitHandle Handle) const;
 
+	/** PR-4 (audit A-2 root): game-thread mutable per-unit state for the
+	 *  locomotion tick bookkeeping (ContactProbeTicks / bPaceThrottled) --
+	 *  registry-owned, cleared with the battle. Null for an unknown handle
+	 *  (a stale or unregistered unit: callers skip, nothing accumulates). */
+	FUnitRuntimeState* FindMutableUnitState(FUnitHandle Handle);
+
 	/** Gather live handles in a deterministic order (sorted by Index). */
 	TArray<FUnitHandle> GetSortedHandles() const;
 

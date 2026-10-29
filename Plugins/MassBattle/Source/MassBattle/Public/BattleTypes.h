@@ -189,6 +189,15 @@ struct FUnitRuntimeState
 	bool bRetreating = false;
 	uint32 AutoRetreatSerial = 0;
 	FUnitHandle RetreatingFireTarget;
+
+	// PR-4 (audit A-2 root): locomotion's per-unit tick bookkeeping, registry
+	// per-unit state instead of function-local static maps -- cleared with the
+	// battle (ResetBattleState resets the whole Units map) and per-world
+	// instead of per-process. ContactProbeTicks drives the pass-through probe
+	// cadence (first 3 ticks, then every 240th); bPaceThrottled is the
+	// StragglerThrottle event-edge latch (one log line per engagement/recovery).
+	int32 ContactProbeTicks = 0;
+	bool bPaceThrottled = false;
 };
 
 /** Spawn request: one parsed EDU row + roster size. Formation params seed the

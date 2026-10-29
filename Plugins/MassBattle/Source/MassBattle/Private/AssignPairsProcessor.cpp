@@ -57,7 +57,9 @@ void UAssignPairsProcessor::ConfigureQueries(const TSharedRef<FMassEntityManager
 	SeekerQuery.AddRequirement<FCombatIntentFragment>(EMassFragmentAccess::ReadWrite);
 	SeekerQuery.AddRequirement<FTransformFragment>(EMassFragmentAccess::ReadOnly);
 	SeekerQuery.AddRequirement<FLoadoutFragment>(EMassFragmentAccess::ReadOnly);
-	// ReadWrite: the write-back stamps the one-shot knockback-applied latch.
+	// ReadWrite: the write-back consumes the one-shot knockback latch through
+	// FCombatSolver::ApplyChargeKnockback (PR-4; the call site stays here --
+	// see the seam function's comment).
 	SeekerQuery.AddRequirement<FChargeFragment>(EMassFragmentAccess::ReadWrite);
 	SeekerQuery.AddRequirement<FMassVelocityFragment>(EMassFragmentAccess::ReadOnly);
 	SeekerQuery.AddRequirement<FOwnerUnitFragment>(EMassFragmentAccess::ReadOnly);
@@ -167,7 +169,10 @@ void UAssignPairsProcessor::Execute(FMassEntityManager& EntityManager, FMassExec
 		}
 	}
 
-	// ---- Order intents per unit (A4): the registry order surface resolved. ----
+	// ---- Order intents per unit (A4 + demo-fix3): the table build lives on
+	// the seam (PR-4, audit D-4 step 2) -- pure and unit-tested; the processor
+	// only consumes it below. LiveRecords mirrors RecordIndexMap's key set
+	// (the filtered live records), in the registry's sorted-key order. ----
 	TMap<FUnitHandle, FUnitOrder> Orders;
 	for (const FUnitHandle& Handle : Registry->GetSortedHandles())
 	{
@@ -176,87 +181,14 @@ void UAssignPairsProcessor::Execute(FMassEntityManager& EntityManager, FMassExec
 			Orders.Add(Handle, *Order);
 		}
 	}
-
-	// AttackMove's auto-engage: the nearest live-record enemy unit (the
-	// records exist once contact forms; the resolution runs before the seek
-	// gather so the seekers read the RESOLVED target).
-	struct FUnitIntent
-	{
-		FUnitHandle TargetUnit;
-		uint8 bAutoEngage = 0;
-		bool bHasIntent = false;
-	};
-	TMap<FUnitHandle, FUnitIntent> UnitIntents;
-	for (const TPair<FUnitHandle, FUnitOrder>& OrderPair : Orders)
-	{
-		if (OrderPair.Value.Type != FUnitOrder::EType::AttackMove
-			|| OrderPair.Value.TargetUnit.IsValid())
-		{
-			continue; // AttackUnit carries its target; designated AttackMoves keep theirs
-		}
-		FUnitIntent Intent;
-		Intent.bAutoEngage = 1;
-		Intent.bHasIntent = true;
-		FUnitHandle Best;
-		for (const TPair<FEngagementKey, int32>& Rec : RecordIndexMap)
-		{
-			const FUnitHandle Enemy = Rec.Key.Attacker == OrderPair.Key ? Rec.Key.Defender
-				: Rec.Key.Defender == OrderPair.Key ? Rec.Key.Attacker : FUnitHandle();
-			if (!Enemy.IsValid())
-			{
-				continue;
-			}
-			// Anchor distance via the unit chunks is not available here; the
-			// deterministic nearest = the lowest (index, serial) enemy unit.
-			const uint32 Rank = (Enemy.Index << 16) | Enemy.Serial;
-			const uint32 BestRank = Best.IsValid() ? (Best.Index << 16) | Best.Serial : MAX_uint32;
-			if (Rank < BestRank)
-			{
-				Best = Enemy;
-			}
-		}
-		Intent.TargetUnit = Best;
-		UnitIntents.Add(OrderPair.Key, Intent);
-	}
-
-	// demo-fix3 (owner report 2026-10-28): DEFENSIVE REACTION. An idle unit
-	// (order None / no order) that is under attack fights back: the cluster
-	// pass emits a record for BOTH directions of a contacted pair once either
-	// side wants combat, so the (defender -> aggressor) record already exists
-	// and the seam treats the defender's entities as ordinary seekers against
-	// the aggressor's line. This revises the ADR-05 attacker-authoritative
-	// posture for UNORDERED units: the owner's demo expectation is that an
-	// attacked unit defends itself (its front rank pairs, presses, and rolls
-	// -- return casualties on the attacker and visible defender movement).
-	// Deterministic with multiple aggressors: defend against the lowest
-	// (index, serial); the other aggressors still pair INTO this unit through
-	// their own orders. Re-tasked units (Move/Stop) keep the disengage
-	// semantics -- their orders resolve below and never reach this table.
+	TArray<FEngagementKey> LiveRecords;
+	LiveRecords.Reserve(RecordIndexMap.Num());
 	for (const TPair<FEngagementKey, int32>& Rec : RecordIndexMap)
 	{
-		const FUnitHandle& UnderFire = Rec.Key.Defender;
-		const FUnitHandle& Aggressor = Rec.Key.Attacker;
-		if (!Aggressor.IsValid())
-		{
-			continue;
-		}
-		const FUnitOrder* UnderFireOrder = Orders.Find(UnderFire);
-		if (UnderFireOrder && UnderFireOrder->Type != FUnitOrder::EType::None)
-		{
-			continue; // ordered: attack intents resolved above; Move/Stop disengage
-		}
-		FUnitIntent& Defense = UnitIntents.FindOrAdd(UnderFire);
-		const uint32 Rank = (Aggressor.Index << 16) | Aggressor.Serial;
-		const uint32 CurrentRank = Defense.TargetUnit.IsValid()
-			? (Defense.TargetUnit.Index << 16) | Defense.TargetUnit.Serial
-			: MAX_uint32;
-		if (!Defense.bHasIntent || Rank < CurrentRank)
-		{
-			Defense.TargetUnit = Aggressor;
-			Defense.bAutoEngage = 0;
-			Defense.bHasIntent = true;
-		}
+		LiveRecords.Add(Rec.Key);
 	}
+	TMap<FUnitHandle, FCombatSolver::FAssignIntent> UnitIntents;
+	FCombatSolver::ResolveUnitIntents(Orders, LiveRecords, UnitIntents);
 
 	// ---- Seeker mirrors, per chunk (both query walks visit chunks in the
 	// same deterministic order, so write-back consumes BridgesByChunk
@@ -296,7 +228,7 @@ void UAssignPairsProcessor::Execute(FMassEntityManager& EntityManager, FMassExec
 			// 2026-10-27: the seekers read the raw order and never paired).
 			if (bAutoEngage && !OrderTarget.IsValid())
 			{
-				if (const FUnitIntent* Resolved = UnitIntents.Find(OwnerUnit))
+				if (const FCombatSolver::FAssignIntent* Resolved = UnitIntents.Find(OwnerUnit))
 				{
 					OrderTarget = Resolved->TargetUnit;
 				}
@@ -307,7 +239,7 @@ void UAssignPairsProcessor::Execute(FMassEntityManager& EntityManager, FMassExec
 			// demo-fix3 (owner report 2026-10-28): idle unit under attack -- read
 			// the defensive intent resolved above; the entities pair through the
 			// (defender -> aggressor) record exactly like an ordered attacker's.
-			if (const FUnitIntent* Resolved = UnitIntents.Find(OwnerUnit))
+			if (const FCombatSolver::FAssignIntent* Resolved = UnitIntents.Find(OwnerUnit))
 			{
 				OrderTarget = Resolved->TargetUnit;
 				bAutoEngage = Resolved->bAutoEngage;
@@ -576,61 +508,48 @@ void UAssignPairsProcessor::Execute(FMassEntityManager& EntityManager, FMassExec
 				}
 
 					// Task 10 debug pass (B.2 pairing rows): the red attack line to
-				// the paired entity (the write-back has the transforms + the
-				// fresh pair in one place).
-				if (bDebugOverlay && Out.Target.IsValid())
-				{
-					FMassEntityView TargetView(Entities->GetMutableEntityManager(), Out.Target);
-					if (const FTransformFragment* TargetTransform = TargetView.GetFragmentDataPtr<FTransformFragment>())
+					// the paired entity (the write-back has the transforms + the
+					// fresh pair in one place).
+					if (bDebugOverlay && Out.Target.IsValid())
 					{
-						const FVector TargetP = TargetTransform->GetTransform().GetTranslation();
-						FBattleOverlayLine AttackLine;
-						AttackLine.From = FVector(MyPosM.X * 100.f, MyPosM.Y * 100.f, 30.f);
-						AttackLine.To = FVector(TargetP.X, TargetP.Y, 30.f);
-						AttackLine.Color = FColor(255, 30, 30);
-						DebugSub->EnqueueOverlayLine(AttackLine);
-					}
-				}
-
-			// Charge knockback (spec §4.9): the worker-side connect seeds
-				// ImpactSpeed; THIS game-thread pass applies the one-shot
-				// bounded displacement to the victim's transform along the
-				// attacker's velocity heading -- BEFORE the worker phase (no
-				// writer races; the same discipline the spawn path uses).
-				if (Charges[i].bConnected != 0 && Charges[i].bKnockbackApplied == 0
-					&& S.Target.IsValid() && Charges[i].ImpactSpeed > 0.f)
-				{
-					const float ImpulseM = FMeleeMath::KnockbackImpulse(
-						Charges[i].ImpactSpeed, FCombatCVars::ChargeSpeedThreshold());
-					const FVector AttackerVel = Velocities[i].Value;
-					FVector2D Heading(AttackerVel.X, AttackerVel.Y);
-					Heading = Heading.GetSafeNormal();
-					if (ImpulseM > 0.f && Heading.SizeSquared() > KINDA_SMALL_NUMBER)
-					{
+						FMassEntityView TargetView(Entities->GetMutableEntityManager(), Out.Target);
+						if (const FTransformFragment* TargetTransform = TargetView.GetFragmentDataPtr<FTransformFragment>())
 						{
-							FMassEntityView TargetView(Entities->GetMutableEntityManager(), S.Target);
-							if (FTransformFragment* TargetTransform = TargetView.GetFragmentDataPtr<FTransformFragment>())
-							{
-								FVector Pos = TargetTransform->GetTransform().GetTranslation();
-								Pos.X += Heading.X * ImpulseM * 100.f;
-								Pos.Y += Heading.Y * ImpulseM * 100.f;
-								TargetTransform->GetMutableTransform().SetTranslation(Pos);
-								if (DebugSub)
-								{
-									DebugSub->RecordKnockback();
-								}
-								UE_LOG(LogMassBattle, Display,
-									TEXT("EXEC_RESULT ChargeKnockback Attacker=%u:%u Victim=%u:%u Impulse=%.2fm Heading=(%.2f,%.2f)"),
-									S.Entity.Index, S.Entity.SerialNumber, S.Target.Index, S.Target.SerialNumber,
-									ImpulseM, Heading.X, Heading.Y);
-							}
+							const FVector TargetP = TargetTransform->GetTransform().GetTranslation();
+							FBattleOverlayLine AttackLine;
+							AttackLine.From = FVector(MyPosM.X * 100.f, MyPosM.Y * 100.f, 30.f);
+							AttackLine.To = FVector(TargetP.X, TargetP.Y, 30.f);
+							AttackLine.Color = FColor(255, 30, 30);
+							DebugSub->EnqueueOverlayLine(AttackLine);
 						}
 					}
-					// Mark applied REGARDLESS (one shot per connect; a zero
-					// impulse below the threshold still consumed the event).
-					Charges[i].bKnockbackApplied = 1;
+
+					// Charge knockback (spec §4.9): the math lives on the seam
+					// (FCombatSolver::ApplyChargeKnockback, PR-4 audit D-4 step
+					// 1) but the CALL SITE stays inside the write-back: the
+					// waiter-ring math above reads live transforms and knockback
+					// victims are themselves seekers (demo-fix3), so a later
+					// step changes the same pass's ring geometry (A/B'd
+					// 2026-10-29 -- see the seam function's comment).
+					float ImpulseM = 0.f;
+					FVector2D Heading(0.f, 0.f);
+					if (FCombatSolver::ApplyChargeKnockback(Charges[i], S.Target, Velocities[i].Value,
+						FCombatCVars::ChargeSpeedThreshold(), Entities->GetMutableEntityManager(),
+						ImpulseM, Heading))
+					{
+						if (DebugSub)
+						{
+							DebugSub->RecordKnockback();
+						}
+						if (ImpulseM > 0.f)
+						{
+							UE_LOG(LogMassBattle, Display,
+								TEXT("EXEC_RESULT ChargeKnockback Attacker=%u:%u Victim=%u:%u Impulse=%.2fm Heading=(%.2f,%.2f)"),
+								S.Entity.Index, S.Entity.SerialNumber, S.Target.Index, S.Target.SerialNumber,
+								ImpulseM, Heading.X, Heading.Y);
+						}
+					}
 				}
-			}
-		});
+			});
 	}
 }
