@@ -23,6 +23,11 @@
 #include "BattleDebugSubsystem.h"
 #include "BattleTestSettings.h"
 #include "BattleCostGridSubsystem.h"
+#include "BattleCostGrid.h"
+#include "BattleRanged.h"
+#include "BattleRangedFragments.h"
+#include "BattleProjectilePool.h"
+#include "BattleProjectileSubsystem.h"
 #include "BattleGarrison.h"
 #include "BattleGarrisonSubsystem.h"
 #include "MassCommonFragments.h"
@@ -5773,7 +5778,7 @@ namespace
 
 AS6VolleyTest::AS6VolleyTest()
 {
-	TimeLimit = 180.f;
+	TimeLimit = 300.f;
 	TimesUpResult = EFunctionalTestResult::Error;
 }
 
@@ -5794,22 +5799,562 @@ void AS6VolleyTest::CompleteTest(EFunctionalTestResult TestResult, const FString
 	SetActorTickEnabled(false);
 }
 
+void AS6VolleyTest::Destroyed()
+{
+	RestoreCvars();
+	Super::Destroyed();
+}
+
+void AS6VolleyTest::SetCvars()
+{
+	static const TCHAR* CombatNames[5] = {
+		TEXT("Battle.Combat.SpatialHash"), TEXT("Battle.Combat.Clusters"),
+		TEXT("Battle.Combat.Tally"), TEXT("Battle.Combat.Assign"), TEXT("Battle.Combat.Resolve") };
+	static const TCHAR* RangedNames[4] = {
+		TEXT("Battle.Ranged.Enable"), TEXT("Battle.Ranged.Fire"),
+		TEXT("Battle.Ranged.Step"), TEXT("Battle.Ranged.Skirmish") };
+	for (int32 i = 0; i < 5; ++i)
+	{
+		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(CombatNames[i]))
+		{
+			SavedCombat[i] = C->GetInt();
+			C->Set(1, ECVF_SetByCode);
+		}
+	}
+	for (int32 i = 0; i < 4; ++i)
+	{
+		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(RangedNames[i]))
+		{
+			SavedRanged[i] = C->GetInt();
+			C->Set(1, ECVF_SetByCode);
+		}
+	}
+	// The drain phase needs 25 reload cycles; the A6 3 s cycle makes that a
+	// 75 s phase. The scenario runs at the 0.5 s cycle (saved/restored).
+	if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Ranged.ReloadInterval")))
+	{
+		SavedReload = C->GetFloat();
+		C->Set(0.5f, ECVF_SetByCode);
+	}
+}
+
+void AS6VolleyTest::RestoreCvars()
+{
+	static const TCHAR* CombatNames[5] = {
+		TEXT("Battle.Combat.SpatialHash"), TEXT("Battle.Combat.Clusters"),
+		TEXT("Battle.Combat.Tally"), TEXT("Battle.Combat.Assign"), TEXT("Battle.Combat.Resolve") };
+	static const TCHAR* RangedNames[4] = {
+		TEXT("Battle.Ranged.Enable"), TEXT("Battle.Ranged.Fire"),
+		TEXT("Battle.Ranged.Step"), TEXT("Battle.Ranged.Skirmish") };
+	for (int32 i = 0; i < 5; ++i)
+	{
+		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(CombatNames[i]))
+		{
+			C->Set(SavedCombat[i], ECVF_SetByCode);
+		}
+	}
+	for (int32 i = 0; i < 4; ++i)
+	{
+		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(RangedNames[i]))
+		{
+			C->Set(SavedRanged[i], ECVF_SetByCode);
+		}
+	}
+	if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Ranged.ReloadInterval")))
+	{
+		C->Set(SavedReload, ECVF_SetByCode);
+	}
+}
+
+void AS6VolleyTest::SpawnSide(TObjectPtr<AUnitActor>& OutActor, int32 Row, int32 Count, uint8 Team,
+	const FVector& Pos, float Yaw, const TCHAR* Name)
+{
+	FActorSpawnParameters Params;
+	Params.ObjectFlags |= RF_Transient;
+	OutActor = GetWorld()->SpawnActor<AUnitActor>(Pos, FRotator(0.f, Yaw, 0.f), Params);
+	if (OutActor)
+	{
+		OutActor->EduRowIndex = Row;
+		OutActor->SoldierCount = Count;
+		OutActor->TeamId = Team;
+		FBattleSpawnResult R;
+		FString E;
+		if (!OutActor->SpawnEntities(R, E))
+		{
+			UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT S6_Volley spawn FAIL %s: %s"), Name, *E);
+			OutActor = nullptr;
+		}
+	}
+}
+
+FVector2D AS6VolleyTest::ComputeCorridorMid(UUnitRegistrySubsystem* Registry, UMassEntitySubsystem* Entities,
+	const FUnitHandle& ShooterUnit, const FUnitHandle& TargetUnit, float T)
+{
+	FVector2D Mid(0.f, 40.f);
+	const TArray<FMassEntityHandle>* RS = Registry->FindRoster(ShooterUnit);
+	const TArray<FMassEntityHandle>* RT = Registry->FindRoster(TargetUnit);
+	if (!RS || !RT || RS->Num() == 0 || RT->Num() == 0)
+	{
+		return Mid;
+	}
+	FMassEntityManager& EM = Entities->GetMutableEntityManager();
+	const FTransformFragment* TS = FMassEntityView(EM, (*RS)[0]).GetFragmentDataPtr<FTransformFragment>();
+	const FTransformFragment* TT = FMassEntityView(EM, (*RT)[0]).GetFragmentDataPtr<FTransformFragment>();
+	if (!TS || !TT)
+	{
+		return Mid;
+	}
+	const FVector2D From = FVector2D(TS->GetTransform().GetTranslation()) * 0.01f;
+	const FVector2D To = FVector2D(TT->GetTransform().GetTranslation()) * 0.01f;
+	return From + (To - From) * T;
+}
+
+int32 AS6VolleyTest::UnitShotsFired(AUnitActor* Actor)
+{
+	int32 Sum = 0;
+	if (!Actor)
+	{
+		return 0;
+	}
+	UWorld* World = GetWorld();
+	UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>();
+	UMassEntitySubsystem* Entities = World->GetSubsystem<UMassEntitySubsystem>();
+	if (const TArray<FMassEntityHandle>* Roster = Registry->FindRoster(Actor->GetUnitHandle()))
+	{
+		for (const FMassEntityHandle& E : *Roster)
+		{
+			if (const FRangedStateFragment* Ranged = FMassEntityView(Entities->GetMutableEntityManager(), E).GetFragmentDataPtr<FRangedStateFragment>())
+			{
+				Sum += Ranged->ShotsFired;
+			}
+		}
+	}
+	return Sum;
+}
+
+bool AS6VolleyTest::ZeroReloadTimers(AUnitActor* Actor)
+{
+	if (!Actor)
+	{
+		return false;
+	}
+	UWorld* World = GetWorld();
+	UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>();
+	UMassEntitySubsystem* Entities = World->GetSubsystem<UMassEntitySubsystem>();
+	if (const TArray<FMassEntityHandle>* Roster = Registry->FindRoster(Actor->GetUnitHandle()))
+	{
+		for (const FMassEntityHandle& E : *Roster)
+		{
+			if (FRangedStateFragment* Ranged = FMassEntityView(Entities->GetMutableEntityManager(), E).GetFragmentDataPtr<FRangedStateFragment>())
+			{
+				Ranged->ReloadTimer = 0.f;
+			}
+		}
+		return true;
+	}
+	return false;
+}
+
 void AS6VolleyTest::StartTest()
 {
-	// SKELETON: the S6 scenario (dispersion, LOS, friendly-fire, ammo
-	// accounting in one scenario) lands with the Phase 3 scenario task.
-	CompleteTest(EFunctionalTestResult::Error,
-		TEXT("skeleton: S6_Volley lands with the phase-3 scenario task (T3.4)"));
+	Super::StartTest();
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("no world"));
+		return;
+	}
+	DestroyOtherUnitActors(World);
+	UBattleTestSettings::ApplyTestMode();
+	SetCvars();
+	if (UBattleDebugSubsystem* Debug = World->GetSubsystem<UBattleDebugSubsystem>())
+	{
+		Debug->ResetDiagnostics();
+	}
+	if (UBattleCostGridSubsystem* CostGrid = World->GetSubsystem<UBattleCostGridSubsystem>())
+	{
+		CostGrid->ResetToFlat();
+	}
+
+	// Archer lane 100 m (team 0 vs team 1); crossbow lane 60 m (team 0 vs
+	// team 1) -- the flat lane's friendly and stray fixtures spawn in their
+	// own phases.
+	SpawnSide(Archers, 2, 16, 0, FVector(-5000.f, 0.f, 100.f), 0.f, TEXT("archers"));
+	SpawnSide(Levy, 0, 40, 1, FVector(5000.f, 0.f, 100.f), 180.f, TEXT("levy"));
+	SpawnSide(Crossbows, 3, 8, 0, FVector(-3000.f, 4000.f, 100.f), 0.f, TEXT("crossbows"));
+	SpawnSide(LevyD, 0, 8, 1, FVector(3000.f, 4000.f, 100.f), 180.f, TEXT("levyD"));
+	if (!Archers || !Levy || !Crossbows || !LevyD)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("spawn failed"));
+		return;
+	}
+	if (UBattleProjectileSubsystem* Projectiles = World->GetSubsystem<UBattleProjectileSubsystem>())
+	{
+		Projectiles->ReserveForBattle();
+	}
+	UE_LOG(LogMassBattle, Display,
+		TEXT("EXEC_RESULT S6_Volley Phase=Spawn archers=16 levy=40 crossbows=8 levyD=8 (reload cycle 0.5 s)"));
+	Phase = EPhase::Volley;
+	TicksInPhase = 0;
+	PhaseBudget = 3600;
+	ShotsAtPhaseStart = 0;
+	MaxDeviationDeg = 0.f;
+	bDispersionSampled = false;
 }
 
 void AS6VolleyTest::Tick(float DeltaSeconds)
 {
-	// Nothing to step while the skeleton stands.
+	Super::Tick(DeltaSeconds);
+	if (!IsRunning() || Phase == EPhase::Done)
+	{
+		return;
+	}
+	UWorld* World = GetWorld();
+	UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>();
+	UMassEntitySubsystem* Entities = World->GetSubsystem<UMassEntitySubsystem>();
+	UBattleProjectileSubsystem* Projectiles = World->GetSubsystem<UBattleProjectileSubsystem>();
+	UBattleDebugSubsystem* Debug = World->GetSubsystem<UBattleDebugSubsystem>();
+	if (!Registry || !Entities || !Projectiles || !Debug)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("subsystems missing"));
+		return;
+	}
+	if (++TicksInPhase > PhaseBudget)
+	{
+		CompleteTest(EFunctionalTestResult::Error,
+			FString::Printf(TEXT("phase %d stalled (%d ticks)"), static_cast<int32>(Phase), TicksInPhase));
+		return;
+	}
+	FMassEntityManager& EM = Entities->GetMutableEntityManager();
+	const FBattleProjectilePool& Pool = Projectiles->GetPool();
+
+	switch (Phase)
+	{
+	case EPhase::Volley:
+	{
+		if (TicksInPhase == 1)
+		{
+			ZeroReloadTimers(Archers);
+			Registry->IssueAttackUnitOrder(Archers->GetUnitHandle(), Levy->GetUnitHandle());
+		}
+		// Dispersion bound (spec section 5a): every in-flight shot's
+		// horizontal velocity stays within the arrow profile's 4 deg cone of
+		// ITS OWN shooter's aim axis (the seam perturbs the per-shooter
+		// solved direction; the formation's lateral spread legitimately
+		// tilts each aim a couple of degrees off the unit axis). Sampled
+		// every tick while the first volley is airborne.
+		if (!bDispersionSampled && Pool.GetLiveCount() > 0)
+		{
+			const FVector2D TargetPosM(50.f, 0.f); // the levy anchor
+			bool bAnySampled = false;
+			for (int32 Slot = 0; Slot < Pool.GetCapacity(); ++Slot)
+			{
+				if (!Pool.IsLive(Slot) || Pool.OwnerUnit[Slot] != Archers->GetUnitHandle())
+				{
+					continue;
+				}
+				const FTransformFragment* ShooterT =
+					FMassEntityView(EM, Pool.ShooterEntity[Slot]).GetFragmentDataPtr<FTransformFragment>();
+				if (!ShooterT)
+				{
+					continue;
+				}
+				const FVector S = ShooterT->GetTransform().GetTranslation();
+				const FVector2D Axis = (TargetPosM - FVector2D(S.X, S.Y) * 0.01f).GetSafeNormal();
+				const FVector2D VelXY(Pool.VelX[Slot], Pool.VelY[Slot]);
+				if (VelXY.SizeSquared() < 1e-6f || Axis.SizeSquared() < 1e-6f)
+				{
+					continue;
+				}
+				const float DevDeg = FMath::Abs(FMath::RadiansToDegrees(
+					FMath::Acos(FMath::Clamp(FVector2D::DotProduct(VelXY.GetSafeNormal(), Axis), -1.f, 1.f))));
+				MaxDeviationDeg = FMath::Max(MaxDeviationDeg, DevDeg);
+				bAnySampled = true;
+			}
+			if (bAnySampled)
+			{
+				bDispersionSampled = true;
+			}
+		}
+		const int32 Shots = Debug->GetRangedShots();
+		if (bDispersionSampled && Shots >= 16 && Pool.GetLiveCount() == 0)
+		{
+			if (MaxDeviationDeg > GetProjectileProfile(EBattleProjectileKind::Arrow).DispersionDeg + 0.5f)
+			{
+				CompleteTest(EFunctionalTestResult::Error,
+					FString::Printf(TEXT("dispersion outside the cone: %.2f deg"), MaxDeviationDeg));
+				return;
+			}
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT S6_Volley Phase=Volley shots=%d impacts=%d maxDeviationDeg=%.2f (bound 4.5)"),
+				Shots, Debug->GetRangedImpacts(), MaxDeviationDeg);
+			ShotsAtPhaseStart = Shots;
+			Phase = EPhase::FlatLane;
+			TicksInPhase = 0;
+			PhaseBudget = 3600;
+		}
+		break;
+	}
+	case EPhase::FlatLane:
+	{
+		if (TicksInPhase == 1)
+		{
+			ZeroReloadTimers(Crossbows);
+			// Slow creep (1 m/s) toward a point short of the target: the
+			// corridor stays near-nominal for the lane/hill fixtures and the
+			// aim is pre-designated (A4). A full-speed AttackUnit approach
+			// drifted ~5 m off the lane in 3 s and the corridor legitimately
+			// passed below the friendly formation (measured 2026-10-29).
+			Registry->IssueAttackMoveOrder(Crossbows->GetUnitHandle(), FVector2D(500.f, 4000.f), 0.f, 1.f, LevyD->GetUnitHandle());
+		}
+		// Flat fire works on the clean lane; then the friendly walks in and
+		// the flat-lane hold pins the shots (spec section 5c, hold half).
+		if (TicksInPhase == 180)
+		{
+			if (UnitShotsFired(Crossbows) == 0)
+			{
+				CompleteTest(EFunctionalTestResult::Error, TEXT("flat fire never fired on the clean lane"));
+				return;
+			}
+			// Spawn ONLY this tick: the hold watch arms one full second later,
+			// after the friendly's bodies are in the rebuilt hash. Zeroing
+			// reloads same-tick raced the fire pass against the stale hash
+			// and 2 shots slipped through (measured 2026-10-29).
+			// Spawn ON the live corridor: the shooters' mid-crossing point.
+			// A nominal-lane spawn missed the drifted corridor and the flat
+			// rule CORRECTLY let 2 shots through (body-circle rule).
+			// 40% along the corridor, 16 men: the frontage (+-4.6 m) then
+			// GUARANTEES every shooter's crossing is inside it (nearest body
+			// <= file spacing 1.2 < corridor 1.3) -- the 8-man unit at 50%
+			// put one body at EXACTLY 1.30 and the boundary float rode an
+			// ulp (measured 2026-10-29).
+			FVector2D CorridorMid = ComputeCorridorMid(Registry, Entities, Crossbows->GetUnitHandle(), LevyD->GetUnitHandle(), 0.4f);
+			SpawnSide(LaneFriendly, 0, 16, 0, FVector(CorridorMid.X * 100.f, CorridorMid.Y * 100.f, 100.f), 0.f, TEXT("laneFriendly"));
+			if (!LaneFriendly)
+			{
+				CompleteTest(EFunctionalTestResult::Error, TEXT("lane friendly spawn failed"));
+				return;
+			}
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT S6_Volley Phase=FlatLane cleanShots=%d friendly at (%.1f,%.1f)m on the corridor (arm in 1 s)"),
+				UnitShotsFired(Crossbows), CorridorMid.X, CorridorMid.Y);
+		}
+		if (TicksInPhase == 240)
+		{
+			ZeroReloadTimers(Crossbows);
+			CrossbowShotsMark = UnitShotsFired(Crossbows);
+		}
+		if (TicksInPhase > 240 && TicksInPhase % 60 == 0)
+		{
+			const int32 Now = UnitShotsFired(Crossbows);
+			if (Now > CrossbowShotsMark)
+			{
+				CompleteTest(EFunctionalTestResult::Error,
+					FString::Printf(TEXT("flat lane fired THROUGH a friendly (%d -> %d)"), CrossbowShotsMark, Now));
+				return;
+			}
+			if (TicksInPhase >= 480)
+			{
+				UE_LOG(LogMassBattle, Display,
+					TEXT("EXEC_RESULT S6_Volley Phase=FlatLane hold confirmed shots=%d (unchanged with the friendly in the lane)"), Now);
+				Phase = EPhase::Hill;
+				TicksInPhase = 0;
+				PhaseBudget = 3600;
+			}
+		}
+		break;
+	}
+	case EPhase::Hill:
+	{
+		if (TicksInPhase == 1)
+		{
+			// The friendly leaves the lane; the flat fire resumes...
+			if (LaneFriendly)
+			{
+				LaneFriendly->Destroy();
+				LaneFriendly = nullptr;
+			}
+		}
+		if (TicksInPhase == 120)
+		{
+			CrossbowShotsMark = UnitShotsFired(Crossbows);
+			if (CrossbowShotsMark == 0)
+			{
+				CompleteTest(EFunctionalTestResult::Error, TEXT("flat fire did not resume once the lane cleared"));
+				return;
+			}
+			// The hill variant: a 4 m plateau stamped ON the live corridor
+			// beyond the (destroyed) friendly -- below the arrows' flight
+			// path, above the near-flat bolts.
+			UBattleCostGridSubsystem* CostGrid = World->GetSubsystem<UBattleCostGridSubsystem>();
+			FBattleCostGrid& Grid = CostGrid->GetMutableGrid();
+			const FVector2D CorridorMidH = ComputeCorridorMid(Registry, Entities, Crossbows->GetUnitHandle(), LevyD->GetUnitHandle());
+			// The box straddles the corridor's mid-crossing: shooters ~25 m
+			// behind it, the target ~20 m beyond it; the y-band covers any
+			// slow-creep corridor variant.
+			const FVector2D BoxMin(CorridorMidH.X - 4.f, CorridorMidH.Y - 6.f);
+			const FVector2D BoxMax(CorridorMidH.X + 8.f, CorridorMidH.Y + 6.f);
+			int32 X0 = 0, Y0 = 0, X1 = 0, Y1 = 0;
+			Grid.WorldToCell(BoxMin, X0, Y0);
+			Grid.WorldToCell(BoxMax, X1, Y1);
+			int32 Stamped = 0;
+			for (int32 Y = Y0; Y <= Y1; ++Y)
+			{
+				for (int32 X = X0; X <= X1; ++X)
+				{
+					if (Grid.IsInside(X, Y))
+					{
+						Grid.CellHeight[Grid.IndexOf(X, Y)] = 4.f;
+						++Stamped;
+					}
+				}
+			}
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT S6_Volley Phase=Hill crossbowShots=%d hill stamped cells=%d at (-15,40) h=4"),
+				CrossbowShotsMark, Stamped);
+			ZeroReloadTimers(Crossbows);
+		}
+		if (TicksInPhase > 120 && TicksInPhase % 60 == 0)
+		{
+			const int32 Now = UnitShotsFired(Crossbows);
+			if (Now > CrossbowShotsMark)
+			{
+				CompleteTest(EFunctionalTestResult::Error,
+					FString::Printf(TEXT("flat fire crossed the hill (%d -> %d)"), CrossbowShotsMark, Now));
+				return;
+			}
+			const int32 ArcherShots = Debug->GetRangedShots();
+			if (TicksInPhase >= 360)
+			{
+				// The arced half: the archers keep firing over their (clean)
+				// lane while the flat lane is terrain-blocked -- the arcs'
+				// flight path clears the 4 m hill by design (RC2: one
+				// solver, the trajectory CLASS is the fire rule).
+				if (ArcherShots <= ShotsAtPhaseStart)
+				{
+					CompleteTest(EFunctionalTestResult::Error, TEXT("arced fire stalled during the hill watch"));
+					return;
+				}
+				UE_LOG(LogMassBattle, Display,
+					TEXT("EXEC_RESULT S6_Volley Phase=Hill flatBlocked=1 archerShots=%d (arced passes)"), ArcherShots);
+				Phase = EPhase::Stray;
+				TicksInPhase = 0;
+				PhaseBudget = 3600;
+			}
+		}
+		break;
+	}
+	case EPhase::Stray:
+	{
+		if (TicksInPhase == 1)
+		{
+			// The team-blind stray (spec section 5c): a friendly line BEHIND
+			// the target, outside the impact-zone estimate, plus ONE aimed
+			// over-flight shot that climbs over the levy and descends onto
+			// the friendly (deterministic -- the volley's own strays are
+			// seed-dependent).
+			SpawnSide(StrayFriendly, 0, 8, 0, FVector(6200.f, 0.f, 100.f), 0.f, TEXT("strayFriendly"));
+			if (!StrayFriendly)
+			{
+				CompleteTest(EFunctionalTestResult::Error, TEXT("stray friendly spawn failed"));
+				return;
+			}
+			uint32 Gen = 0;
+			FBattleProjectilePool& PoolMut = Projectiles->GetMutablePool();
+			const int32 Slot = PoolMut.Acquire(Gen);
+			if (Slot == FBattleProjectilePool::InvalidIndex)
+			{
+				CompleteTest(EFunctionalTestResult::Error, TEXT("stray slot acquire failed closed"));
+				return;
+			}
+			if (Slot != FBattleProjectilePool::InvalidIndex)
+			{
+				PoolMut.PosX[Slot] = 30.f;
+				PoolMut.PosY[Slot] = 0.f;
+				PoolMut.PosZ[Slot] = 2.5f;
+				PoolMut.VelX[Slot] = 35.f;
+				PoolMut.VelY[Slot] = 0.f;
+				PoolMut.VelZ[Slot] = 2.5f; // climbs over the levy (z 2.33 at x=50), lands on the friendly
+				PoolMut.GravityScale[Slot] = 1.f;
+				PoolMut.TTL[Slot] = 5.f;
+				PoolMut.Kind[Slot] = static_cast<uint8>(EBattleProjectileKind::Arrow);
+				PoolMut.GenerationArray[Slot] = Gen;
+				PoolMut.OwnerUnit[Slot] = Archers->GetUnitHandle();
+				PoolMut.ShooterEntity[Slot] = (*Registry->FindRoster(Archers->GetUnitHandle()))[1];
+				PoolMut.RangedAttack[Slot] = 100.f;
+				PoolMut.ShooterRollCount[Slot] = 0;
+				PoolMut.Lethality[Slot] = 1.f;
+			}
+		}
+		if (Debug->GetRangedFriendlyHits() > 0)
+		{
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT S6_Volley Phase=Stray friendlyHits=%d (team-blind impact half; RangedKill Friendly=1 in the log)"),
+				Debug->GetRangedFriendlyHits());
+			// The stray unit leaves BEFORE the drain: its edge men sit ~7 m
+			// from the levy anchor -- inside the archers' 7.5 m arced
+			// impact-zone estimate (tolerance 0), and the A7 hold would
+			// silence the volley before the quivers empty (measured
+			// 2026-10-29: the drain stalled on the rule hold).
+			if (StrayFriendly)
+			{
+				StrayFriendly->Destroy();
+				StrayFriendly = nullptr;
+			}
+			Phase = EPhase::Drain;
+			TicksInPhase = 0;
+			PhaseBudget = 7200;
+		}
+		break;
+	}
+	case EPhase::Drain:
+	{
+		// Ammo accounting (spec section 5d): cycles run at the 0.5 s reload;
+		// at aggregate zero the registry flips out-of-ammo ONCE and the unit
+		// never fires again.
+		const FUnitRuntimeState* State = Registry->FindUnitState(Archers->GetUnitHandle());
+		if (!State)
+		{
+			CompleteTest(EFunctionalTestResult::Error, TEXT("archer state lost"));
+			return;
+		}
+		if (State->bOutOfAmmo)
+		{
+			// The conservation identity at the drain: shots fired == the
+			// aggregate decrement (16 men x 25 ammo == the final ShotsFired
+			// sum).
+			const int32 Fired = UnitShotsFired(Archers);
+			const float Fraction = Registry->GetUnitAmmoFraction(Archers->GetUnitHandle());
+			if (Fired != 16 * 25)
+			{
+				CompleteTest(EFunctionalTestResult::Error,
+					FString::Printf(TEXT("conservation broken: fired=%d want=%d"), Fired, 16 * 25));
+				return;
+			}
+			if (FMath::Abs(Fraction) > 1e-3f)
+			{
+				CompleteTest(EFunctionalTestResult::Error,
+					FString::Printf(TEXT("aggregate fraction not zero: %.4f"), Fraction));
+				return;
+			}
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT S6_Volley Phase=Drain outOfAmmo=1 fired=%d fraction=%.3f (flipped once; RC5)"),
+				Fired, Fraction);
+			CompleteTest(EFunctionalTestResult::Succeeded,
+				FString::Printf(TEXT("dispersion=%.2fdeg impacts=%d friendlyHits=%d fired=%d"),
+					MaxDeviationDeg, Debug->GetRangedImpacts(), Debug->GetRangedFriendlyHits(), Fired));
+			Phase = EPhase::Done;
+		}
+		break;
+	}
+	default:
+		break;
+	}
 }
 
 ASkirmishBehaviorTest::ASkirmishBehaviorTest()
 {
-	TimeLimit = 180.f;
+	TimeLimit = 300.f;
 	TimesUpResult = EFunctionalTestResult::Error;
 }
 
@@ -5830,18 +6375,339 @@ void ASkirmishBehaviorTest::CompleteTest(EFunctionalTestResult TestResult, const
 	SetActorTickEnabled(false);
 }
 
+void ASkirmishBehaviorTest::Destroyed()
+{
+	RestoreCvars();
+	Super::Destroyed();
+}
+
+float ASkirmishBehaviorTest::AnchorDistM()
+{
+	UWorld* World = GetWorld();
+	UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>();
+	UMassEntitySubsystem* Entities = World->GetSubsystem<UMassEntitySubsystem>();
+	const TArray<FMassEntityHandle>* RA = Registry->FindRoster(Archers->GetUnitHandle());
+	const TArray<FMassEntityHandle>* RT = Registry->FindRoster(Threat->GetUnitHandle());
+	if (!RA || !RT || RA->Num() == 0 || RT->Num() == 0)
+	{
+		return -1.f;
+	}
+	FMassEntityManager& EM = Entities->GetMutableEntityManager();
+	const FTransformFragment* TA = FMassEntityView(EM, (*RA)[0]).GetFragmentDataPtr<FTransformFragment>();
+	const FTransformFragment* TT = FMassEntityView(EM, (*RT)[0]).GetFragmentDataPtr<FTransformFragment>();
+	if (!TA || !TT)
+	{
+		return -1.f;
+	}
+	return FVector2D::Distance(
+		FVector2D(TA->GetTransform().GetTranslation()) * 0.01f,
+		FVector2D(TT->GetTransform().GetTranslation()) * 0.01f);
+}
+
+void ASkirmishBehaviorTest::SetCvars()
+{
+	static const TCHAR* CombatNames[5] = {
+		TEXT("Battle.Combat.SpatialHash"), TEXT("Battle.Combat.Clusters"),
+		TEXT("Battle.Combat.Tally"), TEXT("Battle.Combat.Assign"), TEXT("Battle.Combat.Resolve") };
+	static const TCHAR* RangedNames[4] = {
+		TEXT("Battle.Ranged.Enable"), TEXT("Battle.Ranged.Fire"),
+		TEXT("Battle.Ranged.Step"), TEXT("Battle.Ranged.Skirmish") };
+	for (int32 i = 0; i < 5; ++i)
+	{
+		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(CombatNames[i]))
+		{
+			SavedCombat[i] = C->GetInt();
+			C->Set(1, ECVF_SetByCode);
+		}
+	}
+	for (int32 i = 0; i < 4; ++i)
+	{
+		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(RangedNames[i]))
+		{
+			SavedRanged[i] = C->GetInt();
+			C->Set(1, ECVF_SetByCode);
+		}
+	}
+	if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Ranged.ReloadInterval")))
+	{
+		SavedReload = C->GetFloat();
+		C->Set(0.5f, ECVF_SetByCode);
+	}
+}
+
+void ASkirmishBehaviorTest::RestoreCvars()
+{
+	static const TCHAR* CombatNames[5] = {
+		TEXT("Battle.Combat.SpatialHash"), TEXT("Battle.Combat.Clusters"),
+		TEXT("Battle.Combat.Tally"), TEXT("Battle.Combat.Assign"), TEXT("Battle.Combat.Resolve") };
+	static const TCHAR* RangedNames[4] = {
+		TEXT("Battle.Ranged.Enable"), TEXT("Battle.Ranged.Fire"),
+		TEXT("Battle.Ranged.Step"), TEXT("Battle.Ranged.Skirmish") };
+	for (int32 i = 0; i < 5; ++i)
+	{
+		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(CombatNames[i]))
+		{
+			C->Set(SavedCombat[i], ECVF_SetByCode);
+		}
+	}
+	for (int32 i = 0; i < 4; ++i)
+	{
+		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(RangedNames[i]))
+		{
+			C->Set(SavedRanged[i], ECVF_SetByCode);
+		}
+	}
+	if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Ranged.ReloadInterval")))
+	{
+		C->Set(SavedReload, ECVF_SetByCode);
+	}
+}
+
 void ASkirmishBehaviorTest::StartTest()
 {
-	// SKELETON: the skirmish scenario (break/resume/hysteresis, hold-fire
-	// still retreats, player-order override) lands with the Phase 3 scenario
-	// task.
-	CompleteTest(EFunctionalTestResult::Error,
-		TEXT("skeleton: SkirmishBehavior lands with the phase-3 scenario task (T3.5)"));
+	Super::StartTest();
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("no world"));
+		return;
+	}
+	DestroyOtherUnitActors(World);
+	UBattleTestSettings::ApplyTestMode();
+	SetCvars();
+	if (UBattleDebugSubsystem* Debug = World->GetSubsystem<UBattleDebugSubsystem>())
+	{
+		Debug->ResetDiagnostics();
+	}
+	if (UBattleCostGridSubsystem* CostGrid = World->GetSubsystem<UBattleCostGridSubsystem>())
+	{
+		CostGrid->ResetToFlat();
+	}
+	FActorSpawnParameters Params;
+	Params.ObjectFlags |= RF_Transient;
+	Archers = World->SpawnActor<AUnitActor>(FVector(0.f, 0.f, 100.f), FRotator(0.f, 0.f, 0.f), Params);
+	Threat = World->SpawnActor<AUnitActor>(FVector(2500.f, 0.f, 100.f), FRotator(0.f, 180.f, 0.f), Params);
+	if (Archers)
+	{
+		Archers->EduRowIndex = 2; // missile class: skirmish defaults ON (A8)
+		Archers->SoldierCount = 8;
+		Archers->TeamId = 0;
+		FBattleSpawnResult R;
+		FString E;
+		if (!Archers->SpawnEntities(R, E)) { Archers = nullptr; }
+	}
+	if (Threat)
+	{
+		Threat->EduRowIndex = 0;
+		Threat->SoldierCount = 12;
+		Threat->TeamId = 1;
+		FBattleSpawnResult R;
+		FString E;
+		if (!Threat->SpawnEntities(R, E)) { Threat = nullptr; }
+	}
+	if (!Archers || !Threat)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("spawn failed"));
+		return;
+	}
+	{
+		bool bFAW = false, bSkirmish = false, bOoA = false;
+		World->GetSubsystem<UUnitRegistrySubsystem>()->GetUnitFireToggles(Archers->GetUnitHandle(), bFAW, bSkirmish, bOoA);
+		if (!bSkirmish)
+		{
+			CompleteTest(EFunctionalTestResult::Error, TEXT("skirmish not stamped on at spawn"));
+			return;
+		}
+	}
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SkirmishBehavior Phase=Spawn archers=8 skirmish=1 threat=12 approaching"));
+	Phase = EPhase::Break;
+	TicksInPhase = 0;
+	PhaseBudget = 3600;
 }
 
 void ASkirmishBehaviorTest::Tick(float DeltaSeconds)
 {
-	// Nothing to step while the skeleton stands.
+	Super::Tick(DeltaSeconds);
+	if (!IsRunning() || Phase == EPhase::Done)
+	{
+		return;
+	}
+	UWorld* World = GetWorld();
+	UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>();
+	UBattleDebugSubsystem* Debug = World->GetSubsystem<UBattleDebugSubsystem>();
+	if (!Registry || !Debug)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("subsystems missing"));
+		return;
+	}
+	if (++TicksInPhase > PhaseBudget)
+	{
+		CompleteTest(EFunctionalTestResult::Error,
+			FString::Printf(TEXT("phase %d stalled (%d ticks)"), static_cast<int32>(Phase), TicksInPhase));
+		return;
+	}
+	const FUnitHandle ArchersH = Archers->GetUnitHandle();
+	const FUnitRuntimeState* State = Registry->FindUnitState(ArchersH);
+	if (!State)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("archer state lost"));
+		return;
+	}
+	const FUnitOrder* Order = Registry->FindOrder(ArchersH);
+	const FUnitOrder::EType Type = Order ? Order->Type : FUnitOrder::EType::None;
+
+	switch (Phase)
+	{
+	case EPhase::Break:
+		if (TicksInPhase == 1)
+		{
+			// The threat approaches; the archers hold an attack order (the
+			// fire aim RC7 retains through the retreat).
+			Registry->IssueAttackUnitOrder(ArchersH, Threat->GetUnitHandle());
+			Registry->IssueMoveOrder(Threat->GetUnitHandle(), FVector2D(-1000.f, 0.f), 180.f);
+			ShotsMark = Debug->GetRangedShots();
+		}
+		if (State->bRetreating && Type == FUnitOrder::EType::Move)
+		{
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT SkirmishBehavior Phase=Break retreat issued at dist=%.1fm serial=%u"),
+				AnchorDistM(), State->AutoRetreatSerial);
+			ShotsMark = Debug->GetRangedShots();
+			Phase = EPhase::Retreat;
+			TicksInPhase = 0;
+			PhaseBudget = 5400;
+		}
+		break;
+	case EPhase::Retreat:
+		// Fire-while-retreating (the retained aim) while the threat closes.
+		if (TicksInPhase % 60 == 0 && TicksInPhase >= 120 && Debug->GetRangedShots() > ShotsMark)
+		{
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT SkirmishBehavior Phase=Retreat firingWhileRetreating shots=%d dist=%.1fm"),
+				Debug->GetRangedShots(), AnchorDistM());
+			Phase = EPhase::Resume;
+			TicksInPhase = 0;
+			PhaseBudget = 7200;
+		}
+		break;
+	case EPhase::Resume:
+	{
+		// The threat's approach order ended; once the distance clears the
+		// resume band (break x 1.3) the skirmisher stops and KEEPS firing.
+		if (!State->bRetreating && Type == FUnitOrder::EType::Stop)
+		{
+			const float Dist = AnchorDistM();
+			if (Dist <= 25.f * 1.3f - 2.f)
+			{
+				CompleteTest(EFunctionalTestResult::Error,
+					FString::Printf(TEXT("resume fired inside the band: dist=%.1f"), Dist));
+				return;
+			}
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT SkirmishBehavior Phase=Resume stop issued dist=%.1fm (band 32.5) fireTarget=%u:%u"),
+				Dist, State->RetreatingFireTarget.Index, State->RetreatingFireTarget.Serial);
+			ShotsMark = Debug->GetRangedShots();
+			Phase = EPhase::Hysteresis;
+			TicksInPhase = 0;
+			PhaseBudget = 720;
+		}
+		break;
+	}
+	case EPhase::Hysteresis:
+		// 12 s of stability: no oscillation -- the order stays OUR stop and
+		// no new retreat issues while the distance holds past the band.
+		if (TicksInPhase >= 720)
+		{
+			if (Type != FUnitOrder::EType::Stop || State->bRetreating)
+			{
+				CompleteTest(EFunctionalTestResult::Error,
+					FString::Printf(TEXT("hysteresis broke: order=%d retreating=%d"),
+						static_cast<int32>(Type), State->bRetreating ? 1 : 0));
+				return;
+			}
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT SkirmishBehavior Phase=Hysteresis stable=1 dist=%.1fm"), AnchorDistM());
+			// Hold-fire variant: FireAtWill off -- retreat still fires (RC7).
+			// The threat CHASES the archers' current anchor (a fixed anchor
+			// short of their position never re-enters the break band --
+			// measured 2026-10-29: the phase stalled with the threat parked
+			// 35 m short).
+			Registry->SetUnitFireToggles(ArchersH, false, true);
+			const TArray<FMassEntityHandle>* RA = Registry->FindRoster(ArchersH);
+			UMassEntitySubsystem* Entities = World->GetSubsystem<UMassEntitySubsystem>();
+			const FTransformFragment* TA = (RA && RA->Num() > 0 && Entities)
+				? FMassEntityView(Entities->GetMutableEntityManager(), (*RA)[0]).GetFragmentDataPtr<FTransformFragment>()
+				: nullptr;
+			if (TA)
+			{
+				const FVector P = TA->GetTransform().GetTranslation();
+				Registry->IssueMoveOrder(Threat->GetUnitHandle(), FVector2D(P.X, P.Y), 180.f);
+			}
+			ShotsMark = Debug->GetRangedShots();
+			Phase = EPhase::HoldFire;
+			TicksInPhase = 0;
+			PhaseBudget = 5400;
+		}
+		break;
+	case EPhase::HoldFire:
+	{
+		const int32 Shots = Debug->GetRangedShots();
+		if (State->bRetreating && Type == FUnitOrder::EType::Move)
+		{
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT SkirmishBehavior Phase=HoldFire retreat at FireAtWill=0 dist=%.1fm shots=%d (no fire)"),
+				AnchorDistM(), Shots);
+			if (Shots != ShotsMark)
+			{
+				CompleteTest(EFunctionalTestResult::Error,
+					FString::Printf(TEXT("FireAtWill=0 still fired (%d -> %d)"), ShotsMark, Shots));
+				return;
+			}
+			// The player override: any player order cancels the auto-retreat
+			// (the RC7 serial guard) and is never overridden.
+			Registry->IssueMoveOrder(ArchersH, FVector2D(3000.f, 3000.f), 0.f);
+			Phase = EPhase::Override;
+			TicksInPhase = 0;
+			PhaseBudget = 1800;
+		}
+		break;
+	}
+	case EPhase::Override:
+	{
+		// One respite tick for the cancel path, then the stability watch.
+		if (TicksInPhase == 2)
+		{
+			if (State->bRetreating)
+			{
+				CompleteTest(EFunctionalTestResult::Error, TEXT("player order failed to cancel the retreat"));
+				return;
+			}
+			if (Order && (FMath::Abs(Order->AnchorPos.X - 3000.f) > 1e-2 || FMath::Abs(Order->AnchorPos.Y - 3000.f) > 1e-2))
+			{
+				CompleteTest(EFunctionalTestResult::Error, TEXT("player order anchor was overridden"));
+				return;
+			}
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT SkirmishBehavior Phase=Override playerOrder=1 cancelLine=1"));
+		}
+		if (TicksInPhase >= 600)
+		{
+			if (Type != FUnitOrder::EType::Move)
+			{
+				CompleteTest(EFunctionalTestResult::Error, TEXT("re-retreated under the player order"));
+				return;
+			}
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT SkirmishBehavior Phase=Override stableUnderPlayerOrder=1"));
+			CompleteTest(EFunctionalTestResult::Succeeded,
+				FString::Printf(TEXT("break/resume/hysteresis/hold-fire/override all held; final dist=%.1fm"), AnchorDistM()));
+			Phase = EPhase::Done;
+		}
+		break;
+	}
+	default:
+		break;
+	}
 }
 
 namespace

@@ -1188,17 +1188,33 @@ void RangedSpawnVolley(const TArray<FString>& Args, UWorld* World)
 		return UBattleSpawnLibrary::SpawnUnit(World, Spec, Stats).Unit;
 	};
 
-	// Archers west, target line 80 m east (inside the 120 m bow range).
+	// Archers west; the `line` variant puts the target 80 m east standing
+	// (attack orders both ways); the `skirmish` variant puts a threat line
+	// 30 m east APPROACHING the archers (Move order -- the skirmish machine
+	// engages live: break / fire-while-retreating / resume). Evidence flows
+	// from the live sim: RangedFire / SkirmishRetreat / OutOfAmmo lines.
+	const bool bSkirmish = Args.Num() > 0 && Args[0] == TEXT("skirmish");
 	const FUnitHandle Archers = SpawnAt(2, FVector2D(-40.f, 0.f), 0.f, 0);
-	const FUnitHandle Target = SpawnAt(0, FVector2D(40.f, 0.f), 180.f, 1);
+	const FUnitHandle Target = SpawnAt(0, FVector2D(bSkirmish ? -10.f : 40.f, 0.f), 180.f, 1);
 	if (!Archers.IsValid() || !Target.IsValid())
 	{
 		return;
 	}
-	Registry->IssueAttackUnitOrder(Archers, Target);
+	if (bSkirmish)
+	{
+		// The threat approaches; the archers shoot it (attack order) and the
+		// skirmish machine runs live: break inside 25 m, fire-while-
+		// retreating (the retained aim), resume past the hysteresis band.
+		Registry->IssueAttackUnitOrder(Archers, Target);
+		Registry->IssueMoveOrder(Target, FVector2D(-3500.f, 0.f), 180.f);
+	}
+	else
+	{
+		Registry->IssueAttackUnitOrder(Archers, Target);
+	}
 	UE_LOG(LogMassBattle, Display,
-		TEXT("EXEC_RESULT SpawnVolley OK Archers=%u:%u Target=%u:%u (flags on; watch RangedFire/RangedDump/OutOfAmmo lines)"),
-		Archers.Index, Archers.Serial, Target.Index, Target.Serial);
+		TEXT("EXEC_RESULT SpawnVolley OK Mode=%s Archers=%u:%u Target=%u:%u (flags on; watch RangedFire/RangedDump/OutOfAmmo/SkirmishRetreat lines)"),
+		bSkirmish ? TEXT("skirmish") : TEXT("line"), Archers.Index, Archers.Serial, Target.Index, Target.Serial);
 }
 
 // ---- Command registration (Task 4 portion) ----

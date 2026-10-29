@@ -104,6 +104,11 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Battle|Formation", meta = (ClampMin = "0.0", ClampMax = "10.0"))
 	float FormationSpacing = 0.f;
 
+	/** Side id (Phase 3, A7/A8): the ranged friend/enemy discriminator; 0
+	 *  default. Melee stays intent/record-driven and never reads it. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Battle", meta = (ClampMin = "0", ClampMax = "7"))
+	uint8 TeamId = 0;
+
 	UPROPERTY(VisibleAnywhere, Category = "Battle") TObjectPtr<UAbilitySystemComponent> AbilitySystem;
 	UPROPERTY(VisibleAnywhere, Category = "Battle") TObjectPtr<UUnitAttributeSet> AttributeSet;
 

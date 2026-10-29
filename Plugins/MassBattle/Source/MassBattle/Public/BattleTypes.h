@@ -158,9 +158,13 @@ struct FUnitRuntimeState
 	// current order is OUR retreat move; AutoRetreatSerial is the OrderSerial
 	// at issue -- a player order bump changes the serial, which cancels the
 	// retreat (the RC7 order-serial guard; the registry order APIs never
-	// touch these two fields).
+	// touch these two fields). RetreatingFireTarget remembers the attack
+	// target the retreat's Move order displaced -- RC7's "then resumes fire"
+	// needs the aim to survive the movement order (the fire pass reads it as
+	// a target fallback; cleared when a player order supersedes).
 	bool bRetreating = false;
 	uint32 AutoRetreatSerial = 0;
+	FUnitHandle RetreatingFireTarget;
 };
 
 /** Spawn request: one parsed EDU row + roster size. Formation params seed the

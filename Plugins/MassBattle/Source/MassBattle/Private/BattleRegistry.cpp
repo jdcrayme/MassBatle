@@ -334,6 +334,7 @@ void UUnitRegistrySubsystem::ApplyUnitSkirmishDecision(FUnitHandle Handle, int32
 	uint32 AutoSerial = 0;
 	FUnitOrder::EType OrderType = FUnitOrder::EType::None;
 	uint32 OrderSerial = 0;
+	FUnitHandle OrderTarget;
 	{
 		UE_MT_SCOPED_READ_ACCESS(AccessDetector);
 		const FUnitRuntimeState* State = Units.Find(Handle);
@@ -345,16 +346,19 @@ void UUnitRegistrySubsystem::ApplyUnitSkirmishDecision(FUnitHandle Handle, int32
 		AutoSerial = State->AutoRetreatSerial;
 		OrderType = State->CurrentOrder.Type;
 		OrderSerial = State->OrderSerial;
+		OrderTarget = State->CurrentOrder.TargetUnit;
 	}
 
 	if (bRetreating && AutoSerial != OrderSerial)
 	{
-		// A player order superseded our retreat: cancel the state, never
-		// re-issue while that order stands (RC7).
+		// A player order superseded our retreat: cancel the state (and the
+		// retained fire aim -- the player's intent rules), never re-issue
+		// while that order stands (RC7).
 		UE_MT_SCOPED_WRITE_ACCESS(AccessDetector);
 		if (FUnitRuntimeState* State = Units.Find(Handle))
 		{
 			State->bRetreating = false;
+			State->RetreatingFireTarget = FUnitHandle();
 		}
 		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SkirmishCancel Unit=%u:%u PlayerOrderSerial=%u"),
 			Handle.Index, Handle.Serial, OrderSerial);
@@ -363,7 +367,15 @@ void UUnitRegistrySubsystem::ApplyUnitSkirmishDecision(FUnitHandle Handle, int32
 
 	if (Decision == 2) // Retreat
 	{
-		if (!bRetreating && (OrderType == FUnitOrder::EType::None || OrderType == FUnitOrder::EType::Stop))
+		// Displaceable orders: idle, or an attack APPROACH -- skirmishing
+		// delays the melee approach while the aim is retained
+		// (RetreatingFireTarget). A player Move/Garrison is movement intent
+		// and is never overridden (RC7).
+		const bool bDisplaceable = OrderType == FUnitOrder::EType::None
+			|| OrderType == FUnitOrder::EType::Stop
+			|| OrderType == FUnitOrder::EType::AttackUnit
+			|| OrderType == FUnitOrder::EType::AttackMove;
+		if (!bRetreating && bDisplaceable)
 		{
 			IssueMoveOrder(Handle, RetreatAnchorCm, FacingYawDeg);
 			UE_MT_SCOPED_WRITE_ACCESS(AccessDetector);
@@ -371,21 +383,34 @@ void UUnitRegistrySubsystem::ApplyUnitSkirmishDecision(FUnitHandle Handle, int32
 			{
 				State->bRetreating = true;
 				State->AutoRetreatSerial = State->OrderSerial;
+				// RC7 "resumes fire": retain the attack aim the retreat's
+				// Move order displaced (the fire pass reads it as a
+				// fallback); a fresh attack order re-stamps it.
+				if (OrderType == FUnitOrder::EType::AttackUnit || OrderType == FUnitOrder::EType::AttackMove)
+				{
+					State->RetreatingFireTarget = OrderTarget;
+				}
 				UE_LOG(LogMassBattle, Display,
-					TEXT("EXEC_RESULT SkirmishRetreat Unit=%u:%u Anchor=(%.1f,%.1f)m Facing=%.1f Serial=%u"),
+					TEXT("EXEC_RESULT SkirmishRetreat Unit=%u:%u Anchor=(%.1f,%.1f)m Facing=%.1f Serial=%u FireTarget=%u:%u"),
 					Handle.Index, Handle.Serial, RetreatAnchorCm.X * 0.01f, RetreatAnchorCm.Y * 0.01f,
-					FacingYawDeg, State->OrderSerial);
+					FacingYawDeg, State->OrderSerial,
+					State->RetreatingFireTarget.Index, State->RetreatingFireTarget.Serial);
 			}
 		}
 	}
-	else if (Decision == 1 && bRetreating) // Fire past the resume distance
+	else if (Decision != 2 && bRetreating) // Past the resume band (Fire OR Hold)
 	{
+		// The hysteresis band's exit is the seam's "not Retreat" -- firing
+		// gates separately on ammo/toggles (an out-of-ammo skirmisher still
+		// stops retreating when clear; RC7 resumes the UNIT, the fire pass
+		// resumes the shooting).
 		IssueStopOrder(Handle);
 		UE_MT_SCOPED_WRITE_ACCESS(AccessDetector);
 		if (FUnitRuntimeState* State = Units.Find(Handle))
 		{
-			State->bRetreating = false;
-			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SkirmishResume Unit=%u:%u"), Handle.Index, Handle.Serial);
+			State->bRetreating = false; // the fire aim is KEPT: RC7 resumes fire
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SkirmishResume Unit=%u:%u FireTarget=%u:%u"),
+				Handle.Index, Handle.Serial, State->RetreatingFireTarget.Index, State->RetreatingFireTarget.Serial);
 		}
 	}
 }

@@ -274,8 +274,9 @@ void RunRangedFirePass(UWorld* World, float DeltaSeconds)
 			continue;
 		}
 
-		// -- Target (A11): the order's attack unit first, then the record
-		//    enemy; no target + FireAtWill means HOLD (no free fire).
+		// -- Target (A11): the order's attack unit first, then the retained
+		//    skirmish aim (RC7's resumes-fire), then the record enemy; no
+		//    target + FireAtWill means HOLD (no free fire).
 		FUnitHandle TargetUnit;
 		const FUnitOrder* Order = Registry->FindOrder(Handle);
 		if (Order && (Order->Type == FUnitOrder::EType::AttackUnit || Order->Type == FUnitOrder::EType::AttackMove)
@@ -284,6 +285,11 @@ void RunRangedFirePass(UWorld* World, float DeltaSeconds)
 		{
 			TargetUnit = Order->TargetUnit;
 		}
+		else if (State->RetreatingFireTarget.IsValid() && Registry->IsHandleValid(State->RetreatingFireTarget)
+			&& Registry->GetRosterSize(State->RetreatingFireTarget) > 0)
+		{
+			TargetUnit = State->RetreatingFireTarget;
+		}
 		else if (const FUnitHandle* RecordEnemy = GEnemyOf.Find(Handle))
 		{
 			TargetUnit = *RecordEnemy;
@@ -291,7 +297,15 @@ void RunRangedFirePass(UWorld* World, float DeltaSeconds)
 		const FVector2D* TargetAnchor = GAnchorsM.Find(TargetUnit);
 		if (!TargetUnit.IsValid() || !TargetAnchor)
 		{
+			UE_LOG(LogMassBattle, Verbose, TEXT("RangedSkip Unit=%u:%u Reason=NoTarget"), Handle.Index, Handle.Serial);
 			continue; // nothing to shoot at this tick (reloads advanced above)
+		}
+		if (!State->bFireAtWill)
+		{
+			// The A11 toggle: hold fire suppresses shooting ONLY -- the
+			// reload clocks advanced above and skirmish still evaluates
+			// (hold-fire is not hold-ground, RC7).
+			continue;
 		}
 
 		const FProjectileProfile Profile = GetProjectileProfile(GShooters[0].Kind);
@@ -319,6 +333,14 @@ void RunRangedFirePass(UWorld* World, float DeltaSeconds)
 			Hash->QueryCircle(QueryCenterM, QueryRadiusM, GHashEntries, &GHashPositions);
 			for (int32 i = 0; i < GHashEntries.Num(); ++i)
 			{
+				// The shooter's OWN unit is never a blocker: the formation
+				// fires through its own ranks (RC2's own-ranks rule -- the
+				// corridor passes through the unit's body; squadmates at
+				// file spacing sit inside it). Other same-team units hold.
+				if (GHashEntries[i].Unit == Handle)
+				{
+					continue;
+				}
 				const FUnitSpawnSpec* EntrySpec = Registry->FindUnitSpec(GHashEntries[i].Unit);
 				if (EntrySpec && EntrySpec->TeamId == Spec->TeamId)
 				{
@@ -351,6 +373,28 @@ void RunRangedFirePass(UWorld* World, float DeltaSeconds)
 		GShots.Reset();
 		const int32 Fired = SelectVolleyShots(GShooters, Target, Profile, Grid, GBlockers, AccuracyMult,
 			FRangedCVars::FriendlyImpactTolerance(), GShots);
+		if (Fired > 0 && GBlockers.Num() > 0)
+		{
+			for (const FVolleyShot& Shot : GShots)
+			{
+				const FVector2D From2D(Shot.LaunchPosM.X, Shot.LaunchPosM.Y);
+				const FVector2D AB(Target.PosM - From2D);
+				const float LenSq = FMath::Max(AB.SizeSquared(), 1e-8f);
+				float MinDist = TNumericLimits<float>::Max();
+				for (const FVector2D& Friend : GBlockers)
+				{
+					const float T = FMath::Clamp(FVector2D::DotProduct(Friend - From2D, AB) / LenSq, 0.f, 1.f);
+					MinDist = FMath::Min(MinDist, FVector2D::Distance(Friend, From2D + AB * T));
+				}
+				UE_LOG(LogMassBattle, Verbose, TEXT("RangedLeak Unit=%u:%u Shot=(%.2f,%.2f) Blockers=%d MinDist=%.2f"),
+					Handle.Index, Handle.Serial, Shot.LaunchPosM.X, Shot.LaunchPosM.Y, GBlockers.Num(), MinDist);
+			}
+		}
+		else if (Fired == 0 && GBlockers.Num() > 0)
+		{
+			UE_LOG(LogMassBattle, Verbose, TEXT("RangedSkip Unit=%u:%u Reason=Blockers Count=%d Profile=%d"),
+				Handle.Index, Handle.Serial, GBlockers.Num(), static_cast<int32>(Profile.bIndirect));
+		}
 		TotalShots += Fired;
 		const int32 Holds = FMath::Max(0, Eligible - Fired);
 		TotalHolds += Holds;

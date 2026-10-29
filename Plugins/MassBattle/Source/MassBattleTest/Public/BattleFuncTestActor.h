@@ -6,6 +6,9 @@
 #pragma once
 
 #include "CoreMinimal.h"
+
+class UUnitRegistrySubsystem;
+class UMassEntitySubsystem;
 #include "FunctionalTest.h"
 #include "Mass/EntityHandle.h"
 #include "BattleGarrisonTypes.h"
@@ -656,6 +659,38 @@ public:
 	virtual void StartTest() override;
 	virtual void Tick(float DeltaSeconds) override;
 	virtual bool IsReady_Implementation() override { return true; }
+	virtual void Destroyed() override;
+
+private:
+	// The T3.4 phase machine (spec ranged-stack section 5): volley +
+	// dispersion, the flat-lane friendly hold, the hill LOS variant, the
+	// team-blind stray, and the ammo/out-of-ammo accounting -- one seeded
+	// scenario, sampled assertions, evidence per phase.
+	enum class EPhase : int32 { Spawn, Volley, FlatLane, Hill, Stray, Drain, Done };
+	EPhase Phase = EPhase::Spawn;
+	int32 TicksInPhase = 0;
+	int32 PhaseBudget = 0;
+	UPROPERTY() TObjectPtr<AUnitActor> Archers;
+	UPROPERTY() TObjectPtr<AUnitActor> Levy;
+	UPROPERTY() TObjectPtr<AUnitActor> Crossbows;
+	UPROPERTY() TObjectPtr<AUnitActor> LevyD;
+	UPROPERTY() TObjectPtr<AUnitActor> LaneFriendly;
+	UPROPERTY() TObjectPtr<AUnitActor> StrayFriendly;
+	int32 SavedCombat[5] = {};
+	int32 SavedRanged[4] = {};
+	float SavedReload = 0.f;
+	int32 ShotsAtPhaseStart = 0;
+	int32 CrossbowShotsMark = 0;
+	bool bDispersionSampled = false;
+	float MaxDeviationDeg = 0.f;
+	void SetCvars();
+	void RestoreCvars();
+	void SpawnSide(TObjectPtr<AUnitActor>& OutActor, int32 Row, int32 Count, uint8 Team,
+		const FVector& Pos, float Yaw, const TCHAR* Name);
+	int32 UnitShotsFired(AUnitActor* Actor);
+	bool ZeroReloadTimers(AUnitActor* Actor);
+	FVector2D ComputeCorridorMid(UUnitRegistrySubsystem* Registry, UMassEntitySubsystem* Entities,
+		const FUnitHandle& ShooterUnit, const FUnitHandle& TargetUnit, float T = 0.5f);
 };
 
 UCLASS()
@@ -671,6 +706,24 @@ public:
 	virtual void StartTest() override;
 	virtual void Tick(float DeltaSeconds) override;
 	virtual bool IsReady_Implementation() override { return true; }
+	virtual void Destroyed() override;
+
+private:
+	// The T3.5 phase machine: break, fire-while-retreating, resume,
+	// hysteresis stability, hold-fire-still-retreats, player-order override.
+	enum class EPhase : int32 { Spawn, Break, Retreat, Resume, Hysteresis, HoldFire, Override, Done };
+	EPhase Phase = EPhase::Spawn;
+	int32 TicksInPhase = 0;
+	int32 PhaseBudget = 0;
+	UPROPERTY() TObjectPtr<AUnitActor> Archers;
+	UPROPERTY() TObjectPtr<AUnitActor> Threat;
+	int32 SavedCombat[5] = {};
+	int32 SavedRanged[4] = {};
+	float SavedReload = 0.f;
+	int32 ShotsMark = 0;
+	void SetCvars();
+	void RestoreCvars();
+	float AnchorDistM();
 };
 
 // ---------------------------------------------------------------------------

@@ -341,6 +341,62 @@
   / `EXEC_RESULT RangedKill Shooter=2:1 Unit=3:1 Victim=110:1 Sector=4
   Friendly=1` (10 RangedKill lines total across the flows).
 
+## Task 6 -- scenarios S6_Volley + SkirmishBehavior (T3.4/T3.5)
+
+- [task6.1] RC7 "resumes fire" completed: `FUnitRuntimeState.RetreatingFireTarget` --
+  the attack aim the retreat's Move displaces is retained by `ApplyUnitSkirmishDecision` (stamped at retreat from an
+  AttackUnit/AttackMove order, kept at resume, cleared on player cancel) and the fire
+  pass reads it as a target fallback. The retreat guard now DISPLACES attack
+  approaches (idle/Stop/AttackUnit/AttackMove are displaceable; player Move/Garrison
+  never), and the resume keys on "not Retreat" (past the hysteresis band) rather than
+  "Fire" -- an out-of-ammo skirmisher must still stop retreating when clear (found by
+  the first SkirmishBehavior run: the archers drained to 0 and retreated forever).
+- [task6.2] The HoldFire phase exposed a REAL contract gap: the fire pass never gated
+  on `bFireAtWill` -- hold-fire did not suppress shooting. Gate added after target
+  resolution (reload clocks still advance; skirmish still evaluates; A11).
+- [task6.3] `AUnitActor.TeamId` (editor-visible, 0 default) stamps the spawn spec --
+  scenario units declare sides through the actor.
+- [task6.4] `AS6VolleyTest` (T3.4) replaced: six-phase machine (Spawn/Volley/
+  FlatLane/Hill/Stray/Drain) -- dispersion bound sampled per-shot against each
+  shooter's own aim axis (4.44 deg vs the 4.5 bound), the flat-lane friendly hold
+  (24 shots frozen with a friendly on the corridor), the hill variant (flat blocked,
+  arced passes: 440 archer shots), the deterministic team-blind stray
+  (`RangedKill Friendly=1`), and the drain (out-of-ammo at exactly 16x25=400 shots,
+  fraction 0, flipped once). `ASkirmishBehaviorTest` (T3.5) replaced: seven-phase
+  machine -- break at 25.5 m (serial 2), firing-while-retreating, resume at 36.9 m
+  (band 32.5, FireTarget retained), 12 s hysteresis stability, hold-fire retreats
+  with shots frozen at 200, and the player-order override (cancel + never
+  re-retreated). Scenario asserts are CompleteTest(Error) failures (actors are not
+  automation tests); cvar save/restore incl. the ranged block + ReloadInterval 0.5 s.
+- [task6.5] THREE fixture-vs-rule lessons from the verification runs (each measured,
+  logged, and the FIXTURE corrected -- the rules were right every time):
+  (a) the flat-lane friendly must sit ON the live corridor: a full-speed attack
+  approach drifted ~5 m off the nominal lane in 3 s and the corridor legitimately
+  passed below a nominally-placed friendly (body-circle rule; RangedLeak MinDist
+  diagnostics) -- the crossbows now creep at 1 m/s AttackMove (A4 pre-designated
+  aim) and the friendly spawns at 40% of the LIVE corridor with 16 men, whose
+  frontage guarantees every shooter's crossing is inside it (the first placement
+  put one body at EXACTLY the 1.30 corridor half-width and the boundary float rode
+  an ulp); (b) the hill stamps on the live corridor beyond the friendly; (c) the
+  hold watch arms 1 s after the spawn (same-tick zero-reloads raced the fire pass
+  against the stale hash: 2 shots slipped through before the friendly was hashed).
+- [task6.6] `Battle.Ranged.SpawnVolley` gains the `skirmish` variant (dictionary-keyed
+  arg): threat approaching, archers attacking -- the skirmish machine runs live. The
+  M4 gray-box sample registers on the demo game mode behind the no-level-units gate
+  (the demo map now has 5 level units, so the gate correctly skipped auto-register;
+  the fixture itself is the M4 deliverable and was driven headless via -ExecCmds:
+  `SpawnVolley OK Mode=skirmish` + continuous RangedFire lines +
+  `SkirmishRetreat Unit=1:1 Anchor=(-87.5,0.0)m Facing=0.0 Serial=2 FireTarget=2:1`
+  in `Tools/CI/m4_boot2.log`; arrows are the overlay segments until PR-8).
+- [task6.7] Fire-pass skip diagnostics (Verbose, off in CI): `RangedSkip
+  Reason=NoTarget|Blockers`, `RangedLeak` per emitting shot with blockers present.
+- [task6.8] Func tier: **passed=21 failed=2 total=23** -- S6_Volley + SkirmishBehavior
+  GREEN (in the PR set), the only reds the two pre-existing phase-2 melts
+  (S4_ShieldWall, S5_Mob). Unit tier: **passed=79 failed=0 total=79**. Evidence
+  (verbatim above in the run log; key lines): `S6_Volley PASS dispersion=4.44deg
+  impacts=44 friendlyHits=1 fired=400` / `SkirmishBehavior PASS
+  break/resume/hysteresis/hold-fire/override all held; final dist=5.5m`.
+
 ## Open items carried
 
 - S4_ShieldWall / S5_Mob melts: pre-existing, owned by the phase-2 dossier's deferred

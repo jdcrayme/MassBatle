@@ -184,6 +184,7 @@ bool AUnitActor::SpawnEntities(FBattleSpawnResult& OutResult, FString& OutError)
 		Spec.EduRowIndex = EduRowIndex;
 		Spec.SoldierCount = SoldierCount;
 		Spec.UnitName = GetName();
+		Spec.TeamId = TeamId;
 		// Phase 1: the formation anchor spawns at the actor's transform (cm;
 		// facing from the actor yaw) -- units no longer stack at the origin.
 		Spec.SpawnPos = FVector2D(GetActorLocation().X, GetActorLocation().Y);
