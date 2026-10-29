@@ -54,3 +54,16 @@ Pure additive (option A) or a two-row table edit (option B); no sim behavior dep
 ## Status
 
 PENDING (filed by the phase-3 audit, 2026-10-30).
+
+Static check performed at series-landing time (2026-10-30, no editor session
+available): NOTHING consumes the two missing assets. No code or content
+references `M_Battle_PeasantArchers`/`M_Battle_MercenaryCrossbowmen` by name
+(BuildT0Configs reaches them only through its dynamic `Printf` naming), and
+the one config-asset consumer, `Battle.Data.EntityConfigIntegrity`
+(MassBattleEntityConfigTests.cpp), iterates exactly
+`{TEXT("PeasantLevy"), TEXT("SergeantSpearmen")}` -- the two assets that DO
+exist. Its `LoadOrBuildConfig` even tolerates absence via the in-memory
+build path. This strengthens the writeup's RECOMMENDED Option B (drop rows
+2/3 from the `FConfigSpec Specs[]` table; the ranged spawn path is the C++
+archetype route and never reads these assets). The delete-vs-author choice
+stays with the owner.

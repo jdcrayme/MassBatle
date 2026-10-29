@@ -51,4 +51,6 @@ authoring. The map re-save is the only irreversible step (git-revertable like an
 ## Status
 
 PENDING (filed by the phase-3 audit, 2026-10-30). The A-1 code half (OnConstruction sync +
-adopt-by-TeamId) already landed with the audit's patch 20.
+adopt-by-TeamId) already landed with the audit's patch 20 (confirmed on `main` as `0653993`
+at the 2026-10-30 series landing). The dictionary property, the map re-authoring, and the PIE
+eyeball remain -- all need an editor session (no Unreal MCP was available at landing time).

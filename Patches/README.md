@@ -123,3 +123,34 @@ environment expands tabs to spaces on write (the kickoff's F-K class, again).
 The audit's first three commits were caught by numstat review and redone via
 scripted byte-exact splicing; every exported patch above was verified to
 apply cleanly, in order, on a pristine `main` tree.
+
+### Landing record (2026-10-30): the audit series lands on main
+
+The full series (patches 17-23, seven commits) was applied to `main`
+directly with `git am`, authorship and messages preserved:
+`d4aa382` (17) `3a8c992` (18) `742948b` (19) `0653993` (20) `a9b6f06`
+(21) `1098e0d` (22) `72db428` (23). Verification evidence:
+
+- Byte-exactness: every landed commit's numstat matches its patch's
+  declared diffstat. The one cumulative delta (RangedFireProcessor.cpp
+  shows 41 changed lines, not 17+21's 42) is the expected overlap: both
+  patches rewrite the same blocker-query line.
+- Stale-symbol scan clean post-landing: no `VolleyBodyRadiusM`, no
+  `KnuthGold`/`KnuthMix`, no raw 2654435761u/40503u/2685821657u outside
+  BattleTypes.h, no `RangedNames[4]` locals in the test actor, no
+  `EduRowIndex == 0` faction keying in the demo.
+- Build: `Build.bat MassBattleEditor Win64 Development` green after the
+  landing (all three modules; re-verified after touching every changed
+  .cpp). The only warning in the tree is the pre-existing
+  `BattleSpawnLibrary.cpp(358)` C4457 -- a file no patch touches.
+- Still owed on the machine (each commit's MUST-re-run note): unit +
+  func tiers, SpawnVolley/RangedPerfStress, one SoakVolley nightly, and
+  the PIE adopt-tinting eyeball (patch 20's behavior-visible half).
+
+PR-10 / PR-11 remain PENDING (editor + owner; no Unreal MCP session was
+available at landing time). PR-10's static check ran clean and supports
+the writeup's recommended Option B: no code consumes the two ranged-row
+assets (`Battle.Data.EntityConfigIntegrity` iterates only
+`PeasantLevy`/`SergeantSpearmen`; nothing else references the names) --
+but dropping the authoring rows is the owner's call. Per-writeup notes
+added to each `PRs/PR-*.md` status section.
