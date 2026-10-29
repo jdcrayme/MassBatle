@@ -63,8 +63,9 @@ namespace FMeleeMath
 
 	float StaggeredPhaseOffset(uint32 EntityHandleIndex, float AttackInterval)
 	{
-		// Integer hash scatter (multiply-xor), deterministic per handle.
-		uint32 H = EntityHandleIndex * 2654435761u;
+		// Integer hash scatter (multiply-xor), deterministic per handle. The
+		// multipliers live in BattleTypes.h's BattleHashFamily (ONE home, B-2).
+		uint32 H = EntityHandleIndex * BattleHashFamily::GoldenRatio;
 		H ^= H >> 16;
 		const float Frac = static_cast<float>(H & 0xFFFFu) / 65535.f;
 		return Frac * FMath::Max(0.f, AttackInterval);
@@ -72,13 +73,13 @@ namespace FMeleeMath
 
 	float CombatRoll01(uint32 EntityIndex, uint32 EntitySerial, uint32 RollCount)
 	{
-		// Same multiply-xor family as StaggeredPhaseOffset (the Knuth
-		// golden-ratio multiplier has ONE home here). Inputs: the striker's
-		// handle + the pair's own roll count (A13: no wall-clock, no
-		// GFrameCounter -- two runs of one seed agree).
-		const uint32 H = (EntityIndex * 2654435761u)
-			^ (RollCount * 40503u)
-			^ (EntitySerial * 2685821657u);
+		// Same multiply-xor family as StaggeredPhaseOffset; the multipliers'
+		// ONE home is BattleTypes.h's BattleHashFamily (B-2). Inputs: the
+		// striker's handle + the pair's own roll count (A13: no wall-clock,
+		// no GFrameCounter -- two runs of one seed agree).
+		const uint32 H = (EntityIndex * BattleHashFamily::GoldenRatio)
+			^ (RollCount * BattleHashFamily::MixA)
+			^ (EntitySerial * BattleHashFamily::MixB);
 		return static_cast<float>(H & 0xFFFFFFu) / 16777215.f;
 	}
 

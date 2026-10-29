@@ -6,25 +6,21 @@
 
 namespace
 {
-	// Knuth multiplicative hash constants -- the SAME family as
-	// FMeleeMath::StaggeredPhaseOffset / CombatRoll01 (BattleMelee.cpp; the
-	// B-2 one-home posture). Duplicated here with the cross-reference so the
-	// seam stays free of BattleMelee includes; a future audit may unify the
-	// constant's home in one header both seams include.
-	constexpr uint32 KnuthGold = 2654435761u;
-	constexpr uint32 KnuthMix = 40503u;
-
+	// The deterministic hash family's multipliers live in ONE home:
+	// BattleTypes.h's BattleHashFamily (the B-2 rule; both seam files
+	// include BattleTypes.h). The mix helpers stay here -- they are this
+	// seam's own folds; the multipliers are the shared drift risk.
 	uint32 HashMix32(uint32 V)
 	{
 		V ^= V >> 16;
-		V *= KnuthMix;
+		V *= BattleHashFamily::MixA;
 		V ^= V >> 13;
 		return V;
 	}
 
 	uint32 Hash01ToUint(uint32 A, uint32 B, uint32 C)
 	{
-		uint32 H = KnuthGold;
+		uint32 H = BattleHashFamily::GoldenRatio;
 		H = HashMix32(H ^ A);
 		H = HashMix32(H ^ B);
 		H = HashMix32(H ^ C);

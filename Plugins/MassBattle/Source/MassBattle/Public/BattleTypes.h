@@ -29,6 +29,23 @@ inline uint32 GetTypeHash(const FUnitHandle& Handle)
 	return HashCombine(::GetTypeHash(Handle.Index), ::GetTypeHash(Handle.Serial));
 }
 
+/** The deterministic hash family's multipliers (ONE home, the B-2 rule):
+ *  every seed-derived draw in the project multiplies with these -- the melee
+ *  staggers/rolls (FMeleeMath), the ballistics shot seeds (FBallisticsMath),
+ *  and the A13 canonical entity keys below. Same values everywhere; a
+ *  per-file retyped 2654435761u drifts silently and the two-run equality
+ *  (RC8) is the property that silently dies. Rename, never a re-mix: the
+ *  expressions at each site are unchanged, only their constant's home. */
+namespace BattleHashFamily
+{
+	/** Knuth golden-ratio multiplier (2654435761u). */
+	constexpr uint32 GoldenRatio = 2654435761u;
+	/** First auxiliary mix (40503u). */
+	constexpr uint32 MixA = 40503u;
+	/** Second auxiliary mix (2685821657u). */
+	constexpr uint32 MixB = 2685821657u;
+}
+
 /** A13 canonical per-entity identity (Phase 3, RC8): a deterministic
  *  function of the owning unit + the roster slot -- INVARIANT across
  *  entity-slot churn. Mass reuses slots with new generations after a battle
@@ -38,9 +55,9 @@ inline uint32 GetTypeHash(const FUnitHandle& Handle)
  *  stagger/seed/roll call sites feed these instead of handle parts. */
 inline uint32 BattleCanonicalEntityKey(const FUnitHandle& Unit, int32 RosterIndex)
 {
-	uint32 H = Unit.Index * 2654435761u;
-	H ^= Unit.Serial * 40503u;
-	H ^= static_cast<uint32>(RosterIndex) * 2685821657u;
+	uint32 H = Unit.Index * BattleHashFamily::GoldenRatio;
+	H ^= Unit.Serial * BattleHashFamily::MixA;
+	H ^= static_cast<uint32>(RosterIndex) * BattleHashFamily::MixB;
 	H ^= H >> 15;
 	return H;
 }

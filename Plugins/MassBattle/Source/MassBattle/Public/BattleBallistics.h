@@ -60,8 +60,9 @@ namespace FBallisticsMath
 
 	/** Run-invariant shot seed: the hash of entity identity + the lifetime
 	 *  shot count (never GFrameCounter -- the A13 rule; same Knuth family as
-	 *  FMeleeMath::CombatRoll01 / StaggeredPhaseOffset, the B-2 one-home
-	 *  posture -- a future audit may unify the constant's home). */
+	 *  FMeleeMath::CombatRoll01 / StaggeredPhaseOffset -- the multipliers'
+	 *  ONE home is BattleTypes.h's BattleHashFamily, unified by the
+	 *  phase-3 audit). */
 	MASSBATTLE_API uint32 ShotSeed(uint32 EntityIndex, uint32 EntitySerial, uint16 ShotsFired);
 
 	/** Semi-implicit Euler step (the IntegrateProcessor family): position
