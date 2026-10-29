@@ -247,8 +247,7 @@ void RunProjectileStepPass(UWorld* World, float DeltaSeconds)
 		const FVector2D Incoming = -FVector2D(Pool.VelX[Slot], Pool.VelY[Slot]).GetSafeNormal(); // toward the shooter
 		const float AngleDeg = FMath::UnwindDegrees(
 			FMath::RadiansToDegrees(FMath::Atan2(Incoming.Y, Incoming.X)) - VictimYaw);
-		const uint8 ContactAngle = static_cast<uint8>(static_cast<int32>(
-			FMath::RoundToDouble((AngleDeg < 0.f ? AngleDeg + 360.f : AngleDeg) * (255.0 / 360.0))) & 255);
+		const uint8 ContactAngle = FCombatSolver::ContactAngleFromDegrees(AngleDeg);
 		const int32 Sector = FCombatSolver::SectorIndexFromAngle(ContactAngle, SectorCount);
 
 		const float Defense = VictimStats->MeleeDefense * FMeleeMath::SkillArcMult(Sector, SectorCount)

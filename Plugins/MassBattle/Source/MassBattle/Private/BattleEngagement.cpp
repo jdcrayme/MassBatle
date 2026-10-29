@@ -162,6 +162,24 @@ namespace FCombatSolver
 		return static_cast<uint8>(Center & 0xFF);
 	}
 
+	uint8 ContactAngleFromDegrees(float AngleDeg)
+	{
+		// The 0-255 quantizer's deg->byte edge, named once (the phase-3
+		// audit's B-6): negative inputs wrap to [0,360); the & 255 guards
+		// the exact-circle edge (360 deg would round to 256). Consumers:
+		// the projectile incoming angle (step pass) and any future
+		// deg-native writer.
+		return static_cast<uint8>(static_cast<int32>(
+			FMath::RoundToDouble((AngleDeg < 0.f ? AngleDeg + 360.f : AngleDeg) * (255.0 / 360.0))) & 255);
+	}
+
+	float DegreesFromContactAngle(uint8 ContactAngle)
+	{
+		// The inverse scale; the assign pass's ring-point math reads it
+		// (byte -> degrees, clockwise from the defender's facing).
+		return static_cast<float>(ContactAngle) * (360.f / 255.f);
+	}
+
 	int32 SlotBudget(const FCombatDefenderView& Defender, float Coverage, const FCombatAttackerView& Attacker)
 	{
 		const float Lerped = FMath::Lerp(static_cast<float>(FCombatCVars::MaxMobSlots()),

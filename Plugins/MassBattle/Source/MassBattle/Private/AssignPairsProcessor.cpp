@@ -437,7 +437,7 @@ void UAssignPairsProcessor::Execute(FMassEntityManager& EntityManager, FMassExec
 				if (S.Target.IsValid())
 				{
 					RingDef = FCombatSolver::FindDefender(Defenders, S.Target);
-					RingAngleDeg = static_cast<float>(S.ContactAngle) * (360.f / 255.f);
+					RingAngleDeg = FCombatSolver::DegreesFromContactAngle(S.ContactAngle);
 					bRing = RingDef != nullptr;
 				}
 				else

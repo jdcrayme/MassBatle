@@ -115,6 +115,16 @@ namespace FCombatSolver
 	 *  SectorIndexFromAngle). */
 	MASSBATTLE_API uint8 SectorCenterAngle(int32 SectorIndex, int32 SectorCount);
 
+	/** Deg -> the 0-255 ContactAngle byte: negative inputs wrap to
+	 *  [0,360), scaled by 255/360, rounded, & 255 (the exact-circle guard).
+	 *  ONE home for the quantizer's deg-native edge (phase-3 audit B-6):
+	 *  the projectile incoming angle (step pass) and the ring-point math's
+	 *  inverse (below) read it; nothing re-derives the scale. */
+	MASSBATTLE_API uint8 ContactAngleFromDegrees(float AngleDeg);
+
+	/** The inverse scale (byte -> degrees, clockwise from the facing). */
+	MASSBATTLE_API float DegreesFromContactAngle(uint8 ContactAngle);
+
 	/** Per-defender attack-slot budget (spec §4.5, arch §7.3 verbatim):
 	 *  lerp(MaxMobSlots, FormedSlots, Coverage) rounded to nearest, +
 	 *  SecondRankBonus for spear-class attackers, clamped >= 1. T2.2 bound
