@@ -83,3 +83,23 @@ kills=10, PairLifecycle repaired=10, identical to the pre-PR-4 binary
 across three runs. Unit 80/80; func 19/23 (the four known); the
 nightly-soak item rides the next staged run. Optional step 4 (ring-point
 to the seam) not taken -- owner call, unchanged.
+
+## Lessons for future A/B work (2026-10-29)
+
+- **Never judge a func-tier A/B on single runs.** An intermediate build
+  produced `repaired=9` and then `repaired=10` across two runs of the
+  SAME binary (the second run rode a stale DLL after a failed build).
+  Run the compared scenario pair N times per binary and compare bands;
+  the landing evidence above is N=3 identical. (ChargeMechanics'
+  `knockbacks` was stable in every run observed; the tail counters are
+  the noisy ones.)
+- **When extracting logic out of a game-thread pass into a separate
+  processor, A/B the func pins BEFORE trusting order-equivalence.** Mass
+  topology tie-breaking makes "same tick, same flags" claims false in
+  surprising ways (here: the write-back's ring math reads live
+  transforms of entities that later iterations also read). The cheap
+  falsifier is the A/B pair run, not code reading.
+- **A failed UBT build leaves the previous binary in place** — an editor
+  run after a failed build silently tests STALE code. Check `Result:
+  Succeeded` between build and run, or label the logs with the build
+  result.

@@ -13,6 +13,7 @@
 
 - HTTP at `http://127.0.0.1:8000/mcp` (project `.mcp.json`; Saved config: `bAutoStartServer=True`, `ServerPortNumber=8000`, `bEnableToolSearch=True`). Auto-starts with the editor; the port is dead while the editor is closed.
 - **No native MCP client in the agent harness.** All calls via curl JSON-RPC: POST `initialize` → capture the `Mcp-Session-Id` response header → POST `notifications/initialized` → then `tools/list` / `tools/call` with that header.
+- **curl helper sketch (2026-10-29, carried a full session):** two tiny bash scripts — (a) handshake: POST `initialize`, grep `Mcp-Session-Id` out of the response headers, POST `notifications/initialized`, persist the id to a file; (b) calls: read the id, POST `tools/call`. Write request bodies to a file with `python -c json.dumps(...)` and POST `--data-binary @file` — inline shell-quoting of JSON that contains regex backslashes/dots corrupts the body (`Invalid JSON body`). Session-local scripts are NOT committed (PR-5 policy); budget ~15 min to recreate them per machine.
 - **The session id changes on every editor restart** — re-run `initialize` each time.
 - Toolset count varies with enabled plugins: 49 (pre-phase-0) → 70 (Phase 0; Gauntlet was enabled since). **Always re-run `list_toolsets` after any editor restart or plugin change.**
 - Editor console commands: `ModelContextProtocol.StartServer [port]`, `StopServer`, `RefreshTools`, `GenerateClientConfig <ClaudeCode|Cursor|VSCode|Gemini|Codex|All>`.
@@ -20,9 +21,10 @@
 ## 2. Tool-call shape (Phase 0 verified)
 
 - `tools/list` exposes exactly **3 meta-tools**: `list_toolsets`, `describe_toolset` (arg `toolset_name`), `call_tool` (args `toolset_name`, `tool_name`, `arguments`).
-- Calls go through `call_tool`; tool names WITHOUT the toolset prefix inside `tool_name`; toolset names fully qualified verbatim (`editor_toolset.toolsets.scene.SceneTools`).
+- **The two discovery meta-tools are invoked DIRECTLY as top-level `tools/call` methods** (`params.name = "list_toolsets"`), NOT routed through `call_tool` — routing them through fails ("Toolset 'MetaTools.MetaTools' not found" / "Unknown tool describe_toolset"). Only real toolset tools go through `call_tool`. (2026-10-29)
+- Calls go through `call_tool`; tool names WITHOUT the toolset prefix inside `tool_name`; toolset names fully qualified verbatim (`editor_toolset.toolsets.scene.SceneTools`). Inside `ProgrammaticToolset.execute_tool_script`, tools are called by their FULL name (`"editor_toolset.toolsets.object.ObjectTools.set_properties"`, first arg) with the JSON args as the second arg, a STRING.
 - Responses: `result.content[0].text` holds a JSON string `{"returnValue": "<json string>"}` — **parse twice** (returnValue may itself be JSON).
-- Some tools require ALL schema properties present even when "optional" (`ListTests` demands `tagFilter` — pass `""`).
+- Some tools require ALL schema properties present even when "optional" (`ListTests` demands `tagFilter` — pass `""`; `CaptureViewport` demands the full `annotations` object — pass zeros/nulls; `find_assets` demands `folder_path` — pass `"/Game"`).
 - Check `outputSchema` in `describe_toolset` reads — results are not always self-describing.
 
 ## 3. Operating rules (the ones that burn you)
@@ -34,7 +36,8 @@
 5. **Save discipline:** MCP edits are not reliably undoable. Save before and after bulk changes and after every milestone (`AssetTools.save_assets`).
 6. **Live Coding does not propagate new UFUNCTIONs/toolsets** — new C++ requires a full editor restart (or building with the editor closed). After restarts/rebuilds run `RefreshTools` and re-list.
 7. **Restart batching (project prime directive):** UBT cannot run while the editor is open ("Live Coding is active" — even with Live Coding disabled, the editor holds the DLL). The cycle is: all file-side edits → kill editor → UBT → relaunch → re-`list_toolsets` + re-`DiscoverTests`. Editor restarts are the scarcest resource; never restart for a single config tweak.
-8. **AgentSkills:** check `AgentSkillToolset.ListSkills` once per project (21 engine-registered skills as of pre-phase-0, none MassBattle-specific). A matching skill's instructions override generic defaults.
+8. **Never spend a restart on a config hypothesis — query the live state first.** State reads inside a running PIE answer most "why didn't my edit take effect" questions: `SceneTools.find_actors` sees the PIE world (its refs carry the `UEDPIE_0_` prefix) while PIE runs, and ActorTools/ObjectTools work on those refs (get_class / get_properties on the actual instance). Example (2026-10-29): a runtime CDO edit not reaching the PIE game mode was diagnosable in one instance read; an editor restart spent on the hypothesis answered nothing.
+9. **AgentSkills:** check `AgentSkillToolset.ListSkills` once per project (21 engine-registered skills as of pre-phase-0, none MassBattle-specific). A matching skill's instructions override generic defaults.
 
 ## 4. Toolset inventory (relevant to this project)
 
@@ -46,7 +49,10 @@
 | `editor_toolset.toolsets.scene.SceneTools` | Load level, get current level, find/spawn/remove actors | No new_level/save_level — save via `AssetTools.save_assets`. |
 | `editor_toolset.toolsets.asset.AssetTools` | find/load/save/delete/duplicate/move, create_folder, exists, is_dirty | duplicate leaves package dirty; save before load_level. |
 | `editor_toolset.toolsets.object.ObjectTools` | list/get/set properties, get_class, search_subclasses | Always list_properties before set_properties. `search_subclasses` is how you find a class's `/Script/…` home. |
-| `editor_toolset.toolsets.data_asset.DataAssetTools` | create data assets | `{"refPath": "/Script/MassSpawner.MassEntityConfigAsset"}` proven. |
+| `editor_toolset.toolsets.data_asset.DataAssetTools` | create data assets | `{"refPath": "/Script/MassSpawner.MassEntityConfigAsset"}` proven; works for ANY UDataAsset-derived class — EnhancedInput `/Script/EnhancedInput.InputAction` + `.InputMappingContext` and plugin `UPrimaryDataAsset` classes verified (2026-10-29). |
+| `editor_toolset.toolsets.static_mesh.StaticMeshTools` | import_file (OBJ/FBX from disk), get_bounds/vertex/triangle counts, set_material, LOD/collision/Nanite toggles | Gray-box mesh pipeline: author the OBJ with external file tools (write_file is extension-blocked, §8), import, verify orientation with `get_bounds`, assign material on the slot name from `get_material_slots` (an imported OBJ's slot is `"defaultMat"`, not "None"). |
+| `editor_toolset.toolsets.material.MaterialTools` | create_material, add_expression, connect_to_output, recompile, expression graph surgery | `connect_to_output` returns null on success. Unlit gray-box: `set_properties` `ShadingModel: "MSM_Unlit"` on the material works (2026-10-29). |
+| `editor_toolset.toolsets.blueprint.BlueprintTools` | BP graph/variable/CDO surgery, compile_blueprint | `get_default_object`/`get_parent` require the Blueprint ASSET to be LOADED first (`AssetTools.load_asset`), then its refPath resolves (2026-10-29). |
 | `editor_toolset.toolsets.programmatic.ProgrammaticToolset` | sandboxed Python `run()` calling `execute_tool` | Import whitelist: json/re/math/copy/datetime/time. **No `unreal` module.** |
 | `ConfigSettingsToolset.ConfigSettingsToolset` | config section inspect/edit | Project convention: direct `.ini` writes instead. |
 
@@ -63,6 +69,10 @@ Full registry: **70 toolsets** at last refresh (Niagara ×8, Sequencer ×8, PCG 
 | Run tests | `DiscoverTests` (once/session) → `ListTests(nameFilter, tagFilter:"")` → `RunTests([names])` → sync JSON summary → `GetTestResults`. |
 | Bulk operations | For 5+ homogeneous ops, ONE `ProgrammaticToolset.execute_tool_script` over N round-trips. Script must define `run()` returning a dict; exceptions abort and return as text. |
 | Console commands | **No MCP console-execution toolset exists** (as of Phase 0). `-ExecCmds` AND `UWorld::Exec` do NOT reach `FAutoConsoleCommandWithWorldAndArgs` in editor/editor-cmd. Drive `BattleExec::` functions directly from tests, or run headless where automation parses `-ExecCmds` itself. |
+| set_properties shape | `values` must be a **JSON-encoded STRING** (`json.dumps({...})`), and property names are the PascalCase UPROPERTY names (lowercase also reads back — get_properties returns camelCase). A passed JSON object SILENTLY no-ops with `returnValue: False` — every "False" is suspect until a get_properties read-back confirms. (2026-10-29, cost ~6 burned calls) |
+| Param-name variance | Names are NOT uniform: `create_folder`/`delete`/`duplicate` take `path`; `is_dirty`/`can_edit_asset`/`load_asset` take `asset_path`; `save_assets` takes `asset_paths` (short asset paths, no object suffix). When a call errors, the tool ECHOES the expected schema — read the error, don't guess again. |
+| Author input/material/mesh assets | IA/IMC: `DataAssetTools.create` + `set_properties` (IMC mappings → `DefaultKeyMappings`, §8). Material: `create_material` → `add_expression` (refPath class) → `set_properties` on the expression → `connect_to_output`. Mesh: external OBJ → `import_file` → `get_bounds` → `set_material("defaultMat", …)`. All verified end-to-end 2026-10-29 (PR-1/2/8 assets). |
+| PIE evidence channels | (1) Logs: `GetLogEntries(category:"", pattern:…)` — primary. (2) Live state: `find_actors` sees the PIE world (`UEDPIE_0_` prefix) DURING PIE; ActorTools.get_components + ObjectTools work on those refs. (3) `CaptureViewport` CANNOT see PIE — it renders the editor world (§8); screenshots of PIE are unreachable, use (1)+(2) instead. |
 
 ## 6. Level construction (corrected route — the brief's Python fallback is unreachable)
 
