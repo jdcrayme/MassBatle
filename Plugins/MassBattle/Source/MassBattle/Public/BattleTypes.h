@@ -53,6 +53,24 @@ inline uint32 BattleCanonicalCount(int32 RosterIndex, uint32 Count)
 	return (static_cast<uint32>(RosterIndex) << 16) | (Count & 0xFFFFu);
 }
 
+/** Soldier body geometry (ONE home, fact 1.9's 40 cm body + the phase-3
+ *  ranged heights): every body-size read in the project consumes these --
+ *  the engagement contact radius (aliased as FCombatSolver::Contact::
+ *  BodyRadiusM), the ranged lane/impact corridors, and the height gates.
+ *  A per-file retyped 0.4f/1.6f/1.8f drifts silently (the phase-2 audit's
+ *  B-1 lesson, re-scattered by phase 3's ranged seam -- this audit's A-1). */
+namespace BattleBody
+{
+	/** Body radius, meters (fact 1.9: FAgentRadiusFragment 40 cm). */
+	constexpr float RadiusM = 0.4f;
+	/** Launch/eye height, meters (the ranged fire pass's A6 placeholder). */
+	constexpr float EyeHeightM = 1.6f;
+	/** Body top, meters (the impact height gates' body ceiling). */
+	constexpr float TopM = 1.8f;
+	/** Aim-point height above ground, meters (the volley target's body center). */
+	constexpr float AimCenterM = 1.0f;
+}
+
 /** Weapon reach class (spec §4.5: >= Spear grants the second-rank budget
  *  bonus; arch §9.1 spear reach). Mapped from the EDU stat_pri tech type at
  *  spawn (task 2 step 1); the class SET and mapping are A6 placeholders the

@@ -83,16 +83,18 @@ struct FCombatAttackerView
 
 namespace FCombatSolver
 {
-	// -- Body geometry (ONE home for the 40 cm soldier body radius, fact 1.9) --
+	// -- Body geometry (ONE home: BattleTypes.h's BattleBody) --
 	//
 	// Consumers: the cluster pass's OBB dilation, the assign pass's contact
-	// ring, and the servo's avoidance/touch radii all re-derive the same
-	// body size. Keep it HERE (beside FAssignContext, which carries it into
-	// the seam) -- a per-file retyped 0.4f drifts silently (B-1).
+	// ring, the servo's avoidance/touch radii, and (phase 3) the ranged
+	// lane/impact corridors all read the same body size. The home is
+	// BattleBody::RadiusM in BattleTypes.h (the file every seam includes);
+	// this alias keeps the combat-facing name. A per-file retyped 0.4f
+	// drifts silently (B-1; phase 3's ranged seam re-scattered it, audit A-1).
 	namespace Contact
 	{
 		/** Soldier body radius, meters (fact 1.9: FAgentRadiusFragment 40 cm). */
-		constexpr float BodyRadiusM = 0.4f;
+		constexpr float BodyRadiusM = BattleBody::RadiusM;
 	}
 
 	// -- ContactAngle conventions (ONE value, TWO consumers, spec §4.5) --

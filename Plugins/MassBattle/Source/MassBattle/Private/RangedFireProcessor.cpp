@@ -258,7 +258,7 @@ void RunRangedFirePass(UWorld* World, float DeltaSeconds)
 				Shooter.Unit = Handle;
 				Shooter.RosterIndex = RosterIdx++;
 				Shooter.PosM = FVector2D(P.X, P.Y) * 0.01f;
-				Shooter.EyeZM = 1.6f; // A6 placeholder launch height
+				Shooter.EyeZM = BattleBody::EyeHeightM; // A6 placeholder launch height (one home: BattleTypes.h)
 				Shooter.Kind = Ranged->Kind;
 				Shooter.RangeM = Ranged->RangeM;
 				Shooter.Ammo = Ranged->AmmoCount;
@@ -313,7 +313,7 @@ void RunRangedFirePass(UWorld* World, float DeltaSeconds)
 		const FProjectileProfile Profile = GetProjectileProfile(GShooters[0].Kind);
 		FVolleyTargetView Target;
 		Target.PosM = *TargetAnchor;
-		Target.ZM = Grid.SampleHeight(*TargetAnchor) + 1.0f; // body-center aim
+		Target.ZM = Grid.SampleHeight(*TargetAnchor) + BattleBody::AimCenterM; // body-center aim (one home)
 		Target.Unit = TargetUnit;
 
 		// -- Friendly blockers through the spatial hash (A7's sanctioned
@@ -326,7 +326,7 @@ void RunRangedFirePass(UWorld* World, float DeltaSeconds)
 			const float DistM = FVector2D::Distance(GShooters[0].PosM, Target.PosM);
 			const float QueryRadiusM = Profile.bIndirect
 				? DistM * FMath::Tan(FMath::DegreesToRadians(FMath::Max(Profile.DispersionDeg, 0.01f))) + Profile.HitRadiusM + 2.f
-				: DistM * 0.5f + 2.f * 0.4f + Profile.HitRadiusM + 2.f;
+				: DistM * 0.5f + 2.f * BattleBody::RadiusM + Profile.HitRadiusM + 2.f;
 			const FVector2D QueryCenterM = Profile.bIndirect
 				? Target.PosM
 				: (*TargetAnchor + GShooters[0].PosM) * 0.5f;

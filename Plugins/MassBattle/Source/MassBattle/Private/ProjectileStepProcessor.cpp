@@ -67,10 +67,13 @@ namespace
 	// keeps corpses addressable -- this ledger is the no-double-kill guard.
 	TSet<FMassEntityHandle> GKilledLedger;
 
-	// Body geometry for the height gates (the B-1 family: named constants;
-	// values mirror the hash entry's 40 cm body radius and the ~1.8 m body).
-	constexpr float BodyRadiusM = 0.4f;
-	constexpr float BodyTopM = 1.8f;
+	// Body geometry for the height gates: ONE home (BattleTypes.h's
+	// BattleBody) -- the same 40 cm radius the contact ring and the ranged
+	// corridors read. FlyoverQueryMarginM: how far above body top the
+	// mid-segment must sit before the pass skips the impact query entirely
+	// (R-R2's cheap gate; conservative by design -- the candidate gate
+	// itself uses no margin).
+	constexpr float FlyoverQueryMarginM = 0.7f;
 
 	/** Point-to-segment distance, 2D (the swept-segment corridor test). */
 	float SegmentDist2D(const FVector2D& Point, const FVector2D& A, const FVector2D& B)
@@ -160,13 +163,13 @@ void RunProjectileStepPass(UWorld* World, float DeltaSeconds)
 		const FVector2D Mid = (Pre + Post) * 0.5f;
 		const float HalfSeg = FVector2D::Distance(Pre, Post) * 0.5f;
 		const float GroundMid = Grid.SampleHeight(Mid);
-		if (MidZ > GroundMid + BodyTopM + 0.7f)
+		if (MidZ > GroundMid + BattleBody::TopM + FlyoverQueryMarginM)
 		{
 			continue; // above every body: no query (the R-R2 early-out)
 		}
 
 		const FProjectileProfile Profile = GetProjectileProfile(static_cast<EBattleProjectileKind>(Pool.Kind[Slot]));
-		const float CorridorM = HalfSeg + Profile.HitRadiusM + BodyRadiusM;
+		const float CorridorM = HalfSeg + Profile.HitRadiusM + BattleBody::RadiusM;
 		GHitEntries.Reset();
 		GHitPositions.Reset();
 		if (Hash)
@@ -202,7 +205,7 @@ void RunProjectileStepPass(UWorld* World, float DeltaSeconds)
 				continue;
 			}
 			const float Dist = SegmentDist2D(GHitPositions[i], Pre, Post);
-			if (Dist > Profile.HitRadiusM + BodyRadiusM)
+			if (Dist > Profile.HitRadiusM + BattleBody::RadiusM)
 			{
 				continue;
 			}
@@ -211,7 +214,7 @@ void RunProjectileStepPass(UWorld* World, float DeltaSeconds)
 			const float T = FMath::Clamp(FVector2D::DotProduct(GHitPositions[i] - Pre, SegAB) / SegLenSq, 0.f, 1.f);
 			const float ZAtT = FMath::Lerp(GPreZ[Slot], Pool.PosZ[Slot], T);
 			const float GroundI = Grid.SampleHeight(GHitPositions[i]);
-			if (ZAtT > GroundI + BodyTopM)
+			if (ZAtT > GroundI + BattleBody::TopM)
 			{
 				continue; // passes overhead
 			}

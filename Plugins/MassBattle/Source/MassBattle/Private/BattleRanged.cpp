@@ -158,8 +158,6 @@ namespace
 		const float Clamped = FMath::Clamp(T, 0.f, 1.f);
 		return FVector2D::Distance(Point, A + AB * Clamped);
 	}
-
-	constexpr float VolleyBodyRadiusM = 0.4f; // the 40 cm body radius (B-1 family: one named constant per seam)
 }
 
 int32 SelectVolleyShots(
@@ -195,8 +193,9 @@ int32 SelectVolleyShots(
 	const bool bArcedHold = Profile.bIndirect && FriendsInZone > FriendlyImpactTolerance;
 
 	// Flat-lane corridor (A7): any friendly body inside the corridor holds
-	// fire. Corridor half-width = 2 body radii + hit radius.
-	const float CorridorHalfM = 2.f * VolleyBodyRadiusM + Profile.HitRadiusM;
+	// fire. Corridor half-width = 2 body radii + hit radius (one home:
+	// BattleTypes.h's BattleBody, the B-1 rule).
+	const float CorridorHalfM = 2.f * BattleBody::RadiusM + Profile.HitRadiusM;
 
 	int32 ShotCount = 0;
 	for (FVolleyShooterView& Shooter : InOutShooters)

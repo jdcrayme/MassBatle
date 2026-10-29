@@ -67,7 +67,7 @@ struct FVolleyShooterView
 	FUnitHandle Unit;
 	int32 RosterIndex = -1;   // canonical identity input (A13, RC8)
 	FVector2D PosM = FVector2D::ZeroVector;   // planar position, meters
-	float EyeZM = 1.6f;                       // launch height, meters
+	float EyeZM = BattleBody::EyeHeightM;              // launch height, meters (one home: BattleTypes.h)
 	EBattleProjectileKind Kind = EBattleProjectileKind::None;
 	float RangeM = 0.f;                       // weapon range, meters (fragment-stamped)
 	int16 Ammo = 0;
