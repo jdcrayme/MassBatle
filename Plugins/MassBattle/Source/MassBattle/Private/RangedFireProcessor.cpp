@@ -458,8 +458,18 @@ void RunRangedFirePass(UWorld* World, float DeltaSeconds)
 			Pool.Lethality[Slot] = ShooterLethality;
 		}
 
-		// B.2 trajectory rows (z-heighted segments; Task 8 completes the
-		// overlay set) -- one per shot, bounded by the volley size.
+		// B.2 ranged overlay rows (Task 8 completion): trajectory segments
+		// (z-heighted, amber arced / blue flat), the hold-reason flag (an
+		// orange circle at the aim anchor when eligible shooters held -- the
+		// R-R6 rule-vs-bug discriminator is the Holds metric), and the
+		// per-unit ammo readout (a vertical bar at the unit anchor: height =
+		// the live fraction, green above half, amber to a quarter, red
+		// below). All behind Battle.Debug.ShowOverlay (the drain gates).
+		int32 AmmoSum = 0;
+		for (const FVolleyShooterView& Shooter : GShooters)
+		{
+			AmmoSum += Shooter.Ammo;
+		}
 		if (Debug)
 		{
 			FBattleOverlayLine Line;
@@ -472,15 +482,35 @@ void RunRangedFirePass(UWorld* World, float DeltaSeconds)
 					FVector2D::Distance(FVector2D(Shot.LaunchPosM.X, Shot.LaunchPosM.Y), Target.PosM))) * 100.f;
 				Debug->EnqueueOverlayLine(Line);
 			}
+			if (Holds > 0)
+			{
+				FBattleOverlayLine Hold;
+				Hold.Shape = EBattleOverlayShape::Circle;
+				Hold.From = FVector(TargetAnchor->X, TargetAnchor->Y, Grid.SampleHeight(*TargetAnchor) + 0.2f) * 100.f;
+				Hold.Radius = 150.f;
+				Hold.Color = FColor(255, 140, 0); // orange: the fire DECISION held (rule or reload)
+				Debug->EnqueueOverlayLine(Hold);
+			}
+			const FVector2D* UnitAnchorM = GAnchorsM.Find(Handle);
+			if (UnitAnchorM)
+			{
+				const float Fraction = FMath::Clamp(
+					static_cast<float>(AmmoSum) / FMath::Max(1, State->RangedInitialAmmo * State->InitialRosterSize), 0.f, 1.f);
+				const float BarH = 2.5f * Fraction;
+				FBattleOverlayLine Bar;
+				Bar.Shape = EBattleOverlayShape::Segment;
+				const float GroundAtUnit = Grid.SampleHeight(*UnitAnchorM);
+				Bar.From = FVector(UnitAnchorM->X, UnitAnchorM->Y, GroundAtUnit + 0.1f) * 100.f;
+				Bar.To = FVector(UnitAnchorM->X, UnitAnchorM->Y, GroundAtUnit + 0.1f + BarH) * 100.f;
+				Bar.Color = Fraction > 0.5f ? FColor(64, 255, 64)
+					: (Fraction > 0.25f ? FColor(255, 220, 64) : FColor(255, 64, 64));
+				Debug->EnqueueOverlayLine(Bar);
+			}
 		}
 
 		// The out-of-ammo aggregate (RC5/A14): flip once, mirror the fraction
-		// to the UI attribute (authority stays registry-side).
-		int32 AmmoSum = 0;
-		for (const FVolleyShooterView& Shooter : GShooters)
-		{
-			AmmoSum += Shooter.Ammo;
-		}
+		// to the UI attribute (authority stays registry-side; AmmoSum was
+		// computed for the overlay above).
 		if (AmmoSum == 0)
 		{
 			Registry->FlipUnitOutOfAmmo(Handle);

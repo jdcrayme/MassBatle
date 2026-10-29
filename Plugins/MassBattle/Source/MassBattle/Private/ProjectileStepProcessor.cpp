@@ -279,13 +279,20 @@ void RunProjectileStepPass(UWorld* World, float DeltaSeconds)
 			if (Debug)
 			{
 				Debug->RecordRangedFriendlyHit();
-				FBattleOverlayLine Marker;
-				Marker.Shape = EBattleOverlayShape::Circle;
-				Marker.From = FVector(VictimPosM.X, VictimPosM.Y, GroundV + 1.f) * 100.f;
-				Marker.Radius = Profile.HitRadiusM * 100.f;
-				Marker.Color = FColor(255, 64, 64);
-				Debug->EnqueueOverlayLine(Marker);
 			}
+		}
+		// B.2 impact marker (Task 8): every hit lands a ring colored by the
+		// VICTIM's team (team 0 yellow, team 1 cyan; a friendly hit is ALSO
+		// flagged red-ring -- the team-blind impact-point rule's visual).
+		if (Debug)
+		{
+			FBattleOverlayLine Marker;
+			Marker.Shape = EBattleOverlayShape::Circle;
+			Marker.From = FVector(VictimPosM.X, VictimPosM.Y, GroundV + 1.f) * 100.f;
+			Marker.Radius = Profile.HitRadiusM * 100.f;
+			Marker.Color = bFriendly ? FColor(255, 64, 64)
+				: (VictimSpec && VictimSpec->TeamId == 0 ? FColor(255, 255, 0) : FColor(0, 255, 255));
+			Debug->EnqueueOverlayLine(Marker);
 		}
 
 		if (bLanded)
