@@ -83,6 +83,79 @@ commit). Design question for the owner: what "defends itself" (demo-fix3's
 facing an ordered attacker -- defensive hold-and-fight vs the current
 seek-the-aggressor-line.
 
+### CORRECTION (2026-10-30 session): the starvation's mechanism is now pinned -- two defects, not record-pressure bookkeeping
+
+Instrumented reruns on `4357321` (fresh func tier reproducing the same four
+failures; the decisive evidence logs are `Tools/CI/probe_s4d.log`,
+`probe_scan2.log`, `probe_full.log`, `fix2_s4.log`) supersede the
+"bounded to the assign/seam record-pressure bookkeeping" characterization
+above. The root, in causal order:
+
+1. **The assign write-back delivered seeker states to the wrong entities.**
+   `AssignPairsProcessor.cpp`'s write-back advanced its cursor by ONE PER
+   CHUNK while using it as the offset into the flattened seeker array:
+   chunk k read `Seekers[k + Row]` instead of the cumulative seeker offset.
+   Whenever an earlier chunk's seeker count differed from 1 (the melt
+   fixtures: one ordered unit seeking, one idle unit not), every later
+   chunk's states landed shifted -- entity N received entity N+1's state,
+   and once the idle unit's defensive intents made it seek too, chunk 1
+   received the DEFENDER's states: the ordered unit's entities carried
+   defender states and **killed their own teammates** (fresh 2026-10-30
+   full-tier log: S4 = 20 sergeant-on-sergeant kills, S5 = 16
+   peasant-on-peasant; first teammate kill ~2 s after the attack order,
+   while 20+ m apart). `PROBE_WB_MISALIGN` (50-line cap, `probe_s4d.log`)
+   shows the exact +1 shift; `PROBE_SEAM_SAMEUNIT`/`PROBE_GATHER_SELFINTENT`
+   never fired -- the seam's unit filter is clean, the write-back was the
+   only corrupt writer. Introduced with the task-6 assign pass (`4e76308`);
+   masked until demo-fix3 (`c3e0a96`) made both units seek, which is why the
+   melts surfaced on 2026-10-28 and were misattributed to the defensive
+   intents.
+
+2. **The write-back cursor was SHARED between two different index spaces --
+   the complete root.** The interim fix (advance the cursor by the chunk's
+   seeker count) corrected the Seekers offset but kept the cursor driving
+   the `ChunkIndices` lookup too: advanced past the chunk-table's end, every
+   chunk after the first hit the out-of-bounds guard and its rows were
+   silently dropped -- the ordered unit's fresh pairs never reached the
+   fragments at all (`PROBE_WB` owner counts, `Tools/CI/probe_full.log`:
+   peasant stamps 20-40/frame, sergeant stamps zero, while the seam assigned
+   both at 1.24 m). That state masked as "the raw seam cannot sustain the
+   ordered side's pairing" (an earlier draft of this correction blamed
+   pairing-gate vs queue-park geometry and idle-unit wander from
+   `probe_scan2.log`; those measurements were real but downstream of the
+   dropped write-back). The complete fix splits the cursors: ChunkCursor
+   walks ChunkIndices (one entry per chunk), SeekerCursor walks Seekers
+   (one entry per seeker). Landed as `21d73d1` + `2c81bc0`.
+
+Post-fix state (func tier at `2c81bc0`: unit 80/80, func 19/23 with
+PairLifecycle green again and exactly the four known failures, signatures
+changed):
+
+- **The melt machinery runs end-to-end for the first time.** S4_ShieldWall's
+  fresh signature is `wallHeld=0 (budget 2.5 over 2 samples) melted=1
+  (budget 6.0 over 10 samples)` with the wall thinning under legitimate
+  kills (80 peasant deaths, 6 sergeant; pressure 3.0 -> 6.0 as coverage
+  drops -- the EC2 curve the test wants, registering). The test now fails
+  only because the wall phase collapses inside the 15-tick sample cadence
+  (2 wall samples < 3). The known balance lever: `FBaseStatsFragment`
+  Lethality/Shield still ride their spawn defaults (1.0) instead of the EDU
+  rows (0.35/0.2 -- the phase-3 report's disclosed T6.1 gap), roughly
+  doubling the sergeants' kill rate; stamping them (T6.1) or re-scaling the
+  wall-phase sample cadence are the owner's recalibration options.
+- **S5_Mob's signature improved from the corrupted baseline**: `no pull-down
+  (240 s; exposed=4 waiters=58)` -- the ordered mob now pairs (was
+  exposed=5 waiters=44 under the corruption, exposed=0 waiters=0 under the
+  half-fix) but the pull-down still doesn't land inside the band: the
+  knights' counter-pairs (hit chance 0.667 x default Lethality 1.0 vs the
+  peasants' 0.11) kill the mob faster than the mob can pull down 8-men
+  units. Same T6.1/stamping lever plus the S5 balance decision.
+- **Friendly-fire kills are gone** (all kills legitimate enemy kills in
+  every post-fix run).
+- **DeterminismTwoRun unchanged** (`firstDivergence=0`, the pre-existing
+  mm-scale two-run blocker; hex-float servo tracing remains the next step).
+- **S4_WidthOverride unchanged** (`separation 0.285 m` vs the 0.300 bound;
+  the documented tighten-or-accept owner call).
+
 ## Also executed from the audit's deferred list
 
 - **PR-5** (D-5): executed as `2230eb5` -- `Tools/agent/` deleted (13 one-shot

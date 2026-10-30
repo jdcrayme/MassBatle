@@ -198,3 +198,30 @@ both runs. `Tools/CI/audit_perf.log` holds the second sample (the
 first was overwritten in place and survives only in the numbers quoted
 here). The SoakVolley=1 nightly stays with the staged CI schedule (not
 re-run here -- hours-long).
+
+## Melt diagnosis (2026-10-30, ad-hoc failing-test session)
+
+Diagnosed and LANDED the same day: the S4_ShieldWall/S5_Mob "melt" failures
+were a write-back indexing bug, not the defensive-intent design question.
+Full evidence chain in the `Docs/phases/phase-2/audit-engagement-verification.md`
+CORRECTION section; probe logs `Tools/CI/probe_s4d.log` (the misalign),
+`probe_full.log` (the half-fix's dropped rows), `fix2_s4.log` (the melt
+registering post-fix).
+
+| Commit | Contents |
+|---|---|
+| `21d73d1` | the write-back's Seekers offset corrected (chunk's seeker count, not per chunk) |
+| `2c81bc0` | the complete fix: TWO cursors -- `ChunkCursor` (per-chunk, into `ChunkIndices`) and `SeekerCursor` (per-seeker, into `Seekers`); the shipped code used one cursor for both, so every chunk after the first either cross-contaminated units (friendly-fire kills) or lost its rows entirely |
+
+Post-fix tiers: unit 80/80; func 19/23 with PairLifecycle green and exactly
+the four known failures -- but the melts' SIGNATURES are now honest:
+S4_ShieldWall registers the EC2 melt curve and fails only on wallHeld
+sample count (2 < 3 -- the wall collapses inside the 15-tick sample
+cadence; `FBaseStatsFragment` Lethality/Shield still ride spawn defaults
+1.0 instead of the EDU 0.35/0.2, the phase-3 report's disclosed T6.1 gap,
+roughly doubling kill rates); S5_Mob pairs (exposed=4 waiters=58) but the
+pull-down still misses the band. The remaining melt work is test
+recalibration + the T6.1 stamping decision, not machinery repair.
+DeterminismTwoRun (two-run divergence) and S4_WidthOverride (0.285 vs
+0.300 separation bound) are unchanged, each with its documented owner
+next step.
