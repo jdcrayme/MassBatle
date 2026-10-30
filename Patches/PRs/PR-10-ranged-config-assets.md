@@ -67,3 +67,11 @@ build path. This strengthens the writeup's RECOMMENDED Option B (drop rows
 2/3 from the `FConfigSpec Specs[]` table; the ranged spawn path is the C++
 archetype route and never reads these assets). The delete-vs-author choice
 stays with the owner.
+
+**EXECUTED as Option B, 2026-10-30** (owner chose B in the editor-session
+pass): the table is back to two rows and the ranged `else if` branches are
+deleted (`94d47e3`); `UBattleUnitTrait`'s ranged fields stay (trait
+surface, not the table's). Evidence: unit tier 80/80 in-editor on this
+build, incl. `Battle.Data.EntityConfigIntegrity` green (its
+`LoadOrBuildConfig` in-memory route still resolves both names). No binary
+assets committed; the code and the tree agree.

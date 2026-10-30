@@ -54,3 +54,21 @@ PENDING (filed by the phase-3 audit, 2026-10-30). The A-1 code half (OnConstruct
 adopt-by-TeamId) already landed with the audit's patch 20 (confirmed on `main` as `0653993`
 at the 2026-10-30 series landing). The dictionary property, the map re-authoring, and the PIE
 eyeball remain -- all need an editor session (no Unreal MCP was available at landing time).
+
+**EXECUTED, 2026-10-30** (editor session over MCP): `ff542af` lands the code half -- an
+editor-visible `UnitDictionary` (FName) on `AUnitActor` (the plugin base; the demo actor
+inherits it), resolved in `SpawnEntities` through `BattleExec::FindEduRowIndexByDictionary`,
+WINNING over the int when set, failing LOUDLY on an unknown name (B-3 posture); the int
+stays as the CI/headless fallback. `L_MassBattle_Demo01`'s five placed units re-authored
+(2x `Peasant_Levy` players, 3x `Sergeant_Spearmen` enemies) and re-saved (is_dirty=false).
+
+Evidence (same session): unit tier 80/80 in-editor; PIE positive
+`EXEC_RESULT DemoSpawn spawned=5 of 5` with `VisualRegister` Team=0 x3 / Team=1 x2 (all
+five through the dictionary path); PIE negative -- a bogus `Not_A_Row` dictionary produced
+`EXEC_RESULT DemoSpawn FAIL Actor=DemoUnitActor_2: UnitDictionary 'Not_A_Row' absent from
+the EDU fixture` + `spawned=4 of 5`, then restored; the adopt path (SpawnVolley skirmish
+boot, `Tools/CI/audit_volley.log`) registered the exec-spawned ARCHERS (EDU row 2) as
+Team=0 and the levy target as Team=1 -- the pre-audit `EduRowIndex == 0` keying would have
+tinted the archers Enemy -- plus `SkirmishRetreat Unit=1:1 Anchor=(-87.5,0.0)m Facing=0.0
+Serial=2 FireTarget=2:1` (the phase-3 line shape) and 490 `RangedFire` lines. The
+SoakVolley nightly (the writeup's last evidence item) stays with the staged CI schedule.

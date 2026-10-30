@@ -154,3 +154,47 @@ assets (`Battle.Data.EntityConfigIntegrity` iterates only
 `PeasantLevy`/`SergeantSpearmen`; nothing else references the names) --
 but dropping the authoring rows is the owner's call. Per-writeup notes
 added to each `PRs/PR-*.md` status section.
+
+### Machine verification + the PRs execute (2026-10-30, editor session)
+
+One editor session (MCP over the HTTP server) closed every item the
+landing left open except the staged nightly. Evidence, per item:
+
+- **Unit tier: 80/80 Success** (in-editor `AutomationTestToolset`,
+  filter `Battle.Unit+Battle.Data+Battle.Smoke`) -- includes the nine
+  `Battle.Unit.Ranged.*` suites, `Combat.HashTerms` (patch 18's golden),
+  the EDU/SpawnComposition goldens (patch 20), and
+  `EntityConfigIntegrity`. Patches 17-22's unit-half MUST-re-run notes
+  are thereby cleared.
+- **Func tier: passed=19 failed=4 total=23** (`run_tests.bat func`,
+  headless standalone) -- exactly the four known pre-existing failures
+  (DeterminismTwoRun / S4_ShieldWall / S4_WidthOverride / S5_Mob). No
+  new failures.
+- **PIE (demo map, patch 20's behavior half + PR-11)**: the five
+  re-authored level units spawn `DemoSpawn spawned=5 of 5` through the
+  new dictionary path with `VisualRegister` Team=0 x3 / Team=1 x2; the
+  loud-fail negative test (`Not_A_Row` -> `DemoSpawn FAIL ...
+  absent from the EDU fixture`, `spawned=4 of 5`) held.
+- **SpawnVolley skirmish boot** (`Tools/CI/audit_volley.log`): the
+  adopt path registered the exec-spawned ARCHERS (EDU row 2) as Team=0
+  and the levy target as Team=1 -- under the pre-audit
+  `EduRowIndex == 0` keying the archers would have tinted Enemy;
+  `SkirmishRetreat Unit=1:1 ... FireTarget=2:1` (the phase-3 line
+  shape) and 490 `RangedFire` lines.
+- **PR-10 executed as Option B** (owner decision): `94d47e3` restores
+  the two-row table. **PR-11 executed**: `ff542af` (property + map).
+  Status sections in each writeup carry the full evidence.
+
+**Perf-gate watch item (honest record):** `Battle.Ranged.PerfStress`
+returned `Verdict=OVER` twice this session (RangedMs 0.335 / 0.325 vs
+the 0.300 budget; the phase-3 reference was 0.236 PASS). The elevation
+is NOT attributed to the audit series: `StepMs` -- untouched code with
+identical-value constants -- rose by the same proportion (0.063 ->
+0.090), and `InFlightPeak` varies run-to-run (1045/1048 here vs 1091 in
+the phase-3 capture), consistent with the known D-3 two-run divergence
+blocker and a machine-state-sensitive wall-clock gate. Re-baseline on
+the quiet nightly path before drawing a conclusion. `PoolDrops=0` in
+both runs. `Tools/CI/audit_perf.log` holds the second sample (the
+first was overwritten in place and survives only in the numbers quoted
+here). The SoakVolley=1 nightly stays with the staged CI schedule (not
+re-run here -- hours-long).
