@@ -225,11 +225,14 @@ namespace BattleExec
 	{
 #if WITH_EDITOR
 		struct FConfigSpec { const TCHAR* Name; int32 Row; };
+		// Two rows, not four: the phase-3 kickoff's ranged rows (PeasantArchers/
+		// MercenaryCrossbowmen) authored assets with NO consumer -- the archetype
+		// spawn path never reads config assets, and EntityConfigIntegrity iterates
+		// only these two (audit D-1 / PR-10, owner option B, 2026-10-30). Re-add
+		// rows only alongside a consumer.
 		const FConfigSpec Specs[] = {
 			{ TEXT("PeasantLevy"), 0 },
 			{ TEXT("SergeantSpearmen"), 1 },
-			{ TEXT("PeasantArchers"), 2 },
-			{ TEXT("MercenaryCrossbowmen"), 3 },
 		};
 
 		int32 Authored = 0;
@@ -264,26 +267,10 @@ namespace BattleExec
 					Trait->BaseHealth = 1.f; Trait->MeleeAttack = 1.f; Trait->MeleeDefense = 2.f;
 					Trait->Armor = 0.f; Trait->MoraleBase = 2.f; Trait->ChargeDistance = 30.f;
 				}
-				else if (Spec.Row == 1) // Sergeant Spearmen
+				else // Sergeant Spearmen
 				{
 					Trait->BaseHealth = 1.f; Trait->MeleeAttack = 4.f; Trait->MeleeDefense = 4.f;
 					Trait->Armor = 4.f; Trait->MoraleBase = 6.f; Trait->ChargeDistance = 30.f;
-				}
-				else if (Spec.Row == 2) // Peasant Archers (spec ranged-stack section 3.1)
-				{
-					Trait->BaseHealth = 1.f; Trait->MeleeAttack = 4.f; Trait->MeleeDefense = 2.f;
-					Trait->RangedAttack = 6.f; Trait->Armor = 0.f; Trait->MoraleBase = 4.f;
-					Trait->ChargeDistance = 30.f;
-					Trait->Kind = EBattleProjectileKind::Arrow; Trait->RangedRangeM = 120.f; Trait->AmmoPerMan = 25;
-					Trait->bMelee = false; Trait->bBow = true;
-				}
-				else // Mercenary Crossbowmen
-				{
-					Trait->BaseHealth = 1.f; Trait->MeleeAttack = 5.f; Trait->MeleeDefense = 3.f;
-					Trait->RangedAttack = 9.f; Trait->Armor = 3.f; Trait->MoraleBase = 5.f;
-					Trait->ChargeDistance = 30.f;
-					Trait->Kind = EBattleProjectileKind::Bolt; Trait->RangedRangeM = 160.f; Trait->AmmoPerMan = 18;
-					Trait->bMelee = false; Trait->bBow = true;
 				}
 			}
 
