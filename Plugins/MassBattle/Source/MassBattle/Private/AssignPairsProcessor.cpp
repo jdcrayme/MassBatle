@@ -382,7 +382,8 @@ void UAssignPairsProcessor::Execute(FMassEntityManager& EntityManager, FMassExec
 	// ---- Write back: pair fragments + ring points (A12 press ring). ----
 	{
 		const bool bDebugOverlay = DebugSub && DebugSub->IsOverlayShown();
-		int32 SeekerCursor = 0; // into the seam-mutated Seekers (chunk order preserved)
+		int32 SeekerCursor = 0; // cumulative SEEKER offset into the seam-mutated Seekers
+		int32 ChunkCursor = 0;  // chunk index into ChunkIndices (one entry per chunk)
 		SeekerQuery.ForEachEntityChunk(Context, [&](FMassExecutionContext& Context)
 		{
 			auto Pairs = Context.GetMutableFragmentView<FCombatPairFragment>();
@@ -393,22 +394,24 @@ void UAssignPairsProcessor::Execute(FMassEntityManager& EntityManager, FMassExec
 			const auto Velocities = Context.GetFragmentView<FMassVelocityFragment>();
 			// This chunk's slice of the SEAM-MUTATED Seekers array (the gather
 			// appended per chunk in order; BridgesByChunk holds pre-pass
-			// copies and must not be written back). SeekerCursor is the
-			// CUMULATIVE SEEKER offset of this chunk -- advanced by the
-			// chunk's seeker count below, NOT by one per chunk: the 2026-10-30
-			// melt diagnosis (Docs/phases/phase-2/audit-engagement-verification.md
-			// CORRECTION; PROBE_WB_MISALIGN dossier in Tools/CI/probe_s4d.log)
-			// proved the old chunk-count arithmetic delivered each chunk's
-			// states shifted by (sum of earlier chunks' seeker counts - 1)
-			// positions whenever an earlier chunk's seeker count != 1 --
-			// cross-contaminating units the moment the idle defender's
-			// defensive intents made it seek too (demo-fix3): the ordered
-			// unit received the defender's states and paired with its own
-			// teammates (measured: 20 sergeant-on-sergeant kills in S4,
-			// 16 peasant-on-peasant in S5, both on 4357321).
-			const TArray<int32>& ChunkRows = SeekerCursor < ChunkIndices.Num() ? ChunkIndices[SeekerCursor] : TArray<int32>();
+			// copies and must not be written back). TWO cursors, because the
+			// two arrays are indexed by different things -- conflating them is
+			// the 2026-10-30 melt bug's root: ChunkCursor walks ChunkIndices
+			// (one entry PER CHUNK), SeekerCursor walks Seekers (one entry PER
+			// SEEKER -- the cumulative count of earlier chunks' seekers). The
+			// shipped code advanced ONE cursor per chunk and used it for both
+			// lookups: every chunk after the first read the wrong Slice and
+			// the wrong states -- with unequal per-chunk seeker counts the
+			// states cross unit lines (the melt fixtures' friendly-fire kills,
+			// PROBE_WB_MISALIGN dossier in Tools/CI/probe_s4d.log), and with
+			// the offset fixed but the chunk lookup still cursor-shared, the
+			// later chunks' rows fell out of bounds and their seekers were
+			// never written back at all (the ordered unit silently lost every
+			// fresh pair -- PROBE_WB owner counts, Tools/CI/probe_full.log).
+			const TArray<int32>& ChunkRows = ChunkCursor < ChunkIndices.Num() ? ChunkIndices[ChunkCursor] : TArray<int32>();
 			const int32 ChunkSeekerCount = FMath::Min(ChunkRows.Num(), Seekers.Num() - SeekerCursor);
 			const int32 ChunkSeekerBase = SeekerCursor;
+			++ChunkCursor;
 			SeekerCursor += ChunkSeekerCount;
 
 			for (int32 Row = 0; Row < ChunkSeekerCount; ++Row)
