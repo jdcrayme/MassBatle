@@ -92,6 +92,14 @@ public:
 	/** EDU row this unit instantiates (index into the fixture table). */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Battle") int32 EduRowIndex = INDEX_NONE;
 
+	/** Dictionary-name binding into the EDU fixture (PR-11, audit D-2): when
+	 *  set, SpawnEntities resolves the row by name and it WINS over
+	 *  EduRowIndex -- re-ordering the fixture cannot re-type level-authored
+	 *  units. An unknown name fails the spawn loudly (the B-3 posture: row
+	 *  ORDER is fixture data, never a meaning). The int stays as the
+	 *  CI/headless fallback. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Battle") FName UnitDictionary = NAME_None;
+
 	/** Roster size override; 0 = use the row's own soldier count. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Battle") int32 SoldierCount = 0;
 

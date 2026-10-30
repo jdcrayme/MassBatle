@@ -2,6 +2,7 @@
 #include "BattleGameplayTags.h"
 #include "BattleSpawnLibrary.h"
 #include "BattleRegistry.h"
+#include "BattleExecCommands.h"
 #include "MassBattleModule.h"
 
 #include "MassEntitySubsystem.h"
@@ -9,8 +10,6 @@
 #include "MassCommandBuffer.h"
 #include "Components/ShapeComponent.h"
 #include "Components/SceneComponent.h"
-#include "Misc/FileHelper.h"
-#include "Misc/Paths.h"
 
 AUnitActor::AUnitActor()
 {
@@ -201,36 +200,46 @@ bool AUnitActor::SpawnEntities(FBattleSpawnResult& OutResult, FString& OutError)
 		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SpawnSpec Actor=%s Loc=(%.1f,%.1f)cm SpawnPos=(%.1f,%.1f)cm"),
 			*GetName(), GetActorLocation().X, GetActorLocation().Y, Spec.SpawnPos.X, Spec.SpawnPos.Y);
 
-		// Row stats: fixture path (editor-time import path, Phase 0; cook-time
-		// commandlet integration is Phase 2 per A2).
-		const FString FixturePath = FPaths::ProjectContentDir() / TEXT("Data/EDU/golden_edu_v1.txt");
-		FString EduText;
-		if (!FFileHelper::LoadFileToString(EduText, *FixturePath))
-		{
-			OutError = TEXT("EDU fixture unreadable");
-			return false;
-		}
+		// Row stats (editor-time import path, Phase 0; cook-time commandlet
+		// integration is Phase 2 per A2). ONE fixture home: LoadGoldenEduRows
+		// (the per-call re-typed path+load+parse block was the audit's B-4 class).
 		TArray<FEduUnit> Rows;
 		FEduParseError ParseErr;
-		if (!FBattleEduParser::Parse(EduText, Rows, ParseErr))
+		if (!BattleExec::LoadGoldenEduRows(Rows, ParseErr))
 		{
-			OutError = FString::Printf(TEXT("EDU parse failed: %s"), *ParseErr.Message);
+			OutError = ParseErr.bFailed
+				? FString::Printf(TEXT("EDU parse failed: %s"), *ParseErr.Message)
+				: TEXT("EDU fixture unreadable");
 			return false;
 		}
-		if (!Rows.IsValidIndex(EduRowIndex))
+		// Dictionary-keyed authoring (PR-11, audit D-2): the name WINS over the
+		// int index when set; an unknown name fails loudly, never re-types.
+		int32 ResolvedRow = EduRowIndex;
+		if (!UnitDictionary.IsNone())
 		{
-			OutError = FString::Printf(TEXT("EduRowIndex %d out of range (%d rows)"), EduRowIndex, Rows.Num());
+			ResolvedRow = BattleExec::FindEduRowIndexByDictionary(Rows, UnitDictionary.ToString());
+			if (ResolvedRow == INDEX_NONE)
+			{
+				OutError = FString::Printf(TEXT("UnitDictionary '%s' absent from the EDU fixture"),
+					*UnitDictionary.ToString());
+				return false;
+			}
+			Spec.EduRowIndex = ResolvedRow;
+		}
+		if (!Rows.IsValidIndex(ResolvedRow))
+		{
+			OutError = FString::Printf(TEXT("EduRowIndex %d out of range (%d rows)"), ResolvedRow, Rows.Num());
 			return false;
 		}
-		const FBattleRowStats* Cached = RowStatsCache.Find(EduRowIndex);
+		const FBattleRowStats* Cached = RowStatsCache.Find(ResolvedRow);
 		if (!Cached)
 		{
 			FBattleRowStats Mapped;
-			if (!FBattleRowStats::FromEdu(Rows[EduRowIndex], Mapped, OutError))
+			if (!FBattleRowStats::FromEdu(Rows[ResolvedRow], Mapped, OutError))
 			{
 				return false;
 			}
-			Cached = &RowStatsCache.Add(EduRowIndex, Mapped);
+			Cached = &RowStatsCache.Add(ResolvedRow, Mapped);
 		}
 		// SoldierCount 0 = the row's own roster size (level-authored units rely
 		// on this documented default; SpawnUnit asserts on a non-positive count).
