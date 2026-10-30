@@ -393,15 +393,28 @@ void UAssignPairsProcessor::Execute(FMassEntityManager& EntityManager, FMassExec
 			const auto Velocities = Context.GetFragmentView<FMassVelocityFragment>();
 			// This chunk's slice of the SEAM-MUTATED Seekers array (the gather
 			// appended per chunk in order; BridgesByChunk holds pre-pass
-			// copies and must not be written back).
+			// copies and must not be written back). SeekerCursor is the
+			// CUMULATIVE SEEKER offset of this chunk -- advanced by the
+			// chunk's seeker count below, NOT by one per chunk: the 2026-10-30
+			// melt diagnosis (Docs/phases/phase-2/audit-engagement-verification.md
+			// CORRECTION; PROBE_WB_MISALIGN dossier in Tools/CI/probe_s4d.log)
+			// proved the old chunk-count arithmetic delivered each chunk's
+			// states shifted by (sum of earlier chunks' seeker counts - 1)
+			// positions whenever an earlier chunk's seeker count != 1 --
+			// cross-contaminating units the moment the idle defender's
+			// defensive intents made it seek too (demo-fix3): the ordered
+			// unit received the defender's states and paired with its own
+			// teammates (measured: 20 sergeant-on-sergeant kills in S4,
+			// 16 peasant-on-peasant in S5, both on 4357321).
 			const TArray<int32>& ChunkRows = SeekerCursor < ChunkIndices.Num() ? ChunkIndices[SeekerCursor] : TArray<int32>();
 			const int32 ChunkSeekerCount = FMath::Min(ChunkRows.Num(), Seekers.Num() - SeekerCursor);
-			++SeekerCursor;
+			const int32 ChunkSeekerBase = SeekerCursor;
+			SeekerCursor += ChunkSeekerCount;
 
 			for (int32 Row = 0; Row < ChunkSeekerCount; ++Row)
 			{
 				const int32 i = ChunkRows[Row];
-				const FCombatSolver::FAssignSeekerState& S = Seekers[SeekerCursor - 1 + Row];
+				const FCombatSolver::FAssignSeekerState& S = Seekers[ChunkSeekerBase + Row];
 				FCombatPairFragment& Out = Pairs[i];
 				const FMassEntityHandle PrevTarget = Out.Target;
 				Out.Target = S.Target;
