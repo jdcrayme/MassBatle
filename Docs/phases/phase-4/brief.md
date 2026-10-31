@@ -54,7 +54,7 @@ Every fact below is verified against the cited source. Cite fact IDs in the prog
 
 ## 2. Pointers
 
-MCP/editor automation: operating rules live in `Docs/reference/mcp-playbook.md` (check its section 8 correction ledger first). This phase is planned MCP-light: fixtures are C++/ExecBridge-authored (the dictionary-keyed pattern), all evidence via `run_tests.bat`; the only editor-side items are the M5 demo gray-box sample and the PIE eyeballs the PRs carry (PR-13's map placements). The blocker hunts (Tasks 1-2) are headless/log-driven.
+MCP/editor automation: operating rules live in `Docs/reference/mcp-playbook.md` (check its section 8 correction ledger first). This phase is planned MCP-light: fixtures are C++/ExecBridge-authored (the dictionary-keyed pattern), all evidence via `run_tests.bat`; the only editor-side items are the M5 demo gray-box sample and its PIE eyeball (PR-14). The blocker hunts (Tasks 1-2) are headless/log-driven.
 
 ## 3. Phase ground rules + owner decisions + risk watchlist
 

@@ -70,6 +70,66 @@ PR writeups (require UE / MCP / owner decisions -- NOT in the patch series):
 - `PRs/PR-8-m4-arrow-demo-visualization.md` (arrow ISM asset + PIE; gray-box now, Niagara volley batching in Phase 5)
 - `PRs/PR-9-ranged-perf-gate-and-soak-baselines.md` (T3.6 fixture evidence + soak variant + reference-machine baselines)
 
+## Phase-4a kickoff (2026-10-31)
+
+Branch: `phase4/kickoff` (from `main` @ `4357321`).
+Companion docs: `Docs/spec/morale-and-gas.md` (the design spec) + `Docs/phases/phase-4/brief.md` (the 4a run brief; its task plan consumes this series).
+
+Owner decisions baked into the series (2026-10-31): the E3 tick mechanism
+is the periodic MoraleTick GE (ADR-33 proposal); the phase splits 4a (the
+gated morale core, this series + PRs) / 4b (OrderLatency + TerrorAura +
+climate fatigue, its own brief at its kickoff -- the phase-2 two-run
+precedent). The brief's Tasks 1-2 are the inherited phase-3 blockers
+(the mixed two-run mm-scale divergence; the staged soak dress gate) --
+they precede all morale work in the run's task order.
+
+The brief-per-phase workflow, kickoff extended exactly as Phase 3 did:
+everything a STATIC environment can land before the UE machine touches
+the phase -- the spec + brief, the EDU officer key + stat_mental
+discipline/training consumption + the fixture re-sign, the gate
+skeletons (four morale enums, the Battle.Morale.* CVAR block, the
+registry morale block, bOfficer fragment value + the dead FOfficerTag
+deleted, OfficerCount/bIsGeneral authoring, save v3, four fail-by-design
+scenario stubs), the full BattleMorale seam unit-locked by T4.1/T4.2 +
+the RoutRally suite, and the state spine (hash block 10 + the
+SaveRoundTrip/HashTerms extensions). The implementing agent's Task 0
+applies + verifies this series (`Docs/phases/phase-4/brief.md` section 5)
+before the blocker hunts and the pipeline tasks.
+
+| # | Patch | Contents | Must re-run on the UE machine |
+|---|-------|----------|-------------------------------|
+| 24 | `0024-...docs.patch` | the morale-and-gas spec + the phase-4a brief + the README map/status + the roadmap run-split annotation | none (docs only) |
+| 25 | `0025-...gate-skeleton.patch` | the four morale enums + `FUnitRuntimeState` morale block + `FUnitSpawnSpec` OfficerCount/bIsGeneral, the `Battle.Morale.*` CVAR block (20 flags, Enable default 0), `FBaseStatsFragment.bOfficer` + `FOfficerTag` deleted, the seam surface with task-0 stubs, the four fail-by-design scenario stubs (S7_RoutCascade / OfficerDeath / EffectEndToEnd / ToggleBehaviors) | unit tier green; func tier red on exactly the four skeletons ON TOP of the four known (counted) |
+| 26 | `0026-...edu-data-spine.patch` | the `officer` EDU key (optional + repeatable <= 3, the per-key occurrence cap -- rule 7's one sanctioned exception, disclosed; SchemaFieldCount 15 -> 16), the fixture officer lines (0/2/1/1), FromEdu discipline/training loud-map + officer count, the spawn path (officers as extra roster entities, bOfficer stamping, the morale spawn stamp), the registry morale APIs + per-team general records, the two new native tags, the death-path officer branch (gated on Enable) | unit tier (Battle.Data.Edu* re-signed; spawn-dependent suites -- roster sizes grow by the officer counts; SpawnComposition count UNCHANGED); func tier (no new failures) |
+| 27 | `0027-...morale-seam.patch` | the BattleMorale seam bodies (the ten-term weighted stack, the closed-form half-life decay, the exertion integral + six-band ladder + the golden multiplier table, the rout FSM with the additive discipline offsets, the rally chance + decision) + the T4.1/T4.2/RoutRally unit suites; the discipline-break-scaling correction (additive offsets -- the multiplicative form is degenerate at the 0-anchored default threshold, disclosed) | unit tier (the three Battle.Unit.Morale.* suites green) |
+| 28 | `0028-...state-spine.patch` | save v3 (the morale block; restore accepts 2/3, v1 aged out -- one legacy back, the v2 precedent) + hash block 10 (unit-level morale terms, after the pool block) + the SaveRoundTrip/HashTerms extensions | unit tier (SaveRoundTrip + HashTerms re-signed green) |
+| 29 | `0029-...pr-writeups.patch` | this README section + `PRs/PR-12` .. `PR-15` | none (docs only) |
+
+PR writeups (require UE / MCP / owner decisions -- NOT in the patch series):
+
+- `PRs/PR-12-morale-pipeline.md` (the MoraleTick GE + exec calc + fatigue catalog + MoraleTickProcessor + the UnitSync corrections + the D-4 mirror move + the ExecBridge surface; blocks on Task 3's GAS API audit)
+- `PRs/PR-13-morale-scenarios.md` (the four T4.3-T4.6 scenario bodies; blocks on PR-12)
+- `PRs/PR-14-m5-demo-graybox.md` (the demo-map M5 sample + the PIE eyeball; the PR-8/PR-11 posture)
+- `PRs/PR-15-determinism-staleness-soak.md` (the T4.7 two-run extension + the T4.8 staleness fixture + SoakRout + the baselines; blocks on PR-12/13 + Task 1's disposition)
+
+## Verification status
+
+Static authorship for the phase-4a series (same posture as the phase-3
+kickoff): every patch is brace-balanced, include-complete, and every new
+constant is an A16-disclosed placeholder (ADR-37). No UE build was
+available at author time; every commit message carries its MUST-re-run
+note per AGENTS section 2 (evidence before claim). The golden re-signs
+(schema 16-key + officer lines; save v3; the discipline-offset
+correction) are disclosed in their owning patches. Byte-exact splicing
+used for every existing-file edit (the F-K tab-expansion lesson,
+re-verified this session); every patch applies cleanly, in order, on a
+pristine `main` tree.
+
+Watch item inherited with the series: hash block 10 appends REAL
+default terms per unit, which changes every existing full-hash VALUE
+(the two-run equality class is unaffected -- both runs hash the same;
+no stored hash literals exist; disclosed in 0028's commit note).
+
 ## Verification status
 
 Static authorship for the phase-3 series (same posture as the audit series):
