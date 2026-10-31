@@ -250,6 +250,28 @@ Verdict context: the unit FSM decision (arch §6.2, roadmap I4). All paths below
 
 Decision consequence: recorded as the ADR-24 proposal (reject-with-evidence) in `Docs/phases/phase-2/progress-engagement.md`; the FSM stays the registry order-consumption pattern (garrison precedent).
 
+## 16. GAS effect-surface audit (Phase 4a Task 3 — 2026-10-31, pinned 5.8.4)
+
+Verdict context: PR-12's MoraleTick GE + exec calc + fatigue catalog are the project's FIRST gameplay-effect code (the brief's section 4 symbol list). Module root for every citation below: `E:\Unreal\UE_5.8\Engine\Plugins\Runtime\GameplayAbilities\Source\GameplayAbilities\` (the module is an ENGINE PLUGIN in 5.8, not under `Runtime/`). Every symbol VERIFIED by reading the pinned source this session; the A2 shape is GO with one refined pin design (row 9).
+
+| Symbol | Verdict | Actual 5.8.4 | Source |
+|---|---|---|---|
+| GE C++ authoring (no .uasset) | ✅ | `UGameplayEffect` subclass ctor sets `DurationPolicy` (EGameplayEffectDurationType::Infinite), `Period` is `FScalableFloat`, `Executions` is `TArray<FGameplayEffectExecutionDefinition>`, `bExecutePeriodicEffectOnApplication` defaults false | `Public/GameplayEffect.h:2256/2268/2284/2272` |
+| `FGameplayEffectExecutionDefinition` | ✅ | `{ CalculationClass (TSubclassOf<UGameplayEffectExecutionCalculation>), PassedInTags, CalculationModifiers, ConditionalGameplayEffects }` | GameplayEffect.h:529 |
+| Exec-calc class + override | ✅ | `UGameplayEffectExecutionCalculation : UGameplayEffectCalculation`; native subclasses override `Execute_Implementation` (the `Execute` BlueprintNativeEvent): `void Execute(const FGameplayEffectCustomExecutionParameters& ExecutionParams, FGameplayEffectCustomExecutionOutput& OutExecutionOutput) const` | `Public/GameplayEffectExecutionCalculation.h:260`, `:311` |
+| Execution params | ✅ | `FGameplayEffectCustomExecutionParameters`: `GetOwningSpec()`, `GetTargetAbilitySystemComponent()`, `GetSourceAbilitySystemComponent()` (may be null), `GetPassedInTags()`. No owner-actor accessor — the exec calc resolves the registry through the TARGET ASC's owner | GameplayEffectExecutionCalculation.h:21 |
+| Execution output | ✅ | `FGameplayEffectCustomExecutionOutput::AddOutputModifier(const FGameplayModifierEvaluatedData&)`; `FGameplayModifierEvaluatedData(FGameplayAttribute, EGameplayModOp::Type, float)` ctor sets `IsValid=true` | GameplayEffectExecutionCalculation.h:229; `Public/GameplayEffectTypes.h:194` |
+| Attribute capture defs | ✅ | `FGameplayEffectAttributeCaptureDefinition{AttributeToCapture, AttributeSource, bSnapshot}` (`bSnapshot=false` default); `DECLARE_ATTRIBUTE_CAPTUREDEF`/`DEFINE_ATTRIBUTE_CAPTUREDEF(S, P, T, B)` macros. An exec calc with NO captures runs fine — the execution loop runs each `ExecutionDefinition`'s CDO `Execute` unconditionally | `Public/GameplayEffectAttributeCaptureDefinition.h:23`; GameplayEffectExecutionCalculation.h:323; `Private/GameplayEffect.cpp:3274` (executions loop) |
+| Spec construction on the ASC | ⚠️ RENAME vs brief §4 | The ASC-side helper is `UAbilitySystemComponent::MakeOutgoingSpec(TSubclassOf<UGameplayEffect> GameplayEffectClass, float Level, FGameplayEffectContextHandle Context)` — **`MakeOutgoingGameplayEffectSpec` exists ONLY on `UGameplayAbility`** (Abilities/GameplayAbility.h:207,210), NOT on the ASC. Direct ctor `FGameplayEffectSpec(const UGameplayEffect* Def, const FGameplayEffectContextHandle&, float Level)` also available; `ASC->MakeEffectContext()` builds the context | `Public/AbilitySystemComponent.h:372`; GameplayEffect.h:1024; AbilitySystemComponent.h:376 |
+| Application + removal | ✅ | `ApplyGameplayEffectSpecToSelf(const FGameplayEffectSpec&, FPredictionKey =())` (the spec form — per-application Period override, PR-12's path); `ApplyGameplayEffectToSelf(const UGameplayEffect*, Level, Context, ...)` is the class-level convenience; `RemoveActiveGameplayEffect(FActiveGameplayEffectHandle, int32 StacksToRemove=-1)` (-1 = full remove) | AbilitySystemComponent.h:345 / :773 / :358 |
+| SetByCaller | ✅ | `FGameplayEffectSpec::SetSetByCallerMagnitude(FGameplayTag, float)` (+ FName overload); read side `GetSetByCallerMagnitude(FGameplayTag, bool WarnIfNotFound=true, float DefaultIfNotFound=0.f)` — the exec calc reads `ExecutionParams.GetOwningSpec().GetSetByCallerMagnitude(Tag)`. Tags must be native (the project's H1 rule stands) | GameplayEffect.h:1114/1117/1120/1123 |
+| Catalog GE static modifiers | ✅ | `FGameplayModifierInfo{Attribute, ModifierOp=EGameplayModOp::Additive, ModifierMagnitude}`; `FGameplayEffectModifierMagnitude(const FScalableFloat&)` ctor is the code-authoring path | GameplayEffect.h:565 / :289 |
+| **Period forcing (R-M2)** | ✅ GO, semantics verified | `UAbilitySystemComponent::ExecutePeriodicEffect(FActiveGameplayEffectHandle)` (AbilitySystemComponent.h:1836, impl :1203) → `FActiveGameplayEffectsContainer::ExecutePeriodicGameplayEffect` (GameplayEffect.cpp:3372) → `InternalExecutePeriodicGameplayEffect` (:4762) → `ExecuteActiveEffectsFrom` (:3210) → per-definition exec `ExecCDO->Execute(...)` (:3274+). Game-thread only (FTimerManager/delegates). **Double-fire: a forced call does NOT touch the natural timer** — the natural path is a REPEATING FTimerManager timer (`TimerManager.SetTimer(Effect.PeriodHandle, Delegate, Spec.GetPeriod(), /*bLoop*/true)`, GameplayEffect.cpp:4497-4507); the forced path only clears `Spec.ModifiedAttributes` and executes (:4776-4786). **The clean pin:** the spec's `Period` is a public float initialized from the def at spec construction (GameplayEffect.cpp:1914) and overridable before application; the timer gate reads `Spec.GetPeriod() > NO_PERIOD` (:4497) — so under `Battle.Morale.DeterministicTick=1`, apply with `Spec.Period = FGameplayEffectConstants::NO_PERIOD` → NO natural timer → forced executions are the ONLY executions (the double-fire window closes by construction). Shipping mode: `Period = TickPeriod` → natural wall-clock timer, T4.8 bounds the staleness. `ExecutePeriodicEffect` has NO period prerequisite on the forced path (the `check(Duration==INSTANT \|\| Period!=NO_PERIOD)` at AbilitySystemComponent.cpp:1216 belongs to the NET `ExecuteGameplayEffect` path, not the forced path). `bIsInhibited` blocks FORCED executions too (:4766) — never inhibit a pinned MoraleTick GE |
+| FActiveGameplayEffect immutability | ✅ posture confirmed | `FActiveGameplayEffect` carries a public `Spec` member but the container is friend-gated (GameplayEffect.h:1656-1659); no public API re-aggregates SetByCaller mutations on an applied spec. Remove/re-apply is the sanctioned refresh (PR-12's documented path) | GameplayEffect.h:1355 |
+| Periodic-execution evidence hook | ✅ | `UAbilitySystemComponent::OnPeriodicGameplayEffectExecuteOnSelf(Source, SpecExecuted, ActiveHandle)` — invoked on EVERY periodic execution incl. forced ones (GameplayEffect.cpp:4781); bindable for T4.5 evidence lines | AbilitySystemComponent.h:512 |
+
+Decision consequence: the A2 shape (periodic infinite MoraleTick GE + one exec calc) is GO; the deterministic pin ships as "spec-side `Period=NO_PERIOD` + processor-forced `ExecutePeriodicEffect` at the sim cadence" — strictly stronger than the spec section 4.8 fallback ladder's remove/re-apply (no GE churn, no double-fire), disclosed to the owner in the phase report. Operational digest: Part B §4.14.
+
 ---
 
 # Part B — Operational API digest (from Phase 0 brief §4, corrections applied in place)
@@ -554,6 +576,88 @@ Phase 0 command set (implemented across Tasks 4–9): `Battle.SpawnRoster`, `Bat
 ### §4.13 Sources for §4 (full list in Part III)
 
 Primary: MassSample README (Megafunk, updated to 5.8) · vrealmatic Mass Framework wiki (explicitly updated to UE 5.8) · Epic 5.8 release notes · Epic API docs (`UMassSignalSubsystem`) · Epic "Simplified Mass Processor" page · Gauntlet doc pages · nukethebees query-API quickstart · Epic forums (spawner usage, Jan 2026 threads).
+
+### §4.14 GAS effect surface — the MoraleTick pipeline symbols (Phase 4a Task 3, machine-verified)
+
+Per-symbol verdicts in Part A §16; this digest is the code-shape the pipeline consumes. Module root: `Engine/Plugins/Runtime/GameplayAbilities/Source/GameplayAbilities/`.
+
+```cpp
+// -- The MoraleTick GE (C++-authored; no .uasset) --
+UCLASS()
+class UBattleMoraleTickEffect : public UGameplayEffect
+{
+    GENERATED_BODY()
+public:
+    UBattleMoraleTickEffect()
+    {
+        DurationPolicy = EGameplayEffectDurationType::Infinite;
+        Period = FScalableFloat(0.35f);              // spec cvar override per application, below
+        Executions.Add(FGameplayEffectExecutionDefinition()); // CalculationClass set at registration/ctor
+        // Executions[0].CalculationClass = UBattleMoraleExecCalc::StaticClass();
+    }
+};
+
+// -- Application (per unit actor, at battle start / ResetBattleState re-apply) --
+UAbilitySystemComponent* ASC = Actor->GetAbilitySystemComponent();
+FGameplayEffectContextHandle Context = ASC->MakeEffectContext();
+FGameplayEffectSpec Spec(MoraleTickEffectClass->GetDefaultObject<UGameplayEffect>(), Context);
+// (ASC->MakeOutgoingSpec(Class, Level, Context) is the same shape with a handle; the
+//  ability-side name MakeOutgoingGameplayEffectSpec does NOT exist on the ASC in 5.8.)
+if (FMoraleCVars::DeterministicTick())
+{
+    Spec.Period = FGameplayEffectConstants::NO_PERIOD;   // no natural timer (GameplayEffect.cpp:4497 gate)
+}
+else
+{
+    Spec.Period = FMoraleCVars::TickPeriod();            // natural wall-clock timer; T4.8 bounds staleness
+}
+FActiveGameplayEffectHandle Handle = ASC->ApplyGameplayEffectSpecToSelf(Spec);
+// Refresh (SetByCaller change, aura entry/exit): RemoveActiveGameplayEffect(Handle) + re-apply.
+// NEVER mutate an applied spec's SetByCaller magnitudes (no re-aggregation; friend-gated container).
+
+// -- The forced tick under the pin (game-thread morale processor, sim cadence) --
+ASC->ExecutePeriodicEffect(Handle);   // AbilitySystemComponent.h:1836; no period prerequisite; game thread only
+
+// -- The exec calc --
+UCLASS()
+class UBattleMoraleExecCalc : public UGameplayEffectExecutionCalculation
+{
+    GENERATED_BODY()
+public:
+    UBattleMoraleExecCalc() { } // NO captures: inputs come from the registry + SetByCaller
+protected:
+    virtual void Execute_Implementation(const FGameplayEffectCustomExecutionParameters& Params,
+        FGameplayEffectCustomExecutionOutput& OutExecutionOutput) const override
+    {
+        // Resolve the registry via Params.GetTargetAbilitySystemComponent()->GetOwnerActor()
+        // (game thread by construction). ONE seam evaluation per tick (A14):
+        const float Morale = BattleMorale::EvaluateMorale(Inputs);
+        const EBattleFatigueState State = BattleMorale::EvaluateFatigueState(Exertion);
+        OutExecutionOutput.AddOutputModifier(FGameplayModifierEvaluatedData(
+            UUnitAttributeSet::GetMoraleAttribute(), EGameplayModOp::Additive, Morale));
+        // ... Fatigue likewise. NEVER wall-clock, never entity iteration, never orders.
+    }
+};
+
+// -- Catalog GE static modifiers (six FatigueState GEs; additive *Mod writes) --
+Mod.Attribute = UUnitAttributeSet::GetMeleeAttackModAttribute();
+Mod.ModifierOp = EGameplayModOp::Additive;
+Mod.ModifierMagnitude = FGameplayEffectModifierMagnitude(FScalableFloat(TableMinusOneValue));
+// (FGameplayModifierInfo authoring; GameplayEffect.h:565/:289. GAS aggregates overlapping
+//  additive mods in its fixed equation order -- MC4.)
+
+// -- SetByCaller stamp/read --
+Spec.SetSetByCallerMagnitude(TAG, Value);                       // native tags only (H1)
+const float V = Params.GetOwningSpec().GetSetByCallerMagnitude(TAG);  // exec-calc read (WarnIfNotFound default true)
+```
+
+Facts the implementation must honor (each traced in Part A §16):
+
+- The natural periodic timer is a REPEATING `FTimerManager` timer keyed on the spec's period at APPLICATION time; `ExecutePeriodicEffect` does not reset it → under the pin the spec is applied with `Period = NO_PERIOD` so the timer is never created (the double-fire window closes by construction; shipping keeps the natural period).
+- `bIsInhibited` blocks FORCED executions too — never inhibit a pinned MoraleTick GE.
+- `bExecutePeriodicEffectOnApplication` defaults false — the first morale value arrives one period after application (fine: the FSM reads registry state, and the pin's first forced tick lands at the first period boundary).
+- `InternalExecutePeriodicGameplayEffect` clears `Spec.ModifiedAttributes` before each execution and invokes `OnPeriodicGameplayEffectExecuteOnSelf` — bindable evidence hook for T4.5.
+- SetByCaller reads on a missing tag WARN and return the default — always stamp every tag the exec calc reads (or pass `WarnIfNotFound=false` for genuinely optional terms).
 
 
 ---

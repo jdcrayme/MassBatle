@@ -2,12 +2,66 @@
 
 | | |
 |---|---|
-| **Session** | 2026-10-31, kickoff-artifact landing + Task 0 machine verification (first pass; protocol per `Docs/AGENTS.md`) |
+| **Session** | 2026-10-31, PR-chain execution (the open writeups PR-12..PR-15; protocol per `Docs/AGENTS.md`) |
 | **Engine** | UE 5.8.4 at `E:\Unreal\UE_5.8` (this machine) |
 | **Project** | `E:\Unreal Projects\MassBattle` (plugin module `MassBattle`, test module `MassBattleTest`) |
+| **Start state** | Task 0 verified on `main` @ `d071ea3` (unit 83/83; func 19/27 = the expected 8); the run's task order picks up at the PR-chain prerequisite (Task 3, the GAS API audit) per the owner's directive to work the open PR writeups; Tasks 1-2 (the inherited blocker hunts) remain ahead in the brief's order -- PR-15 carries Task 1's disposition requirement |
 | **Kickoff state** | Patch series `0024..0029` applied from the design-pass bundle (`TMP/`, the phase-4a design pass), landed on `main` @ `afb0b69..aaa0dd0` via `git am` (authorship preserved, zero conflicts), then machine-verified with fixes folded on top (F4-1..F4-5 below) |
 
 ## Discrepancies (dated, newest first)
+
+- **2026-10-31 (Task 3, API audit)** -- brief section 4 named
+  `UAbilitySystemComponent::MakeOutgoingGameplayEffectSpec`; in pinned 5.8.4
+  that name exists ONLY on `UGameplayAbility`
+  (`Abilities/GameplayAbility.h:207,210`). The ASC-side helper is
+  `UAbilitySystemComponent::MakeOutgoingSpec(TSubclassOf<UGameplayEffect>,
+  float Level, FGameplayEffectContextHandle)`
+  (`AbilitySystemComponent.h:372`). Corrected in the owning reference
+  (engine-api Part A section 16 row 7); PR-12 constructs the spec directly
+  (`FGameplayEffectSpec(Def, Context)`) anyway -- the per-application
+  Period override needs the spec form.
+- **2026-10-31 (Task 3, R-M2 verdict)** -- the forced-execution path
+  (`ExecutePeriodicEffect` -> `InternalExecutePeriodicGameplayEffect`) does
+  NOT reset or clear the natural repeating FTimerManager timer
+  (`GameplayEffect.cpp:4497-4507`): forced + natural executions interleave
+  at independent cadences -- the double-fire risk is REAL if the pin kept
+  the natural timer. Fix designed (cleaner than the spec 4.8 fallback
+  ladder, disclosed): under `Battle.Morale.DeterministicTick=1` the spec is
+  applied with `Period = NO_PERIOD` -- the application gate
+  (`GameplayEffect.cpp:4497`) then never creates the timer, so forced
+  executions are the ONLY executions. Shipping mode keeps
+  `Period = TickPeriod` (natural wall-clock; T4.8 bounds staleness).
+  `ExecutePeriodicEffect` runs fine on a NO_PERIOD active GE (no period
+  prerequisite on the forced path; the `check` at
+  AbilitySystemComponent.cpp:1216 belongs to the NET path). Recorded in
+  engine-api Part A section 16 + Part B section 4.14.
+
+## Task 3 -- GAS API audit (the brief section 4 digest, executed)
+
+- [task3.1] Scripted audit over the section 4 symbol list against the
+  pinned source `E:\Unreal\UE_5.8\Engine\Plugins\Runtime\GameplayAbilities\
+  Source\GameplayAbilities\` (the module is an engine PLUGIN in 5.8, not
+  under `Runtime/`): GE authoring fields, `FGameplayEffectExecutionDefinition`,
+  the exec-calc class + `Execute_Implementation` shape, execution params
+  accessors, `AddOutputModifier`, capture-def structs/macros (empty capture
+  list confirmed legal -- the executions loop runs each definition's CDO
+  `Execute` unconditionally, `GameplayEffect.cpp:3274`), spec construction
+  (MakeOutgoingSpec rename), application/removal, SetByCaller read/write,
+  catalog static-modifier authoring, `ExecutePeriodicEffect` + the periodic
+  timer path, `FActiveGameplayEffect` immutability posture,
+  `OnPeriodicGameplayEffectExecuteOnSelf` evidence hook.
+- [task3.2] Verdicts merged into `Docs/reference/engine-api-5.8.md`:
+  Part A section 16 (the per-symbol verdict table with file:line citations)
+  + Part B section 4.14 (the operational code-shape digest + the pin design
+  + the facts list). A2 GO/NO-GO: **GO** -- the A2 shape stands, the pin
+  ships as spec-side `Period=NO_PERIOD` + processor-forced
+  `ExecutePeriodicEffect` at the sim cadence (strictly stronger than the
+  fallback ladder's remove/re-apply: no GE churn, no double-fire, no GE
+  removal churn in the FSM path). The fallback ladder stays recorded in
+  the spec (owner reconciles at the ADR-33 application).
+- [task3.3] No verdict killed the A2 shape; no spec fallback applied. The
+  two corrections above (MakeOutgoingSpec rename; double-fire semantics +
+  the NO_PERIOD pin) are the audit's findings, both in the reference file.
 
 - **2026-10-31 (Task 0, build)** -- F4-1 (compile blocker, patch `0028` splice
   error): the v3 morale block (comment + 9 UPROPERTYs) was pasted TWICE into
