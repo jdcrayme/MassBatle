@@ -30,6 +30,9 @@ private:
 	void DrawSelectionCircles();
 	void DrawMarquee();
 	void DrawOrderDragPreview();
+	/** PR-1 (demo-shell spec section 3): the beat sequencer's current beat,
+	 *  top-center -- the D.1/D.17 read. */
+	void DrawBeatLabel();
 
 	void DrawWorldCircle(const FVector2D& CenterCm, float RadiusCm, const FColor& Color, int32 Segments = 32);
 	void DrawWorldFacingArrow(const FVector2D& PosCm, float YawDeg, float LengthCm, const FColor& Color);

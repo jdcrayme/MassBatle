@@ -43,11 +43,11 @@ Mounted generals are the classic TW look and make the morale beats *faster to st
 | Type | Target pos (m) | Role |
 |------|----------------|------|
 | Building | (8, 52) | the contested village objective (beat 6) |
-| Building | (24, 62) | second garrison slot (the S8b multi-unit story, optional) |
+| Building | (52, 80) | village second slot, north -- the building fixture is 48x20 m, so the two buildings need ~25 m separation minimum (the boot probe caught the first spacing overlapping) |
 | Wall | (52, -52) | covers the enemy right; forces cost-grid pathing around it |
 | Trench | (-26, 30) | in front of P3; the shield-wall story fights from it (beat 3) |
 
-The three existing props are re-positioned from flank decoration into the fight; footprint sizes come from the plugin's `FGarrisonLayout::MakeFixture` (building 2 units / wall + trench 1), so final placement yields to the entrance lines the previews draw.
+The three existing props are re-positioned from flank decoration into the fight; footprint sizes come from the plugin's `FGarrisonLayout::MakeFixture` (building 2 units / wall + trench 1), so final placement yields to the entrance lines the previews draw -- and to the one-time boot click probe, which fails loudly when any two registered footprints (plus the 3 m click margin) collide.
 
 ### 2.3 The cavalry row (the one new EDU data item)
 

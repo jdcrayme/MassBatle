@@ -1,5 +1,6 @@
 // DemoHUD.cpp -- see header.
 #include "DemoHUD.h"
+#include "DemoGameMode.h"
 #include "DemoPlayerController.h"
 #include "DemoUnitVisualSubsystem.h"
 #include "BattleRegistry.h"
@@ -35,6 +36,7 @@ void ADemoHUD::DrawHUD()
 	}
 
 	DrawControlsHint();
+	DrawBeatLabel();
 	DrawUnitLabels();
 	DrawSelectionCircles();
 	DrawMarquee();
@@ -129,6 +131,22 @@ void ADemoHUD::DrawControlsHint()
 		Canvas->DrawText(GEngine->GetMediumFont(), Line, Pos.X, Pos.Y, 0.8f, 0.8f);
 		Pos.Y += 18.f;
 	}
+}
+
+void ADemoHUD::DrawBeatLabel()
+{
+	UWorld* World = GetWorld();
+	const ADemoGameMode* GM = World ? Cast<ADemoGameMode>(World->GetAuthGameMode()) : nullptr;
+	if (!GM || !Canvas || !GEngine || !GEngine->GetMediumFont() || GM->GetBeatIndex() == INDEX_NONE)
+	{
+		return;
+	}
+	const FString Text = FString::Printf(TEXT("Beat %d -- %s"),
+		GM->GetBeatIndex(), *GM->GetBeatLabel().ToString());
+	Canvas->SetDrawColor(255, 224, 64, 235);
+	// Top-center, rough half-width offset (the medium font at 1.1 scale).
+	Canvas->DrawText(GEngine->GetMediumFont(), Text,
+		FMath::Max(4.f, Canvas->SizeX * 0.5f - 140.f), 14.f, 1.1f, 1.1f);
 }
 
 void ADemoHUD::DrawUnitLabels()

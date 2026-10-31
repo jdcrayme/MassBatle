@@ -648,6 +648,7 @@ void ADemoPlayerController::OnRMBReleased()
 		{
 			if (Registry->IssueGarrisonOrder(H, StructureId))
 			{
+				PlayerOrderedUnits.Add(H);
 				++Issued;
 			}
 		}
@@ -688,6 +689,7 @@ void ADemoPlayerController::OnRMBReleased()
 			{
 				Registry->IssueMoveOrder(Seg.Handle, ClampToGridHelper(Seg.AnchorCm), Seg.FacingYawDeg,
 					/*speed m/s*/ 0.f, FMath::Max(0, Seg.Files));
+				PlayerOrderedUnits.Add(Seg.Handle);
 			}
 			UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoOrder FormationDrag Units=%d"), Segments.Num());
 			return;
@@ -727,6 +729,7 @@ void ADemoPlayerController::OnRMBReleased()
 		// TW click-move semantics: a plain click moves without re-facing -- the
 		// unit keeps its current front (only an explicit drag commands a facing).
 		Registry->IssueMoveOrder(H, ClampToGridHelper(UnitDest), Info.FacingYawDeg);
+		PlayerOrderedUnits.Add(H);
 	}
 	UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoOrder Move Units=%d"), SelectedUnits.Num());
 }
@@ -752,6 +755,7 @@ bool ADemoPlayerController::IssueAttackOrders(const FVector2D& ScreenPos, const 
 		{
 			if (H != Enemy && Registry->IssueAttackUnitOrder(H, Enemy))
 			{
+				PlayerOrderedUnits.Add(H);
 				++Issued;
 			}
 		}
@@ -773,6 +777,7 @@ bool ADemoPlayerController::IssueAttackOrders(const FVector2D& ScreenPos, const 
 			const float Yaw = Visuals->GetUnitBodyInfo(H, Info) ? Info.FacingYawDeg : 0.f;
 			if (Registry->IssueAttackMoveOrder(H, Dest, Yaw))
 			{
+				PlayerOrderedUnits.Add(H);
 				++Issued;
 			}
 		}
@@ -872,6 +877,7 @@ void ADemoPlayerController::OnHalt()
 		for (const FUnitHandle& H : SelectedUnits)
 		{
 			Registry->IssueStopOrder(H);
+			PlayerOrderedUnits.Add(H);
 		}
 		if (SelectedUnits.Num() > 0)
 		{

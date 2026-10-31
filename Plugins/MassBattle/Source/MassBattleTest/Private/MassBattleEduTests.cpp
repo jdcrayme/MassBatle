@@ -13,6 +13,7 @@
 #include "HAL/PlatformFileManager.h"
 
 #include "BattleEduParser.h"
+#include "BattleSpawnLibrary.h"
 
 namespace
 {
@@ -59,7 +60,7 @@ bool FEdu_RoundTripGolden::RunTest(const FString& Parameters)
 		return false;
 	}
 	TestEqual(TEXT("schema field count is 16 (phase 4a re-sign: +officer, optional + repeatable)"), FBattleEduParser::SchemaFieldCount(), 16);
-	TestEqual(TEXT("fixture unit count"), Units.Num(), 4);
+	TestEqual(TEXT("fixture unit count"), Units.Num(), 5);
 
 	// Spot-check the tables against the fixture content.
 	const FEduField* Type0 = Units[0].FindField(TEXT("type"));
@@ -218,9 +219,91 @@ bool FEdu_RoundTripGolden::RunTest(const FString& Parameters)
 		"stat_mental 5, normal, trained\n"
 		"stat_charge_dist 30\n"
 		"stat_cost 1, 300, 260, 100, 130, 260\n"
+		"ownership england, france\n"
+		"\n"
+		// Demo-shell re-sign (2026-10-31, spec demo-shell section 2.3): the
+		// cavalry row. Appended last -- the four earlier rows' indices are
+		// stable fixture data (Rows[1..3] consumers + the EduRowIndex
+		// fallback).
+		"type Feudal Knights\n"
+		"dictionary Feudal_Knights\n"
+		"category cavalry\n"
+		"class heavy\n"
+		"soldier Feudal_Knight, 24, 0, 1\n"
+		"attributes sea_faring, hardy, can_withdraw\n"
+		"formation 1.2, 1.2, 2.4, 2.4, 3, square\n"
+		"stat_health 1, 1\n"
+		"stat_pri 9, 8, no, 0, 0, melee, blade_piercing, other, 25, 0.45, 0.45\n"
+		"stat_sec 6, 6, no, 0, 0, melee, blade_piercing, other, 25, 0.35, 0.35\n"
+		"stat_pri_armour 6, 6, 4, metal\n"
+		"stat_mental 9, impetuous, trained\n"
+		"stat_charge_dist 60\n"
+		"stat_cost 1, 550, 460, 180, 220, 460\n"
 		"ownership england, france\n");
 	TestEqualSensitive(TEXT("canonical text matches hand-written golden"), Canonical1, GoldenCanonical);
 
+	return true;
+}
+
+// -- the demo-shell cavalry row (spec demo-shell section 2.3): the EDU ->
+// FBattleRowStats cavalry mapping asserted directly (the B.8 unit-test rule
+// for the new capability; the D.19 charge gate backs on this row). --
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEdu_CavalryRowFromEdu,
+	"Battle.Data.CavalryRowFromEdu",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FEdu_CavalryRowFromEdu::RunTest(const FString& Parameters)
+{
+	FString Fixture;
+	{
+		FString FailReason;
+		if (!TestTrue(TEXT("fixture loadable"), LoadFixture(Fixture, FailReason)))
+		{
+			AddError(FailReason);
+			return false;
+		}
+	}
+	TArray<FEduUnit> Units;
+	FEduParseError Err;
+	if (!TestTrue(TEXT("fixture parses"), FBattleEduParser::Parse(Fixture, Units, Err)))
+	{
+		AddError(FString::Printf(TEXT("parse error line %d: %s"), Err.LineNumber, *Err.Message));
+		return false;
+	}
+
+	// The cavalry row is dictionary-keyed (the PR-11 rule): find it by name,
+	// never by index.
+	const int32 RowIdx = Units.IndexOfByPredicate(
+		[](const FEduUnit& U)
+		{
+			const FEduField* Dict = U.FindField(TEXT("dictionary"));
+			return Dict && Dict->GetValue() == TEXT("Feudal_Knights");
+		});
+	if (!TestTrue(TEXT("Feudal_Knights row present"), RowIdx != INDEX_NONE))
+	{
+		return false;
+	}
+
+	FBattleRowStats Stats;
+	FString FromEduError;
+	if (!TestTrue(TEXT("FromEdu"), FBattleRowStats::FromEdu(Units[RowIdx], Stats, FromEduError)))
+	{
+		AddError(FromEduError);
+		return false;
+	}
+
+	// The mapping facts the D.19 charge gate rides on: the capability tags,
+	// the mount pool, the charge distance, the discipline token, and the
+	// NOT-ranged posture (a melee stat_pri -> Kind None).
+	TestTrue(TEXT("bCavalry"), Stats.bCavalry);
+	TestFalse(TEXT("not infantry"), Stats.bInfantry);
+	TestTrue(TEXT("melee"), Stats.bMelee);
+	TestFalse(TEXT("not bow"), Stats.bBow);
+	TestEqual(TEXT("Kind None"), static_cast<uint8>(Stats.Kind), static_cast<uint8>(EBattleProjectileKind::None));
+	TestEqual(TEXT("mount pool from stat_health[1]"), Stats.MountHP, 1);
+	TestEqual(TEXT("charge distance from stat_charge_dist"), Stats.ChargeDistance, 60.f);
+	TestTrue(TEXT("impetuous discipline"), Stats.Discipline == EBattleDiscipline::Impetuous);
+	TestTrue(TEXT("shield value present"), Stats.Shield > 0.f);
 	return true;
 }
 

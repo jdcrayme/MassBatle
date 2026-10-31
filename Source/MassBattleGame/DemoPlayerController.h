@@ -52,6 +52,12 @@ public:
 
 	const TArray<FUnitHandle>& GetSelectedUnits() const { return SelectedUnits; }
 
+	/** PR-1 (demo-shell spec section 3): units the PLAYER has ordered at
+	 *  least once. The beat sequencer skips these -- a player order mid-beat
+	 *  simply wins, with no sim-side scripting (the demo owns the flag; the
+	 *  registry order surface is untouched). */
+	bool WasPlayerOrdered(FUnitHandle Handle) const { return PlayerOrderedUnits.Contains(Handle); }
+
 	/** Team of the selection's first unit (Player when the selection is
 	 *  empty). The RMB attack path splits on this. */
 	EDemoTeam GetSelectionTeam() const;
@@ -148,6 +154,9 @@ private:
 	/** F3 edge latch (toggles Battle.Debug.ShowOverlay). */
 	bool bF3Latch = false;
 	FVector2D MarqueeStartScreen = FVector2D::ZeroVector;
+
+	/** Every unit the player has issued an order to (see WasPlayerOrdered). */
+	TSet<FUnitHandle> PlayerOrderedUnits;
 
 	// -- order drag state --
 	bool bDraggingOrder = false;
