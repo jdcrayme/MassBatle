@@ -90,32 +90,50 @@ void AUnitActor::OnDeathEvent(FGameplayTag EventTag, const FGameplayEventData* P
 
 void AUnitActor::OnAttributeChanged(const FOnAttributeChangeData& Data)
 {
-	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT AttrChange Actor=%s Handle=%u:%u Attr=%s Value=%.4f Registry=%d"),
-	       *GetName(), UnitHandle.Index, UnitHandle.Serial, *Data.Attribute.AttributeName, Data.NewValue,
-	       (GetWorld() && GetWorld()->GetSubsystem<UUnitRegistrySubsystem>()) ? 1 : 0);
+	// PR-1 shoring (the owner PIE report 2026-10-31): GAS re-fires this
+	// delegate on EVERY Set -- including same-value writes from UnitSync's
+	// ammo mirror -- so the Display log + MarkStatsDirty here flooded the
+	// session log (12k lines of AmmoPool=1.0000) and churned the UnitSync
+	// dirty flag per tick. Delta-gate both on the cached snapshot: identical
+	// writes are no-ops by construction.
 	if (UWorld* World = GetWorld())
 	{
 		if (UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>())
 		{
 			// arch §5.1 down-path: (1) write the new value into the registry's
 			// cached plain-struct snapshot, (2) set the dirty flag for UnitSync.
+			bool bChanged = false;
 			if (FBattleAttributeSnapshot* Cached =
 				const_cast<FBattleAttributeSnapshot*>(Registry->FindCachedAttributes(UnitHandle)))
 			{
 				const FString& AttrName = Data.Attribute.AttributeName;
-				if (AttrName == TEXT("Morale")) { Cached->Morale = Data.NewValue; }
-				else if (AttrName == TEXT("Fatigue")) { Cached->Fatigue = Data.NewValue; }
-				else if (AttrName == TEXT("Experience")) { Cached->Experience = Data.NewValue; }
-				else if (AttrName == TEXT("ArmourUpgrade")) { Cached->ArmourUpgrade = Data.NewValue; }
-				else if (AttrName == TEXT("MeleeAttackMod")) { Cached->MeleeAttackMod = Data.NewValue; }
-				else if (AttrName == TEXT("MeleeDefenseMod")) { Cached->MeleeDefenseMod = Data.NewValue; }
-				else if (AttrName == TEXT("RangedAttackMod")) { Cached->RangedAttackMod = Data.NewValue; }
-				else if (AttrName == TEXT("SpeedMod")) { Cached->SpeedMod = Data.NewValue; }
-				else if (AttrName == TEXT("BlockChanceMod")) { Cached->BlockChanceMod = Data.NewValue; }
-				else if (AttrName == TEXT("OrderLatency")) { Cached->OrderLatency = Data.NewValue; }
-				else if (AttrName == TEXT("AmmoPool")) { Cached->AmmoPool = Data.NewValue; }
+				float* Slot = nullptr;
+				if (AttrName == TEXT("Morale")) { Slot = &Cached->Morale; }
+				else if (AttrName == TEXT("Fatigue")) { Slot = &Cached->Fatigue; }
+				else if (AttrName == TEXT("Experience")) { Slot = &Cached->Experience; }
+				else if (AttrName == TEXT("ArmourUpgrade")) { Slot = &Cached->ArmourUpgrade; }
+				else if (AttrName == TEXT("MeleeAttackMod")) { Slot = &Cached->MeleeAttackMod; }
+				else if (AttrName == TEXT("MeleeDefenseMod")) { Slot = &Cached->MeleeDefenseMod; }
+				else if (AttrName == TEXT("RangedAttackMod")) { Slot = &Cached->RangedAttackMod; }
+				else if (AttrName == TEXT("SpeedMod")) { Slot = &Cached->SpeedMod; }
+				else if (AttrName == TEXT("BlockChanceMod")) { Slot = &Cached->BlockChanceMod; }
+				else if (AttrName == TEXT("OrderLatency")) { Slot = &Cached->OrderLatency; }
+				else if (AttrName == TEXT("AmmoPool")) { Slot = &Cached->AmmoPool; }
+				if (Slot)
+				{
+					bChanged = !FMath::IsNearlyEqual(*Slot, Data.NewValue, 1e-4);
+					if (bChanged)
+					{
+						*Slot = Data.NewValue;
+					}
+				}
 			}
-			Registry->MarkStatsDirty(UnitHandle);
+			if (bChanged)
+			{
+				UE_LOG(LogMassBattle, Verbose, TEXT("EXEC_RESULT AttrChange Actor=%s Handle=%u:%u Attr=%s Value=%.4f Registry=%d"),
+					*GetName(), UnitHandle.Index, UnitHandle.Serial, *Data.Attribute.AttributeName, Data.NewValue, 1);
+				Registry->MarkStatsDirty(UnitHandle);
+			}
 		}
 	}
 }
@@ -271,7 +289,11 @@ bool AUnitActor::SpawnEntities(FBattleSpawnResult& OutResult, FString& OutError)
 		Spec = FUnitSpawnSpec();
 		Spec.EduRowIndex = EduRowIndex;
 		Spec.SoldierCount = SoldierCount;
-		Spec.UnitName = GetName();
+		// PR-1 shoring: the label is the authoring surface (the map pass set
+		// MB_P1..MB_E5); the object name reads DemoUnitActor_N and means
+		// nothing in the HUD. GetActorNameOrLabel falls back to the object
+		// name in -game where labels are not maintained.
+		Spec.UnitName = GetActorNameOrLabel();
 		Spec.TeamId = TeamId;
 		// Phase 4a (spec morale-and-gas section 3.3): the authoring passthrough.
 		Spec.OfficerCount = OfficerCount;

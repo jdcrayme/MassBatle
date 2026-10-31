@@ -10,6 +10,7 @@
 #include "BattleGarrisonSubsystem.h"
 #include "BattleCostGridSubsystem.h"
 #include "BattleExecCommands.h"
+#include "BattleMovementFragments.h"
 #include "BattleSpawnLibrary.h"
 #include "BattleEduParser.h"
 #include "BattleRanged.h"
@@ -54,7 +55,24 @@ void ADemoGameMode::BeginPlay()
 	{
 		BattleExec::EnableRangedPipeline();
 		BattleExec::EnableMoralePipeline();
-		UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoPipelines combat+ranged+morale session-on (PR-1)"));
+		// PR-1 shoring (the owner PIE report 2026-10-31, root-caused by the
+		// Demo.AttackTest anchor telemetry): on a LONG march the straggler
+		// pace reads the progressive-fall-in tear (the intentional spawn
+		// shape, mean slot error ~11.6 m >> DressBreak 1.8) and floors the
+		// anchor at the 0.25x walk pace for the WHOLE march -- an 81 m
+		// attack approach takes ~4 minutes, the units never reach contact,
+		// and the engagement records stay empty (Engagements=0 in the
+		// owner's DumpPairs). The phase-2 alpha-guard treaty covers only
+		// the tail morph zone. The demo session runs the pace OFF: the
+		// anchor marches at walk speed and the fall-in blend owns
+		// convergence. Saved + restored in EndPlay (the func maps ride this
+		// game mode -- the PairLifecycle travel-leak lesson).
+		if (IConsoleVariable* Pace = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Movement.StragglerPace")))
+		{
+			SavedStragglerPace = Pace->GetInt();
+			Pace->Set(0, ECVF_SetByCode);
+		}
+		UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoPipelines combat+ranged+morale session-on (PR-1; straggler pace off for the demo session)"));
 	}
 	else
 	{
@@ -137,6 +155,13 @@ void ADemoGameMode::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Morale.Enable")))
 	{
 		C->Set(0, ECVF_SetByCode);
+	}
+	// The demo-session movement override (see BeginPlay): restore the
+	// shipped straggler-pace value so the func tier's march-discipline
+	// baselines (S5_MarchRefront, S4_WidthOverride) stay intact.
+	if (IConsoleVariable* Pace = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Movement.StragglerPace")))
+	{
+		Pace->Set(SavedStragglerPace, ECVF_SetByCode);
 	}
 }
 
@@ -233,6 +258,133 @@ void ADemoGameMode::FireBeat(int32 BeatIndex)
 	}
 }
 
+const ADemoGameMode::FDemoFieldUnit* ADemoGameMode::GetFieldTable(int32& OutCount)
+{
+	// The spec demo-shell section 2.1 order of battle, ~384 entities. ONE
+	// home: SpawnFieldFixture spawns it; BindSequencerToLevelUnits matches
+	// the level-placed actors against it (dictionary + spawn position).
+	static const FDemoFieldUnit FieldUnits[] = {
+		{ TEXT("Peasant_Levy"),          40, 4, FVector2D(-40.f, -30.f),   0.f, 0, 0, false, EDemoTeam::Player, TEXT("P1") },
+		{ TEXT("Sergeant_Spearmen"),     40, 4, FVector2D(-40.f,   0.f),   0.f, 0, 0, false, EDemoTeam::Player, TEXT("P2") },
+		{ TEXT("Sergeant_Spearmen"),     40, 4, FVector2D(-40.f,  30.f),   0.f, 0, 0, false, EDemoTeam::Player, TEXT("P3") },
+		{ TEXT("Feudal_Knights"),        24, 3, FVector2D(-52.f, -52.f),   0.f, 0, 0, false, EDemoTeam::Player, TEXT("C1") },
+		{ TEXT("Peasant_Archers"),       40, 3, FVector2D(-58.f,  15.f),   0.f, 0, 0, false, EDemoTeam::Player, TEXT("P4") },
+		{ TEXT("Feudal_Knights"),        12, 2, FVector2D(-70.f,   0.f),   0.f, 0, 2, true,  EDemoTeam::Player, TEXT("P5") },
+		{ TEXT("Peasant_Levy"),          40, 4, FVector2D( 40.f,  15.f), 180.f, 1, 0, false, EDemoTeam::Enemy,  TEXT("E1") },
+		{ TEXT("Sergeant_Spearmen"),     40, 4, FVector2D( 40.f, -15.f), 180.f, 1, 0, false, EDemoTeam::Enemy,  TEXT("E2") },
+		{ TEXT("Sergeant_Spearmen"),     32, 4, FVector2D( 58.f,   0.f), 180.f, 1, 0, false, EDemoTeam::Enemy,  TEXT("E3") },
+		{ TEXT("Mercenary_Crossbowmen"), 40, 3, FVector2D( 58.f,  25.f), 180.f, 1, 0, false, EDemoTeam::Enemy,  TEXT("E4") },
+		{ TEXT("Feudal_Knights"),        24, 3, FVector2D( 52.f,  48.f), 180.f, 1, 0, false, EDemoTeam::Enemy,  TEXT("C2") },
+		{ TEXT("Feudal_Knights"),        12, 2, FVector2D( 72.f,   0.f), 180.f, 1, 2, true,  EDemoTeam::Enemy,  TEXT("E5") },
+	};
+	OutCount = UE_ARRAY_COUNT(FieldUnits);
+	return FieldUnits;
+}
+
+void ADemoGameMode::BindSequencerToLevelUnits()
+{
+	UWorld* World = GetWorld();
+	UDemoUnitVisualSubsystem* Visuals = World ? World->GetSubsystem<UDemoUnitVisualSubsystem>() : nullptr;
+	if (!World || !Visuals)
+	{
+		return;
+	}
+	int32 TableCount = 0;
+	const FDemoFieldUnit* Table = GetFieldTable(TableCount);
+	int32 Bound = 0;
+	// Role = the table row matching the placed actor's dictionary AND spawn
+	// position (the map pass authors actors at exactly the table positions;
+	// 5 m tolerance absorbs float round-trip). The spawned handle rides the
+	// same actor the level path registered.
+	for (TActorIterator<ADemoUnitActor> It(World); It; ++It)
+	{
+		ADemoUnitActor* Actor = *It;
+		const FUnitHandle* BoundHandle = nullptr;
+		for (const TPair<FUnitHandle, TObjectPtr<ADemoUnitActor>>& Kvp : HandleByActor)
+		{
+			if (Kvp.Value == Actor) { BoundHandle = &Kvp.Key; break; }
+		}
+		if (!BoundHandle || !BoundHandle->IsValid())
+		{
+			continue;
+		}
+		const FVector Pos = Actor->GetActorLocation();
+		for (int32 i = 0; i < TableCount; ++i)
+		{
+			const FDemoFieldUnit& Row = Table[i];
+			const float DX = Pos.X * 0.01f - Row.PosM.X;
+			const float DY = Pos.Y * 0.01f - Row.PosM.Y;
+			if (FMath::Abs(DX) < 5.f && FMath::Abs(DY) < 5.f
+				&& Actor->UnitDictionary == Row.Dictionary)
+			{
+				FieldUnitByRole.Add(Row.Role, *BoundHandle);
+				++Bound;
+				break;
+			}
+		}
+	}
+	UE_LOG(LogDemoBattle, Display,
+		TEXT("EXEC_RESULT DemoBind roles=%d of %d (the sequencer rides the level units)"), Bound, TableCount);
+	if (Bound == TableCount)
+	{
+		bSequencerRunning = true;
+		SequencerTime = 0.f;
+		FireBeat(0);
+	}
+}
+
+void ADemoGameMode::AttackTestFire(int32 UnitIdx, int32 TargetIdx)
+{
+	UUnitRegistrySubsystem* Registry = GetWorld() ? GetWorld()->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	if (!Registry)
+	{
+		return;
+	}
+	const FUnitHandle Attacker(static_cast<uint32>(UnitIdx), 1);
+	const FUnitHandle Target(static_cast<uint32>(TargetIdx), 1);
+	const bool bIssued = Registry->IssueAttackUnitOrder(Attacker, Target);
+	UE_LOG(LogDemoBattle, Display,
+		TEXT("EXEC_RESULT DemoAttackTest Fire %u->%u issued=%d"), Attacker.Index, Target.Index, bIssued ? 1 : 0);
+	if (bIssued)
+	{
+		for (int32 Poll = 1; Poll <= 15; ++Poll)
+		{
+			GetWorldTimerManager().SetTimer(PollHandles[Poll - 1],
+				FTimerDelegate::CreateUObject(this, &ADemoGameMode::AttackTestPoll, UnitIdx, TargetIdx, Poll),
+				2.f * Poll, false);
+		}
+	}
+}
+
+void ADemoGameMode::AttackTestPoll(int32 UnitIdx, int32 TargetIdx, int32 Poll)
+{
+	UUnitRegistrySubsystem* Registry = GetWorld() ? GetWorld()->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	UMassEntitySubsystem* Mass = GetWorld() ? GetWorld()->GetSubsystem<UMassEntitySubsystem>() : nullptr;
+	if (!Registry || !Mass)
+	{
+		return;
+	}
+	const FUnitHandle Attacker(static_cast<uint32>(UnitIdx), 1);
+	const TArray<FMassEntityHandle>* Roster = Registry->FindRoster(Attacker);
+	FVector2D Anchor = FVector2D::ZeroVector;
+	float Fatigue = -1.f;
+	if (Roster && Roster->Num() > 0)
+	{
+		if (const FUnitFormationSharedFragment* F =
+			Mass->GetMutableEntityManager().GetSharedFragmentDataPtr<FUnitFormationSharedFragment>((*Roster)[0]))
+		{
+			Anchor = F->AnchorPos;
+		}
+	}
+	if (const FBattleAttributeSnapshot* Cached = Registry->FindCachedAttributes(Attacker))
+	{
+		Fatigue = Cached->Fatigue;
+	}
+	UE_LOG(LogDemoBattle, Display,
+		TEXT("EXEC_RESULT DemoAttackTest Poll=%d Unit=%u Anchor=(%.1f,%.1f)m Fatigue=%.3f"),
+		Poll, Attacker.Index, Anchor.X * 0.01f, Anchor.Y * 0.01f, Fatigue);
+}
+
 void ADemoGameMode::SpawnFieldFixture()
 {
 	UWorld* World = GetWorld();
@@ -300,21 +452,10 @@ void ADemoGameMode::SpawnFieldFixture()
 
 	// Units: dictionary-keyed (the PR-11 rule), generals stamped
 	// (OfficerCount 2 + bIsGeneral). The spec demo-shell section 2.1 order
-	// of battle, ~384 entities.
-	static const FDemoFieldUnit FieldUnits[] = {
-		{ TEXT("Peasant_Levy"),          40, 4, FVector2D(-40.f, -30.f),   0.f, 0, 0, false, EDemoTeam::Player, TEXT("P1") },
-		{ TEXT("Sergeant_Spearmen"),     40, 4, FVector2D(-40.f,   0.f),   0.f, 0, 0, false, EDemoTeam::Player, TEXT("P2") },
-		{ TEXT("Sergeant_Spearmen"),     40, 4, FVector2D(-40.f,  30.f),   0.f, 0, 0, false, EDemoTeam::Player, TEXT("P3") },
-		{ TEXT("Feudal_Knights"),        24, 3, FVector2D(-52.f, -52.f),   0.f, 0, 0, false, EDemoTeam::Player, TEXT("C1") },
-		{ TEXT("Peasant_Archers"),       40, 3, FVector2D(-58.f,  15.f),   0.f, 0, 0, false, EDemoTeam::Player, TEXT("P4") },
-		{ TEXT("Feudal_Knights"),        12, 2, FVector2D(-70.f,   0.f),   0.f, 0, 2, true,  EDemoTeam::Player, TEXT("P5") },
-		{ TEXT("Peasant_Levy"),          40, 4, FVector2D( 40.f,  15.f), 180.f, 1, 0, false, EDemoTeam::Enemy,  TEXT("E1") },
-		{ TEXT("Sergeant_Spearmen"),     40, 4, FVector2D( 40.f, -15.f), 180.f, 1, 0, false, EDemoTeam::Enemy,  TEXT("E2") },
-		{ TEXT("Sergeant_Spearmen"),     32, 4, FVector2D( 58.f,   0.f), 180.f, 1, 0, false, EDemoTeam::Enemy,  TEXT("E3") },
-		{ TEXT("Mercenary_Crossbowmen"), 40, 3, FVector2D( 58.f,  25.f), 180.f, 1, 0, false, EDemoTeam::Enemy,  TEXT("E4") },
-		{ TEXT("Feudal_Knights"),        24, 3, FVector2D( 52.f,  48.f), 180.f, 1, 0, false, EDemoTeam::Enemy,  TEXT("C2") },
-		{ TEXT("Feudal_Knights"),        12, 2, FVector2D( 72.f,   0.f), 180.f, 1, 2, true,  EDemoTeam::Enemy,  TEXT("E5") },
-	};
+	// of battle, ~384 entities -- the ONE-HOME table (shared with the
+	// level-unit binding).
+	int32 FieldCount = 0;
+	const FDemoFieldUnit* FieldUnits = GetFieldTable(FieldCount);
 
 	TArray<FEduUnit> Rows;
 	FEduParseError Err;
@@ -326,8 +467,9 @@ void ADemoGameMode::SpawnFieldFixture()
 	}
 
 	int32 Spawned = 0;
-	for (const FDemoFieldUnit& U : FieldUnits)
+	for (int32 FieldIdx = 0; FieldIdx < FieldCount; ++FieldIdx)
 	{
+		const FDemoFieldUnit& U = FieldUnits[FieldIdx];
 		const int32 EduRow = BattleExec::FindEduRowIndexByDictionary(Rows, U.Dictionary);
 		if (EduRow == INDEX_NONE)
 		{
@@ -362,7 +504,7 @@ void ADemoGameMode::SpawnFieldFixture()
 	bFieldSpawned = true;
 	UE_LOG(LogDemoBattle, Display,
 		TEXT("EXEC_RESULT DemoField OK rows=%d of %d structures=%d (the demo-shell spec section 2 field, morale session-on)"),
-		Spawned, UE_ARRAY_COUNT(FieldUnits), StructuresSpawned);
+		Spawned, FieldCount, StructuresSpawned);
 
 	// The beat sequencer (the spec section 3 table; PR-1 runs beats 0-3).
 	bSequencerRunning = true;
@@ -530,6 +672,7 @@ void ADemoGameMode::TrySpawnLevelUnits()
 		if (Unit->SpawnEntities(Result, Error) && Result.Unit.IsValid())
 		{
 			Visuals->RegisterUnit(Result.Unit, Unit->Team);
+			HandleByActor.Add(Result.Unit, Unit);
 			++Spawned;
 		}
 		else
@@ -539,6 +682,10 @@ void ADemoGameMode::TrySpawnLevelUnits()
 	}
 	bLevelUnitsSpawned = true;
 	UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoSpawn spawned=%d of %d"), Spawned, LevelUnits.Num());
+	// PR-4 early slice: the beat sequencer rides the level units (the map
+	// pass authored them at the field-table positions; the binding matches
+	// dictionary + position). The demo map now plays beats 0-3 by itself.
+	BindSequencerToLevelUnits();
 }
 
 // -- Demo.SpawnField (PR-1) ----------------------------------------------------
@@ -558,5 +705,32 @@ static FAutoConsoleCommandWithWorldAndArgs GDemoSpawnField(
 		if (ADemoGameMode* GM = World ? Cast<ADemoGameMode>(World->GetAuthGameMode()) : nullptr)
 		{
 			GM->SpawnFieldFixture();
+		}
+	}));
+
+// -- Demo.AttackTest (PR-1 shoring) ---------------------------------------------
+// The delayed real-attack repro for the owner report 2026-10-31 (RMB attack
+// walks to the enemy and never engages): fires IssueAttackUnitOrder after
+// [DelaySec], then polls engagement telemetry (head-entity anchor + cached
+// fatigue) every 2 s x 15 -- the anchors answer the follow question, the
+// fatigue/kill lines answer the engagement question. Usable in PIE (the
+// console) and headless (-ExecCmds) alike; handles are 1-based unit indices.
+static FAutoConsoleCommandWithWorldAndArgs GDemoAttackTest(
+	TEXT("Demo.AttackTest"),
+	TEXT("[unitIdx=1] [targetIdx=8] [delaySec=5] -- delayed AttackUnit + engagement telemetry (anchor trajectory + fatigue); EXEC_RESULT DemoAttackTest"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(
+		[](const TArray<FString>& Args, UWorld* World)
+	{
+		if (ADemoGameMode* GM = World ? Cast<ADemoGameMode>(World->GetAuthGameMode()) : nullptr)
+		{
+			const int32 UnitIdx = Args.Num() > 0 ? FCString::Atoi(*Args[0]) : 1;
+			const int32 TargetIdx = Args.Num() > 1 ? FCString::Atoi(*Args[1]) : 8;
+			const float Delay = Args.Num() > 2 ? FCString::Atof(*Args[2]) : 5.f;
+			FTimerHandle FireHandle;
+			GM->GetWorldTimerManager().SetTimer(FireHandle,
+				FTimerDelegate::CreateUObject(GM, &ADemoGameMode::AttackTestFire, UnitIdx, TargetIdx),
+				FMath::Max(1.f, Delay), false);
+			UE_LOG(LogDemoBattle, Display,
+				TEXT("EXEC_RESULT DemoAttackTest armed unit=%d target=%d delay=%.1f"), UnitIdx, TargetIdx, Delay);
 		}
 	}));

@@ -38,6 +38,14 @@ public:
 	const FName& GetBeatLabel() const { return BeatLabel; }
 	int32 GetBeatIndex() const { return CurrentBeat; }
 
+	/** PR-1 shoring: the delayed real-attack repro (the owner report
+	 *  2026-10-31: RMB attack walks to the enemy and never engages). Fires
+	 *  IssueAttackUnitOrder after a delay, then polls engagement telemetry
+	 *  (head-entity anchor + cached fatigue) so the logs carry the answer.
+	 *  Public: the Demo.AttackTest command path. */
+	void AttackTestFire(int32 UnitIdx, int32 TargetIdx);
+	void AttackTestPoll(int32 UnitIdx, int32 TargetIdx, int32 Poll);
+
 private:
 	/** Deferred spawn pump: retries until the world + Mass are ready. */
 	void TrySpawnLevelUnits();
@@ -71,8 +79,15 @@ private:
 	};
 
 	static const FDemoBeat* GetBeatTable(int32& OutCount);
+	/** The spec demo-shell section 2.1 order of battle, ONE home for the
+	 *  fixture spawn and the level-unit binding (PR-4 early slice). */
+	static const FDemoFieldUnit* GetFieldTable(int32& OutCount);
 	void TickSequencer(float DeltaSeconds);
 	void FireBeat(int32 BeatIndex);
+	/** PR-4 (early slice): binds the beat sequencer to the LEVEL-PLACED
+	 *  units -- role = the field-table row whose dictionary + spawn position
+	 *  (within 5 m) match the placed actor. Logs EXEC_RESULT DemoBind. */
+	void BindSequencerToLevelUnits();
 
 	/** PR-1: the authored scenario (spawn rows + auto order) assigned in the
 	 *  map. Empty keeps the M7 field fixture fallback. */
@@ -91,6 +106,13 @@ private:
 	bool bFieldSpawned = false;
 	/** Role -> live handle (the sequencer commands by role, P1..E5). */
 	TMap<FName, FUnitHandle> FieldUnitByRole;
+	/** Spawned handle -> its level actor (the level-path binding key). */
+	TMap<FUnitHandle, TObjectPtr<ADemoUnitActor>> HandleByActor;
+	/** Demo.AttackTest poll timers (15 x 2 s engagement telemetry). */
+	FTimerHandle PollHandles[15];
+	/** The demo-session straggler-pace override's shipped value (restored in
+	 *  EndPlay; the func-tier travel-leak discipline). */
+	int32 SavedStragglerPace = 1;
 
 	/** One-time click-path probe after the level settles: resolves each
 	 *  registered structure's own footprint center through the SAME static

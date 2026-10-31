@@ -106,7 +106,18 @@ void UUnitSyncProcessor::Execute(FMassEntityManager& EntityManager, FMassExecuti
 						const FGameplayAttribute Attribute = UUnitAttributeSet::FindAttributeByName(TEXT("AmmoPool"));
 						if (Attribute.IsValid())
 						{
-							ASC->SetNumericAttributeBase(Attribute, FMath::Clamp(Fraction, 0.f, 1.f));
+							// PR-1 shoring (the owner PIE report 2026-10-31): the
+							// mirror ran per chunk per UnitSync and GAS fires the
+							// attribute delegate on EVERY Set -- including identical
+							// values (the comment below assumed delta-gating that
+							// SetNumericAttributeBase does not do) -- flooding the
+							// session log and churning the delegate path each tick.
+							// Delta-gate here.
+							const float Clamped = FMath::Clamp(Fraction, 0.f, 1.f);
+							if (!FMath::IsNearlyEqual(ASC->GetNumericAttribute(Attribute), Clamped, 1e-4))
+							{
+								ASC->SetNumericAttributeBase(Attribute, Clamped);
+							}
 						}
 					}
 				}
