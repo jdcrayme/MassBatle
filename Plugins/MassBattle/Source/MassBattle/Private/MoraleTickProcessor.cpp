@@ -332,15 +332,20 @@ void UMoraleTickProcessor::TickMorale(FMassEntityManager& EM, FMassExecutionCont
 		}
 
 		// ---- Impetuous auto-charge (A11/MC9): suppressed by GuardMode,
-		// routing, and player orders (the serial guard). ----
-		if (State->Discipline == EBattleDiscipline::Impetuous && !State->bGuardMode
-			&& State->RoutState == EBattleRoutState::Steady)
+		// routing, and player orders (the serial guard). The player-bump
+		// clear runs REGARDLESS of the FSM state -- a wavering/routing unit's
+		// stale auto-charge bookkeeping must not survive its player order. ----
 		{
 			const uint32 Serial = Registry->GetOrderSerial(Body.Unit);
 			if (State->bAutoCharging && State->AutoChargeSerial != Serial)
 			{
 				State->bAutoCharging = false; // a player order superseded the charge
 			}
+		}
+		if (State->Discipline == EBattleDiscipline::Impetuous && !State->bGuardMode
+			&& State->RoutState == EBattleRoutState::Steady)
+		{
+			const uint32 Serial = Registry->GetOrderSerial(Body.Unit);
 			const FUnitOrder* Order = Registry->FindOrder(Body.Unit);
 			const bool bIdle = !Order || Order->Type == FUnitOrder::EType::None || Order->Type == FUnitOrder::EType::Stop;
 			const bool bOwnCharge = State->bAutoCharging && State->AutoChargeSerial == Serial;

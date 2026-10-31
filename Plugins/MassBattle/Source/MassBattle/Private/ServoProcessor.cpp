@@ -478,10 +478,14 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 			// flag, not morale state -- the A12 discipline); pairs were
 			// released at the break, so the combat override above cannot
 			// mask it (an entity still paired while its unit routs keeps
-			// its pair state until the release lands).
+			// its pair state until the release lands). Written through
+			// directly: the local State mutations commit only via the
+			// override/transition sites below (measured -- the local-only
+			// stamp never landed).
 			if (Formation.bFleeMove != 0 && !bCombatOverride)
 			{
 				State = EBattleMovementState::Flee;
+				States[i].State = EBattleMovementState::Flee;
 			}
 
 			// Formation-flow v2 (owner ask 2026-10-28: "entity slot seeking

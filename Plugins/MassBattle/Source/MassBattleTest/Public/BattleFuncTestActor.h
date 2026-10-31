@@ -6,6 +6,8 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "GameplayTagContainer.h"
+#include "Abilities/GameplayAbilityTypes.h"
 
 class UUnitRegistrySubsystem;
 class UMassEntitySubsystem;
@@ -777,11 +779,15 @@ private:
 	UPROPERTY() TObjectPtr<AUnitActor> General;
 	int32 SavedCombat[5] = {};
 	int32 SavedRanged[4] = {};
-	int32 SavedMorale[3] = {};
+	float SavedMorale[12] = {}; // the MoraleSetCvars slots (the C-3 one-home list)
 	bool bCascadeIsolationRun = false;
 	bool bRallyGeneralRun = false;
+	int32 WaveringTick = -1;
+	int32 KillsDone = 0;
 	void SetCvars();
 	void RestoreCvars();
+	bool SpawnFixture(UWorld* World, bool bWithGeneral);
+	void BeginRunB(UWorld* World);
 };
 
 /** OfficerDeath (T4.4): an officer entity's scripted death -- the
@@ -813,10 +819,17 @@ private:
 	UPROPERTY() TObjectPtr<AUnitActor> GeneralUnit;
 	UPROPERTY() TObjectPtr<AUnitActor> TeamWatch;
 	int32 SavedCombat[5] = {};
-	int32 SavedMorale[3] = {};
+	float SavedMorale[12] = {}; // the MoraleSetCvars slots (the C-3 one-home list)
 	float MoraleMark = 0.f;
+	float SpikeMark = 0.f;
+	float ShockMark = 0.f;
+	int32 GeneralDiedEvents = 0;
+	FDelegateHandle GeneralDiedHandle;
+	FGameplayTagContainer GeneralDiedFilter;
 	void SetCvars();
 	void RestoreCvars();
+	bool SpawnFixture(UWorld* World);
+	void OnGeneralDiedEvent(FGameplayTag EventTag, const FGameplayEventData* Payload);
 };
 
 /** EffectEndToEnd (T4.5): the FatigueState catalog's loop -- GE ->
@@ -845,7 +858,10 @@ private:
 	int32 PhaseBudget = 0;
 	UPROPERTY() TObjectPtr<AUnitActor> Unit;
 	int32 SavedCombat[5] = {};
-	int32 SavedMorale[3] = {};
+	float SavedMorale[12] = {}; // the MoraleSetCvars slots (the C-3 one-home list)
+	int32 CrossingTick = -1;
+	int32 LatencyMin = 1;
+	int32 LatencyMax = 0;
 	void SetCvars();
 	void RestoreCvars();
 };
@@ -879,7 +895,10 @@ private:
 	UPROPERTY() TObjectPtr<AUnitActor> Threat;
 	int32 SavedCombat[5] = {};
 	int32 SavedRanged[4] = {};
-	int32 SavedMorale[3] = {};
+	float SavedMorale[12] = {}; // the MoraleSetCvars slots (the C-3 one-home list)
+	int32 ShotsMark = 0;
+	int32 HoldFireMark = 0;
+	UUnitRegistrySubsystem* Registry() const;
 	void SetCvars();
 	void RestoreCvars();
 };

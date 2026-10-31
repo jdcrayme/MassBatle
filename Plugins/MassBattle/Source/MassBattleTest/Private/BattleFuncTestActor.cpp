@@ -16,11 +16,13 @@
 #include "MassEntityView.h"
 #include "MassBattleModule.h"
 #include "BattleDeathPath.h"
+#include "BattleGameplayTags.h"
 #include "BattleExecCommands.h"
 #include "BattleMovementFragments.h"
 #include "BattlePathFrameLayout.h"
 #include "BattleTypes.h"
 #include "BattleDebugSubsystem.h"
+#include "BattleMorale.h"
 #include "BattleTestSettings.h"
 #include "BattleCostGridSubsystem.h"
 #include "BattleCostGrid.h"
@@ -4951,6 +4953,96 @@ namespace
 		}
 	}
 
+	// -- Phase 4a morale cvar one-home (the C-3 lesson; PR-13). The S7 list:
+	// Enable + DeterministicTick are SESSION-ON (the pin, A2); the rest are
+	// the scenario-tuned subset. Index order is the contract with the
+	// SavedMorale[12] slots in each scenario class. --
+	constexpr const TCHAR* MoraleCvars[] = {
+		TEXT("Battle.Morale.Enable"),             // 0 session-on (1)
+		TEXT("Battle.Morale.DeterministicTick"),  // 1 the pin (1)
+		TEXT("Battle.Morale.WaveringThreshold"),  // 2 scenario-tuned
+		TEXT("Battle.Morale.BreakThreshold"),     // 3
+		TEXT("Battle.Morale.RallyThreshold"),     // 4
+		TEXT("Battle.Morale.RallyBase"),          // 5
+		TEXT("Battle.Morale.SpikeHalfLifeS"),     // 6
+		TEXT("Battle.Morale.TickPeriod"),         // 7
+		TEXT("Battle.Morale.CascadeRadiusM"),     // 8 (the S7 isolation switch)
+		TEXT("Battle.Morale.MaxRallies"),         // 9
+		TEXT("Battle.Morale.GeneralAuraBase"),    // 10
+		TEXT("Battle.Morale.RallyDecay"),         // 11
+	};
+
+	/** Sets Values[0..NumValues-1] into the MoraleCvars list, saving the
+	 *  previous float values into Saved. Int cvars round-trip through the
+	 *  float accessors (IConsoleVariable::Set(float) casts). */
+	void MoraleSetCvars(float (&Saved)[12], const float* Values, int32 NumValues)
+	{
+		for (int32 i = 0; i < NumValues && i < 12; ++i)
+		{
+			if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(MoraleCvars[i]))
+			{
+				Saved[i] = C->GetFloat();
+				C->Set(Values[i], ECVF_SetByCode);
+			}
+		}
+	}
+
+	void MoraleRestoreCvars(float (&Saved)[12], int32 NumValues)
+	{
+		for (int32 i = 0; i < NumValues && i < 12; ++i)
+		{
+			if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(MoraleCvars[i]))
+			{
+				C->Set(Saved[i], ECVF_SetByCode);
+			}
+		}
+	}
+
+	/** A scripted kill through the death path (PR-13): FDeadTag deferred via
+	 *  the command buffer -- the observer/signal/receiver chain fires (the
+	 *  spike feed, the officer branch, the roster compaction). Safe in the
+	 *  test Tick (outside Mass processing). RosterIndex is the LIVE roster
+	 *  position. Returns false when the unit/index is gone. */
+	bool KillRosterEntity(UWorld* World, const FUnitHandle& Unit, int32 RosterIndex)
+	{
+		UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>();
+		UMassEntitySubsystem* Entities = World->GetSubsystem<UMassEntitySubsystem>();
+		const TArray<FMassEntityHandle>* Roster = Registry ? Registry->FindRoster(Unit) : nullptr;
+		if (!Entities || !Roster || !Roster->IsValidIndex(RosterIndex))
+		{
+			return false;
+		}
+		Entities->GetMutableEntityManager().Defer().AddTag<FDeadTag>((*Roster)[RosterIndex]);
+		Entities->GetMutableEntityManager().FlushCommands();
+		return true;
+	}
+
+	/** AUnitActor spawn with the morale authoring passthrough (officers +
+	 *  the general flag); SpawnEntities inside. Null on failure. */
+	AUnitActor* MoraleSpawnActor(UWorld* World, int32 EduRow, int32 Count, const FVector2D& PosM,
+		float YawDeg, uint8 TeamId, int32 OfficerCount = 0, bool bIsGeneral = false)
+	{
+		FActorSpawnParameters Params;
+		Params.ObjectFlags |= RF_Transient;
+		AUnitActor* Unit = World->SpawnActor<AUnitActor>(FVector(PosM.X * 100.f, PosM.Y * 100.f, 100.f),
+			FRotator(0.f, YawDeg, 0.f), Params);
+		if (Unit)
+		{
+			Unit->EduRowIndex = EduRow;
+			Unit->SoldierCount = Count;
+			Unit->TeamId = TeamId;
+			Unit->OfficerCount = OfficerCount;
+			Unit->bIsGeneral = bIsGeneral;
+			FBattleSpawnResult R;
+			FString E;
+			if (!Unit->SpawnEntities(R, E))
+			{
+				Unit = nullptr;
+			}
+		}
+		return Unit;
+	}
+
 	AUnitActor* ClashSpawnActor(UWorld* World, int32 EduRow, int32 Count, const FVector2D& PosM, float YawDeg)
 	{
 		FActorSpawnParameters Params;
@@ -6846,28 +6938,397 @@ void AS7RoutCascadeTest::CompleteTest(EFunctionalTestResult TestResult, const FS
 	Result = TestResult;
 	bIsRunning = false;
 	SetActorTickEnabled(false);
+	// Restore + teardown HERE, not only in Destroyed: the framework's actor
+	// destruction lands AFTER the next test starts, and the leaked
+	// Battle.Morale.Enable=1 broke S0_SyncLatency's dirty-flag window
+	// (measured). RestoreCvars is idempotent against Destroyed's call.
+	RestoreCvars();
+	for (AUnitActor* A : { Left, Center, Right, Enemy, General })
+	{
+		if (A) { A->Destroy(); }
+	}
+	Left = Center = Right = Enemy = General = nullptr;
 }
 
 void AS7RoutCascadeTest::StartTest()
 {
-	// SKELETON: the rout-cascade scenario (threshold order, flee evidence,
-	// cascade isolation, rally with/without the general, rear-arc chase)
-	// lands with the Phase 4a scenario task.
-	CompleteTest(EFunctionalTestResult::Error,
-		TEXT("skeleton: S7_RoutCascade lands with the phase-4a scenario task (T4.3)"));
+	Super::StartTest();
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("no world"));
+		return;
+	}
+	DestroyOtherUnitActors(World);
+	UBattleTestSettings::ApplyTestMode();
+	SetCvars();
+	if (UBattleDebugSubsystem* Debug = World->GetSubsystem<UBattleDebugSubsystem>())
+	{
+		Debug->ResetDiagnostics();
+	}
+	if (UBattleCostGridSubsystem* CostGrid = World->GetSubsystem<UBattleCostGridSubsystem>())
+	{
+		CostGrid->ResetToFlat();
+	}
+	if (!SpawnFixture(World, true))
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("spawn failed (run A)"));
+		return;
+	}
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S7_RoutCascade Phase=Spawn run=A general=1 CascadeRadius=60"));
+	Phase = EPhase::Attrition;
+	TicksInPhase = 0;
+	PhaseBudget = 7200;
+}
+
+bool AS7RoutCascadeTest::SpawnFixture(UWorld* World, bool bWithGeneral)
+{
+	if (UBattleCostGridSubsystem* CostGrid = World->GetSubsystem<UBattleCostGridSubsystem>())
+	{
+		CostGrid->ResetToFlat();
+	}
+	World->GetSubsystem<UUnitRegistrySubsystem>()->ResetBattleState();
+	// The fixture (dictionary-keyed rows via the EDU table order; the sergeants
+	// row is the disciplined one -- the placeholder threshold tuning above is
+	// computed against ITS base morale 6). Three adjacent friendly units + the
+	// enemy line at +14 m (no order: the chase half orders it later).
+	Center = MoraleSpawnActor(World, 1, 8, FVector2D(0.f, 0.f), 0.f, 0);
+	Left = MoraleSpawnActor(World, 1, 8, FVector2D(0.f, -7.f), 0.f, 0);
+	Right = MoraleSpawnActor(World, 1, 8, FVector2D(0.f, 7.f), 0.f, 0);
+	Enemy = MoraleSpawnActor(World, 1, 8, FVector2D(30.f, 0.f), 180.f, 1);
+	General = nullptr;
+	if (bWithGeneral)
+	{
+		// ~28 m behind the line: inside the 60 m aura radius of all three.
+		General = MoraleSpawnActor(World, 1, 8, FVector2D(-28.f, 0.f), 0.f, 0, 1, true);
+	}
+	return Center && Left && Right && Enemy && (!bWithGeneral || General);
 }
 
 void AS7RoutCascadeTest::Tick(float DeltaSeconds)
 {
-	// Nothing to step while the skeleton stands.
+	Super::Tick(DeltaSeconds);
+	if (!IsRunning() || Phase == EPhase::Done)
+	{
+		return;
+	}
+	UWorld* World = GetWorld();
+	UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>();
+	if (!Registry)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("registry missing"));
+		return;
+	}
+	if (++TicksInPhase > PhaseBudget)
+	{
+		CompleteTest(EFunctionalTestResult::Error,
+			FString::Printf(TEXT("phase %d stalled (%d ticks)"), static_cast<int32>(Phase), TicksInPhase));
+		return;
+	}
+	const FUnitHandle CenterH = Center->GetUnitHandle();
+	const FUnitHandle RightH = Right->GetUnitHandle();
+	const FUnitRuntimeState* CenterState = Registry->FindUnitState(CenterH);
+	const FUnitRuntimeState* RightState = Registry->FindUnitState(RightH);
+	if (!CenterState || !RightState)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("unit state lost"));
+		return;
+	}
+
+	switch (Phase)
+	{
+	case EPhase::Attrition:
+	{
+		// Scripted attrition onto the CENTER unit: one death per 12 ticks
+		// (the morale tick period is 0.25 s = 15 ticks; the deaths land
+		// between ticks so each spike increment is sampled cleanly).
+		if (TicksInPhase % 12 == 0 && KillsDone < 6)
+		{
+			const TArray<FMassEntityHandle>* Roster = Registry->FindRoster(CenterH);
+			if (Roster && Roster->Num() > 0)
+			{
+				KillRosterEntity(World, CenterH, 0); // soldiers only (front of the live roster)
+				++KillsDone;
+			}
+		}
+		if (CenterState->RoutState == EBattleRoutState::Wavering && WaveringTick < 0)
+		{
+			WaveringTick = TicksInPhase;
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT S7_RoutCascade Phase=Attrition wavering at tick %d (kills=%d)"),
+				WaveringTick, KillsDone);
+		}
+		if (CenterState->RoutState == EBattleRoutState::Routing)
+		{
+			if (WaveringTick < 0)
+			{
+				CompleteTest(EFunctionalTestResult::Error, TEXT("routing without an observed wavering first"));
+				return;
+			}
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT S7_RoutCascade Phase=Break routing at tick %d (kills=%d) -- order wavering(%d) < break(%d) OK"),
+				TicksInPhase, KillsDone, WaveringTick, TicksInPhase);
+			if (bCascadeIsolationRun)
+			{
+				// Run B's two diffs: the neighbor NEVER wavered (the cascade
+				// term is off at radius 0) and the center never rallies (no
+				// general, no aura). A bounded watch window from here.
+				Phase = EPhase::Cascade;
+				TicksInPhase = 0;
+				PhaseBudget = 1200;
+				return;
+			}
+			Phase = EPhase::Break;
+			TicksInPhase = 0;
+			PhaseBudget = 3600;
+		}
+		break;
+	}
+	case EPhase::Break:
+	{
+		// The flee evidence: the auto-flagged Move AWAY from the threat
+		// (+30 m enemy -> the flee anchor is at -X), the formation's
+		// bFleeMove flag, and the servo's Flee movement state on the roster.
+		const FUnitOrder* Order = Registry->FindOrder(CenterH);
+		if (!Order || Order->Type != FUnitOrder::EType::Move)
+		{
+			CompleteTest(EFunctionalTestResult::Error, TEXT("no flee Move after the break"));
+			return;
+		}
+		if (Order->AnchorPos.X >= CenterState->LastThreatAnchorCm.X)
+		{
+			CompleteTest(EFunctionalTestResult::Error,
+				FString::Printf(TEXT("flee anchor not away from the threat: anchor=%.1fcm threat=%.1fcm"),
+					Order->AnchorPos.X, CenterState->LastThreatAnchorCm.X));
+			return;
+		}
+		if (!CenterState->bRoutFleeing)
+		{
+			CompleteTest(EFunctionalTestResult::Error, TEXT("bRoutFleeing not set"));
+			return;
+		}
+		// The Flee movement state (the servo stamps it from the flag).
+		const TArray<FMassEntityHandle>* Roster = Registry->FindRoster(CenterH);
+		bool bFleeStamped = false;
+		if (Roster && Roster->Num() > 0)
+		{
+			FMassEntityManager& EM = World->GetSubsystem<UMassEntitySubsystem>()->GetMutableEntityManager();
+			if (const FMovementStateFragment* MoveState = EM.GetFragmentDataPtr<FMovementStateFragment>((*Roster)[0]))
+			{
+				bFleeStamped = MoveState->State == EBattleMovementState::Flee;
+			}
+		}
+		if (!bFleeStamped)
+		{
+			if (TicksInPhase < 90) break; // the servo's flag read lands within a few ticks
+			CompleteTest(EFunctionalTestResult::Error, TEXT("Flee movement state not stamped"));
+			return;
+		}
+		UE_LOG(LogMassBattle, Display,
+			TEXT("EXEC_RESULT S7_RoutCascade Phase=Break flee OK anchor=(%.1f,%.1f)m FleeState=1 Fleeing=1"),
+			Order->AnchorPos.X * 0.01f, Order->AnchorPos.Y * 0.01f);
+		Phase = EPhase::Cascade;
+		TicksInPhase = 0;
+		PhaseBudget = 1800;
+		break;
+	}
+	case EPhase::Cascade:
+	{
+		if (bCascadeIsolationRun)
+		{
+			// Run B: the isolation watch. The neighbor stays Steady the whole
+			// window (CascadeRadiusM 0) and the center never rallies (no
+			// general -> EvaluateRally's aura requirement fails).
+			if (RightState->RoutState != EBattleRoutState::Steady)
+			{
+				CompleteTest(EFunctionalTestResult::Error,
+					FString::Printf(TEXT("isolation failed: neighbor wavered with CascadeRadiusM=0 (state=%d)"),
+						static_cast<int32>(RightState->RoutState)));
+				return;
+			}
+			if (CenterState->RoutState != EBattleRoutState::Routing)
+			{
+				CompleteTest(EFunctionalTestResult::Error,
+					FString::Printf(TEXT("isolation: center left Routing without a general (state=%d)"),
+						static_cast<int32>(CenterState->RoutState)));
+				return;
+			}
+			if (TicksInPhase >= 900)
+			{
+				UE_LOG(LogMassBattle, Display,
+					TEXT("EXEC_RESULT S7_RoutCascade Phase=Isolation OK neighbor=Steady center=Routing (no rally) after 900 ticks"));
+				CompleteTest(EFunctionalTestResult::Succeeded, TEXT("runs A+B complete (break, cascade, rally, chase, isolation)"));
+				return;
+			}
+			break;
+		}
+		// The RIGHT neighbor wavers with ZERO casualties of its own -- the
+		// cascade term (one routing friend inside 60 m). Run B (the
+		// isolation sub-run) diffs it with CascadeRadiusM = 0.
+		if (RightState->RoutState == EBattleRoutState::Wavering
+			|| RightState->RoutState == EBattleRoutState::Routing)
+		{
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT S7_RoutCascade Phase=Cascade neighbor=%s at tick %d (its kills=0, cascade term)"),
+				RightState->RoutState == EBattleRoutState::Wavering ? TEXT("Wavering") : TEXT("Routing"),
+				TicksInPhase);
+			Phase = EPhase::Rally;
+			TicksInPhase = 0;
+			PhaseBudget = 3600;
+		}
+		else if (TicksInPhase >= 600)
+		{
+			CompleteTest(EFunctionalTestResult::Error,
+				FString::Printf(TEXT("neighbor never wavered (state=%d morale=%.2f)"),
+					static_cast<int32>(RightState->RoutState), RightState->LastMoraleValue));
+			return;
+		}
+		break;
+	}
+	case EPhase::Rally:
+	{
+		// The general's aura is up (spawn distance 28 m); the center's spike
+		// decays (half-life 2 s) and morale recovers past RallyThreshold=1:
+		// the roll fires on the tick cadence and succeeds inside the window.
+		if (CenterState->RoutState == EBattleRoutState::Wavering)
+		{
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT S7_RoutCascade Phase=Rally rallied at tick %d (general aura, RoutCount=%d)"),
+				TicksInPhase, CenterState->RoutCount);
+			Phase = EPhase::Chase;
+			TicksInPhase = 0;
+			PhaseBudget = 5400;
+		}
+		else if (TicksInPhase >= 2400)
+		{
+			CompleteTest(EFunctionalTestResult::Error,
+				FString::Printf(TEXT("no rally under the general within the window (state=%d morale=%.2f)"),
+					static_cast<int32>(CenterState->RoutState), CenterState->LastMoraleValue));
+			return;
+		}
+		break;
+	}
+	case EPhase::Chase:
+	{
+		if (TicksInPhase == 1)
+		{
+			// The pursuer: the enemy line attacks the (recovered) center --
+			// the router's re-pairing gives the rear-arc geometry (the
+			// center fled toward -X; the pursuer comes from +X = its rear).
+			// The 70 m approach at walk speed eats ~50 s: the budget is
+			// sized for the march + the pairing. The neighbors CLEAR THE
+			// CORRIDOR first: the enemy's path passes their spawn line, and
+			// contact auto-pairing ambushed it mid-march (4 deaths -> the
+			// enemy routed sideways -- measured; the rear-arc never formed).
+			Registry->IssueAttackUnitOrder(Enemy->GetUnitHandle(), CenterH);
+			if (Left)
+			{
+				Registry->IssueMoveOrder(Left->GetUnitHandle(), FVector2D(0.f, -8000.f), 0.f);
+			}
+			if (Right)
+			{
+				Registry->IssueMoveOrder(Right->GetUnitHandle(), FVector2D(0.f, 8000.f), 0.f);
+			}
+		}
+		// Sample the ENEMY's pairs: the pair fragment (Target + ContactAngle)
+		// lives on the ATTACKER (the assign pass stamps seekers); the angle
+		// is the attacker's approach around ITS target -- the fleeing-facing
+		// center. Rear band: sectors 3-5 of 8 -> bytes [96, 192); 0 = dead
+		// ahead, clockwise from the defender's facing.
+		const TArray<FMassEntityHandle>* Roster = Registry->FindRoster(Enemy->GetUnitHandle());
+		if (Roster)
+		{
+			FMassEntityManager& EM = World->GetSubsystem<UMassEntitySubsystem>()->GetMutableEntityManager();
+			for (const FMassEntityHandle& E : *Roster)
+			{
+				if (const FCombatPairFragment* Pair = EM.GetFragmentDataPtr<FCombatPairFragment>(E))
+				{
+					if (Pair->Target.IsValid() && Pair->ContactAngle >= 96 && Pair->ContactAngle < 192)
+					{
+						UE_LOG(LogMassBattle, Display,
+							TEXT("EXEC_RESULT S7_RoutCascade Phase=Chase rear-arc OK angle=%d (band [96,192)) at tick %d"),
+							Pair->ContactAngle, TicksInPhase);
+						BeginRunB(World);
+						return;
+					}
+				}
+			}
+		}
+		if (TicksInPhase >= 5400)
+		{
+			CompleteTest(EFunctionalTestResult::Error, TEXT("no rear-arc pair formed in the chase window"));
+			return;
+		}
+		break;
+	}
+	case EPhase::Done:
+	default:
+		break;
+	}
+}
+
+void AS7RoutCascadeTest::BeginRunB(UWorld* World)
+{
+	// The isolation sub-run (run B): no general + CascadeRadiusM 0. The
+	// assertions: the neighbor NEVER wavers (the cascade term is off) and
+	// the center never rallies (no aura) -- the two diffs against run A.
+	// The radius switch is the run's WHOLE point -- set it here (the original
+	// value rides RestoreCvars's saved slot).
+	bCascadeIsolationRun = true;
+	if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Morale.CascadeRadiusM")))
+	{
+		C->Set(0.f, ECVF_SetByCode);
+	}
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S7_RoutCascade Phase=Isolation run=B general=0 CascadeRadius=0"));
+	if (!SpawnFixture(World, false))
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("spawn failed (run B)"));
+		return;
+	}
+	Phase = EPhase::Attrition;
+	TicksInPhase = 0;
+	PhaseBudget = 7200;
+	WaveringTick = -1;
+	KillsDone = 0;
 }
 
 void AS7RoutCascadeTest::SetCvars()
 {
+	static const TCHAR* CombatNames[5] = {
+		TEXT("Battle.Combat.SpatialHash"), TEXT("Battle.Combat.Clusters"),
+		TEXT("Battle.Combat.Tally"), TEXT("Battle.Combat.Assign"), TEXT("Battle.Combat.Resolve") };
+	for (int32 i = 0; i < 5; ++i)
+	{
+		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(CombatNames[i]))
+		{
+			SavedCombat[i] = C->GetInt();
+			C->Set(1, ECVF_SetByCode);
+		}
+	}
+	// The S7 tuning (computed against the fixture's Sergeant_Spearmen row:
+	// base morale 6, Disciplined -> break offset -2; see the PR-13 record):
+	// threshold 6.0 keeps spawn states Steady; the aura base 0.5 keeps the
+	// neighbor's aura lift under the cascade delta; the rally threshold 2.5
+	// is above the post-break morale (~1.1 while the spike is fresh) so the
+	// flee window survives, and reachable after the spike decays (~2.9); the
+	// pin is ON (A2).
+	const float Values[] = { 1.f, 1.f, 6.f, 1.f, 2.5f, 0.9f, 2.f, 0.25f, 60.f, 2.f, 0.5f, 0.5f };
+	MoraleSetCvars(SavedMorale, Values, 12);
 }
 
 void AS7RoutCascadeTest::RestoreCvars()
 {
+	static const TCHAR* CombatNames[5] = {
+		TEXT("Battle.Combat.SpatialHash"), TEXT("Battle.Combat.Clusters"),
+		TEXT("Battle.Combat.Tally"), TEXT("Battle.Combat.Assign"), TEXT("Battle.Combat.Resolve") };
+	for (int32 i = 0; i < 5; ++i)
+	{
+		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(CombatNames[i]))
+		{
+			C->Set(SavedCombat[i], ECVF_SetByCode);
+		}
+	}
+	MoraleRestoreCvars(SavedMorale, 12);
 }
 
 void AS7RoutCascadeTest::Destroyed()
@@ -6880,6 +7341,7 @@ AOfficerDeathTest::AOfficerDeathTest()
 {
 	TimeLimit = 180.f;
 	TimesUpResult = EFunctionalTestResult::Error;
+	GeneralDiedFilter.AddTag(TAG_Battle_Team_GeneralDied.GetTag());
 }
 
 void AOfficerDeathTest::BeginTest()
@@ -6897,32 +7359,276 @@ void AOfficerDeathTest::CompleteTest(EFunctionalTestResult TestResult, const FSt
 	Result = TestResult;
 	bIsRunning = false;
 	SetActorTickEnabled(false);
+	// See the S7 CompleteTest note: the restore cannot wait for Destroyed.
+	RestoreCvars();
+	for (AUnitActor* A : { Unit, Enemy, GeneralUnit, TeamWatch })
+	{
+		if (A) { A->Destroy(); }
+	}
+	Unit = Enemy = GeneralUnit = TeamWatch = nullptr;
 }
 
 void AOfficerDeathTest::StartTest()
 {
-	// SKELETON: the officer-death scenario (event counts, the amplified spike
-	// vs a baseline kill, the general variant's team shock) lands with the
-	// Phase 4a scenario task.
-	CompleteTest(EFunctionalTestResult::Error,
-		TEXT("skeleton: OfficerDeath lands with the phase-4a scenario task (T4.4)"));
+	Super::StartTest();
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("no world"));
+		return;
+	}
+	DestroyOtherUnitActors(World);
+	UBattleTestSettings::ApplyTestMode();
+	SetCvars();
+	if (UBattleDebugSubsystem* Debug = World->GetSubsystem<UBattleDebugSubsystem>())
+	{
+		Debug->ResetDiagnostics();
+	}
+	// The general-death watcher binds its own ASC event counter per spawn
+	// (bound in SpawnFixture -- the first bind ran before the watcher
+	// existed and the count stayed 0, measured).
+	if (!SpawnFixture(World))
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("spawn failed (baseline)"));
+		return;
+	}
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT OfficerDeath Phase=Spawn unit=8+2officers general=1 watcher=1"));
+	Phase = EPhase::Baseline;
+	TicksInPhase = 0;
+	PhaseBudget = 1800;
+}
+
+bool AOfficerDeathTest::SpawnFixture(UWorld* World)
+{
+	if (UBattleCostGridSubsystem* CostGrid = World->GetSubsystem<UBattleCostGridSubsystem>())
+	{
+		CostGrid->ResetToFlat();
+	}
+	World->GetSubsystem<UUnitRegistrySubsystem>()->ResetBattleState();
+	// The two-officer subject + the far enemy (no contact: the kills are
+	// scripted) + the general + the same-team watcher (the team-event read).
+	Unit = MoraleSpawnActor(World, 1, 8, FVector2D(0.f, 0.f), 0.f, 0, 2, false);
+	Enemy = MoraleSpawnActor(World, 1, 8, FVector2D(60.f, 0.f), 180.f, 1);
+	GeneralUnit = MoraleSpawnActor(World, 1, 8, FVector2D(0.f, 30.f), 0.f, 0, 1, true);
+	TeamWatch = MoraleSpawnActor(World, 1, 8, FVector2D(0.f, -60.f), 0.f, 0);
+	// The general-death watcher binds its own ASC event counter (the
+	// GetDeathEventCount pattern; the tag is native, the H1 rule) -- bound
+	// HERE, after the watcher spawns (per spawn; the old binding dies with
+	// the old actor).
+	if (TeamWatch)
+	{
+		GeneralDiedHandle = TeamWatch->GetAbilitySystemComponent()->AddGameplayEventTagContainerDelegate(
+			GeneralDiedFilter,
+			FGameplayEventTagMulticastDelegate::FDelegate::CreateUObject(this, &AOfficerDeathTest::OnGeneralDiedEvent));
+	}
+	return Unit && Enemy && GeneralUnit && TeamWatch;
+}
+
+void AOfficerDeathTest::OnGeneralDiedEvent(FGameplayTag EventTag, const FGameplayEventData* Payload)
+{
+	++GeneralDiedEvents;
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT OfficerDeath GeneralDiedEvent Count=%d"), GeneralDiedEvents);
 }
 
 void AOfficerDeathTest::Tick(float DeltaSeconds)
 {
-	// Nothing to step while the skeleton stands.
+	Super::Tick(DeltaSeconds);
+	if (!IsRunning() || Phase == EPhase::Done)
+	{
+		return;
+	}
+	UWorld* World = GetWorld();
+	UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>();
+	UBattleDebugSubsystem* Debug = World->GetSubsystem<UBattleDebugSubsystem>();
+	if (!Registry || !Debug)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("subsystems missing"));
+		return;
+	}
+	if (++TicksInPhase > PhaseBudget)
+	{
+		CompleteTest(EFunctionalTestResult::Error,
+			FString::Printf(TEXT("phase %d stalled (%d ticks)"), static_cast<int32>(Phase), TicksInPhase));
+		return;
+	}
+
+	// The scripted kill fires 12 ticks into each kill phase; the sample is
+	// read 30 ticks later (two morale ticks at the 0.25 s period) -- the
+	// SAME alignment in every sub-run, so the decay cancels in the ratio.
+	switch (Phase)
+	{
+	case EPhase::Baseline:
+	{
+		if (TicksInPhase == 12)
+		{
+			KillRosterEntity(World, Unit->GetUnitHandle(), 0); // a soldier
+		}
+		if (TicksInPhase == 42)
+		{
+			const FUnitRuntimeState* State = Registry->FindUnitState(Unit->GetUnitHandle());
+			SpikeMark = State ? State->FreshCasualtySpike : -1.f;
+			if (Debug->GetOfficerDeaths() != 0)
+			{
+				CompleteTest(EFunctionalTestResult::Error, TEXT("baseline kill raised an officer event"));
+				return;
+			}
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT OfficerDeath Phase=Baseline soldier kill spike=%.3f officerDeaths=0"),
+				SpikeMark);
+			if (!SpawnFixture(World))
+			{
+				CompleteTest(EFunctionalTestResult::Error, TEXT("spawn failed (officer run)"));
+				return;
+			}
+			Phase = EPhase::Officer;
+			TicksInPhase = 0;
+		}
+		break;
+	}
+	case EPhase::Officer:
+	{
+		if (TicksInPhase == 12)
+		{
+			// Officer slot 1 (the LAST officer -- officer slot 0 of the
+			// general run below is the general himself).
+			const TArray<FMassEntityHandle>* Roster = Registry->FindRoster(Unit->GetUnitHandle());
+			KillRosterEntity(World, Unit->GetUnitHandle(), Roster ? Roster->Num() - 1 : INDEX_NONE);
+		}
+		if (TicksInPhase == 42)
+		{
+			const FUnitRuntimeState* State = Registry->FindUnitState(Unit->GetUnitHandle());
+			const float OfficerSpike = State ? State->FreshCasualtySpike : -1.f;
+			const float Ratio = SpikeMark > 0.f ? OfficerSpike / SpikeMark : 0.f;
+			if (Debug->GetOfficerDeaths() < 1)
+			{
+				CompleteTest(EFunctionalTestResult::Error, TEXT("no officer death recorded"));
+				return;
+			}
+			if (Ratio < 2.7f || Ratio > 3.3f)
+			{
+				CompleteTest(EFunctionalTestResult::Error,
+					FString::Printf(TEXT("spike amplification off: officer=%.3f baseline=%.3f ratio=%.2f"),
+						OfficerSpike, SpikeMark, Ratio));
+				return;
+			}
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT OfficerDeath Phase=Officer officer kill spike=%.3f baseline=%.3f ratio=%.2f (x3 golden) events=%d"),
+				OfficerSpike, SpikeMark, Ratio, Debug->GetOfficerDeaths());
+			if (!SpawnFixture(World))
+			{
+				CompleteTest(EFunctionalTestResult::Error, TEXT("spawn failed (general run)"));
+				return;
+			}
+			Phase = EPhase::General;
+			TicksInPhase = 0;
+		}
+		break;
+	}
+	case EPhase::General:
+	{
+		if (TicksInPhase == 12)
+		{
+			// The general entity: officer slot 0 of the bIsGeneral unit.
+			const FUnitRuntimeState* GenState = Registry->FindUnitState(GeneralUnit->GetUnitHandle());
+			KillRosterEntity(World, GeneralUnit->GetUnitHandle(),
+				GenState ? GenState->OfficerRosterBase : INDEX_NONE);
+		}
+		if (TicksInPhase == 42)
+		{
+			const float Shock = Registry->GetTeamGeneralDeathShock(0);
+			if (GeneralDiedEvents < 1)
+			{
+				CompleteTest(EFunctionalTestResult::Error,
+					FString::Printf(TEXT("no Battle.Team.GeneralDied event on the watcher (count=%d)"), GeneralDiedEvents));
+				return;
+			}
+			if (Shock <= 0.f)
+			{
+				CompleteTest(EFunctionalTestResult::Error, TEXT("team shock not stamped"));
+				return;
+			}
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT OfficerDeath Phase=General team events=%d shock=%.3f (stamped)"),
+				GeneralDiedEvents, Shock);
+			Phase = EPhase::Decay;
+			TicksInPhase = 0;
+			PhaseBudget = 1800;
+		}
+		break;
+	}
+	case EPhase::Decay:
+	{
+		// The shock decays monotonically: sample at +30 ticks, then +90.
+		if (TicksInPhase == 30)
+		{
+			ShockMark = Registry->GetTeamGeneralDeathShock(0);
+		}
+		if (TicksInPhase == 90)
+		{
+			const float ShockLater = Registry->GetTeamGeneralDeathShock(0);
+			if (ShockLater >= ShockMark || ShockLater <= 0.f)
+			{
+				CompleteTest(EFunctionalTestResult::Error,
+					FString::Printf(TEXT("shock not decaying: %.3f -> %.3f"), ShockMark, ShockLater));
+				return;
+			}
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT OfficerDeath Phase=Decay shock %.3f -> %.3f monotone OK"),
+				ShockMark, ShockLater);
+			CompleteTest(EFunctionalTestResult::Succeeded, TEXT("baseline/officer/general/decay complete"));
+		}
+		break;
+	}
+	case EPhase::Done:
+	default:
+		break;
+	}
 }
 
 void AOfficerDeathTest::SetCvars()
 {
+	static const TCHAR* CombatNames[5] = {
+		TEXT("Battle.Combat.SpatialHash"), TEXT("Battle.Combat.Clusters"),
+		TEXT("Battle.Combat.Tally"), TEXT("Battle.Combat.Assign"), TEXT("Battle.Combat.Resolve") };
+	for (int32 i = 0; i < 5; ++i)
+	{
+		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(CombatNames[i]))
+		{
+			SavedCombat[i] = C->GetInt();
+			C->Set(1, ECVF_SetByCode);
+		}
+	}
+	// The OfficerDeath tuning: the spike ratio is read at a FIXED tick offset
+	// (the kill at +12, the sample at +42 -- two morale ticks of decay, the
+	// same alignment every sub-run so the ratio is exactly the multiplier).
+	// No combat runs (the enemy stands off), so the thresholds are inert.
+	const float Values[] = { 1.f, 1.f, 6.f, 1.f, 1.f, 0.9f, 2.f, 0.25f, 60.f, 2.f, 0.5f, 0.5f };
+	MoraleSetCvars(SavedMorale, Values, 12);
 }
 
 void AOfficerDeathTest::RestoreCvars()
 {
+	static const TCHAR* CombatNames[5] = {
+		TEXT("Battle.Combat.SpatialHash"), TEXT("Battle.Combat.Clusters"),
+		TEXT("Battle.Combat.Tally"), TEXT("Battle.Combat.Assign"), TEXT("Battle.Combat.Resolve") };
+	for (int32 i = 0; i < 5; ++i)
+	{
+		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(CombatNames[i]))
+		{
+			C->Set(SavedCombat[i], ECVF_SetByCode);
+		}
+	}
+	MoraleRestoreCvars(SavedMorale, 12);
 }
 
 void AOfficerDeathTest::Destroyed()
 {
+	if (TeamWatch && GeneralDiedHandle.IsValid())
+	{
+		TeamWatch->GetAbilitySystemComponent()->RemoveGameplayEventTagContainerDelegate(
+			GeneralDiedFilter, GeneralDiedHandle);
+		GeneralDiedHandle.Reset();
+	}
 	RestoreCvars();
 	Super::Destroyed();
 }
@@ -6948,28 +7654,190 @@ void AEffectEndToEndTest::CompleteTest(EFunctionalTestResult TestResult, const F
 	Result = TestResult;
 	bIsRunning = false;
 	SetActorTickEnabled(false);
+	// See the S7 CompleteTest note: the restore cannot wait for Destroyed.
+	RestoreCvars();
+	if (Unit) { Unit->Destroy(); }
+	Unit = nullptr;
 }
 
 void AEffectEndToEndTest::StartTest()
 {
-	// SKELETON: the effect loop scenario (GE -> attribute -> snapshot ->
-	// UnitSync -> fragment within one frame; the multiplier goldens; the
-	// stacking order) lands with the Phase 4a scenario task.
-	CompleteTest(EFunctionalTestResult::Error,
-		TEXT("skeleton: EffectEndToEnd lands with the phase-4a scenario task (T4.5)"));
+	Super::StartTest();
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("no world"));
+		return;
+	}
+	DestroyOtherUnitActors(World);
+	UBattleTestSettings::ApplyTestMode();
+	SetCvars();
+	if (UBattleDebugSubsystem* Debug = World->GetSubsystem<UBattleDebugSubsystem>())
+	{
+		Debug->ResetDiagnostics();
+	}
+	if (UBattleCostGridSubsystem* CostGrid = World->GetSubsystem<UBattleCostGridSubsystem>())
+	{
+		CostGrid->ResetToFlat();
+	}
+	Unit = MoraleSpawnActor(World, 1, 8, FVector2D(0.f, 0.f), 0.f, 0);
+	if (!Unit)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("spawn failed"));
+		return;
+	}
+	// The drive: a far Move order keeps bRunning true (the morale pass's
+	// exertion input) -- the Tired band (integral 45) lands at
+	// 45 / (0.6 x 0.25) = 300 morale ticks = 4500 world ticks = 75 s.
+	World->GetSubsystem<UUnitRegistrySubsystem>()->IssueMoveOrder(
+		Unit->GetUnitHandle(), FVector2D(-100000.f, 0.f), 180.f);
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT EffectEndToEnd Phase=Drive unit=8 running (Tired at ~4500 ticks)"));
+	Phase = EPhase::Drive;
+	TicksInPhase = 0;
+	PhaseBudget = 7200;
 }
 
 void AEffectEndToEndTest::Tick(float DeltaSeconds)
 {
-	// Nothing to step while the skeleton stands.
+	Super::Tick(DeltaSeconds);
+	if (!IsRunning() || Phase == EPhase::Done)
+	{
+		return;
+	}
+	UWorld* World = GetWorld();
+	UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>();
+	if (!Registry)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("registry missing"));
+		return;
+	}
+	if (++TicksInPhase > PhaseBudget)
+	{
+		CompleteTest(EFunctionalTestResult::Error,
+			FString::Printf(TEXT("phase %d stalled (%d ticks)"), static_cast<int32>(Phase), TicksInPhase));
+		return;
+	}
+	const FUnitRuntimeState* State = Registry->FindUnitState(Unit->GetUnitHandle());
+	if (!State)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("unit state lost"));
+		return;
+	}
+
+	switch (Phase)
+	{
+	case EPhase::Drive:
+	{
+		// Poll for the Tired band's ATTRIBUTE WRITE landing in the registry
+		// snapshot (the catalog's -0.2 MeleeAttackMod), then assert the
+		// FRAGMENT follows within ONE frame (the S0_SyncLatency shape: the
+		// pass applies the GE at the morale tick, the exec calc writes
+		// synchronously, the delegate -> snapshot fires in the same call
+		// stack, UnitSync derives the fragment on its next pass).
+		const FBattleAttributeSnapshot* Snap = Registry->FindCachedAttributes(Unit->GetUnitHandle());
+		if (Snap && Snap->MeleeAttackMod <= -0.19f)
+		{
+			if (CrossingTick < 0)
+			{
+				CrossingTick = TicksInPhase;
+			}
+			// The multiplier goldens (T4.2): Tired = attack 0.8 / defense
+			// 0.85 / speed 0.9. The *Mod attrs carry table-1.
+			const TArray<FMassEntityHandle>* Roster = Registry->FindRoster(Unit->GetUnitHandle());
+			const FUnitStatsSharedFragment* Stats = Roster && Roster->Num() > 0
+				? World->GetSubsystem<UMassEntitySubsystem>()->GetMutableEntityManager()
+					.GetSharedFragmentDataPtr<FUnitStatsSharedFragment>((*Roster)[0])
+				: nullptr;
+			const float Attack = Stats ? Stats->MeleeAttackMult : -1.f;
+			const float Defense = Stats ? Stats->MeleeDefenseMult : -1.f;
+			const float Speed = Stats ? Stats->SpeedMult : -1.f;
+			const bool bGoldens = FMath::IsNearlyEqual(Attack, 0.8f, 1e-3f)
+				&& FMath::IsNearlyEqual(Defense, 0.85f, 1e-3f)
+				&& FMath::IsNearlyEqual(Speed, 0.9f, 1e-3f);
+			if (bGoldens)
+			{
+				const int32 Latency = TicksInPhase - CrossingTick;
+				LatencyMin = FMath::Min(LatencyMin, Latency);
+				LatencyMax = FMath::Max(LatencyMax, Latency);
+				if (Latency > 1)
+				{
+					CompleteTest(EFunctionalTestResult::Error,
+						FString::Printf(TEXT("fragment latency %d frames > 1 (attack=%.3f defense=%.3f speed=%.3f)"),
+							Latency, Attack, Defense, Speed));
+					return;
+				}
+				UE_LOG(LogMassBattle, Display,
+					TEXT("EXEC_RESULT EffectEndToEnd Phase=Drive band=Tired goldens OK attack=%.3f defense=%.3f speed=%.3f latency=%d frame(s)"),
+					Attack, Defense, Speed, Latency);
+				Phase = EPhase::Overlap;
+				TicksInPhase = 0;
+				PhaseBudget = 600;
+			}
+			else if (TicksInPhase - CrossingTick > 4)
+			{
+				CompleteTest(EFunctionalTestResult::Error,
+					FString::Printf(TEXT("goldens not visible: attack=%.3f defense=%.3f speed=%.3f"),
+						Attack, Defense, Speed));
+				return;
+			}
+		}
+		break;
+	}
+	case EPhase::Overlap:
+	{
+		if (TicksInPhase == 1)
+		{
+			// The stacking assertion (MC4): a second overlapping write on the
+			// same *Mod attribute aggregates with the catalog's mod in GAS's
+			// fixed additive order. The scripted second write: +0.05 on the
+			// MeleeAttackMod BASE; the Tired GE holds -0.2 as an aggregator
+			// mod -> final Mod = 0.05 - 0.2 = -0.15 -> fragment 0.85.
+			UAbilitySystemComponent* ASC = Unit->GetAbilitySystemComponent();
+			const FGameplayAttribute AttackAttr = UUnitAttributeSet::GetMeleeAttackModAttribute();
+			// Offset the BASE (0), never the mod-inclusive current -- the
+			// first probe used GetNumericAttribute (+0.05 on -0.2) and
+			// double-counted the GE's aggregator mod (measured 0.65).
+			ASC->SetNumericAttributeBase(AttackAttr, ASC->GetNumericAttributeBase(AttackAttr) + 0.05f);
+		}
+		if (TicksInPhase >= 30)
+		{
+			const TArray<FMassEntityHandle>* Roster = Registry->FindRoster(Unit->GetUnitHandle());
+			const FUnitStatsSharedFragment* Stats = Roster && Roster->Num() > 0
+				? World->GetSubsystem<UMassEntitySubsystem>()->GetMutableEntityManager()
+					.GetSharedFragmentDataPtr<FUnitStatsSharedFragment>((*Roster)[0])
+				: nullptr;
+			const float Attack = Stats ? Stats->MeleeAttackMult : -1.f;
+			if (!FMath::IsNearlyEqual(Attack, 0.85f, 1e-3f))
+			{
+				CompleteTest(EFunctionalTestResult::Error,
+					FString::Printf(TEXT("stacking aggregate wrong: attack=%.3f (expected 0.85 = 1 + (0.05 - 0.2))"), Attack));
+				return;
+			}
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT EffectEndToEnd Phase=Overlap stacking OK attack=%.3f (= 1 + (0.05 - 0.2)); latency frames min=%d max=%d"),
+				Attack, LatencyMin, LatencyMax);
+			CompleteTest(EFunctionalTestResult::Succeeded, TEXT("loop + goldens + stacking complete"));
+		}
+		break;
+	}
+	case EPhase::Done:
+	case EPhase::Assert:
+	default:
+		break;
+	}
 }
 
 void AEffectEndToEndTest::SetCvars()
 {
+	// The EffectEndToEnd tuning: the pin ON; the thresholds inert (no combat);
+	// the fast tick gives the drive phase finer crossing resolution.
+	const float Values[] = { 1.f, 1.f, 6.f, 1.f, 1.f, 0.9f, 2.f, 0.25f, 60.f, 2.f, 0.5f, 0.5f };
+	MoraleSetCvars(SavedMorale, Values, 12);
 }
 
 void AEffectEndToEndTest::RestoreCvars()
 {
+	MoraleRestoreCvars(SavedMorale, 12);
 }
 
 void AEffectEndToEndTest::Destroyed()
@@ -6999,28 +7867,273 @@ void AToggleBehaviorsTest::CompleteTest(EFunctionalTestResult TestResult, const 
 	Result = TestResult;
 	bIsRunning = false;
 	SetActorTickEnabled(false);
+	// See the S7 CompleteTest note: the restore cannot wait for Destroyed.
+	RestoreCvars();
+	for (AUnitActor* A : { Impetuous, Enemy, Archers, Threat })
+	{
+		if (A) { A->Destroy(); }
+	}
+	Impetuous = Enemy = Archers = Threat = nullptr;
 }
 
 void AToggleBehaviorsTest::StartTest()
 {
-	// SKELETON: the toggle scenario (guard suppression, the impetuous charge
-	// window, the phase-3 toggle rows, the player override) lands with the
-	// Phase 4a scenario task.
-	CompleteTest(EFunctionalTestResult::Error,
-		TEXT("skeleton: ToggleBehaviors lands with the phase-4a scenario task (T4.6)"));
+	Super::StartTest();
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("no world"));
+		return;
+	}
+	DestroyOtherUnitActors(World);
+	UBattleTestSettings::ApplyTestMode();
+	SetCvars();
+	if (UBattleDebugSubsystem* Debug = World->GetSubsystem<UBattleDebugSubsystem>())
+	{
+		Debug->ResetDiagnostics();
+	}
+	if (UBattleCostGridSubsystem* CostGrid = World->GetSubsystem<UBattleCostGridSubsystem>())
+	{
+		CostGrid->ResetToFlat();
+	}
+	// The impetuous subject: the fixture has no impetuous EDU token, so the
+	// scenario stamps the discipline through the registry seam (the test-side
+	// spawn-truth override; disclosed in the PR-13 record).
+	Impetuous = MoraleSpawnActor(World, 1, 8, FVector2D(0.f, 0.f), 0.f, 0);
+	Enemy = MoraleSpawnActor(World, 1, 8, FVector2D(20.f, 0.f), 180.f, 1);
+	Archers = MoraleSpawnActor(World, 2, 8, FVector2D(-40.f, -20.f), 0.f, 0);
+	Threat = MoraleSpawnActor(World, 1, 8, FVector2D(-40.f, 60.f), 180.f, 1);
+	if (!Impetuous || !Enemy || !Archers || !Threat)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("spawn failed"));
+		return;
+	}
+	if (FUnitRuntimeState* State = Registry()->FindMutableUnitState(Impetuous->GetUnitHandle()))
+	{
+		State->Discipline = EBattleDiscipline::Impetuous;
+	}
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT ToggleBehaviors Phase=Spawn impetuous=8 enemy=20m archers=8 threat=60m"));
+	Phase = EPhase::Guarded;
+	TicksInPhase = 0;
+	PhaseBudget = 900;
+}
+
+UUnitRegistrySubsystem* AToggleBehaviorsTest::Registry() const
+{
+	return GetWorld() ? GetWorld()->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
 }
 
 void AToggleBehaviorsTest::Tick(float DeltaSeconds)
 {
-	// Nothing to step while the skeleton stands.
+	Super::Tick(DeltaSeconds);
+	if (!IsRunning() || Phase == EPhase::Done)
+	{
+		return;
+	}
+	UUnitRegistrySubsystem* Reg = Registry();
+	UBattleDebugSubsystem* Debug = GetWorld()->GetSubsystem<UBattleDebugSubsystem>();
+	if (!Reg || !Debug)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("subsystems missing"));
+		return;
+	}
+	if (++TicksInPhase > PhaseBudget)
+	{
+		CompleteTest(EFunctionalTestResult::Error,
+			FString::Printf(TEXT("phase %d stalled (%d ticks)"), static_cast<int32>(Phase), TicksInPhase));
+		return;
+	}
+	const FUnitHandle ImpH = Impetuous->GetUnitHandle();
+	const FUnitRuntimeState* State = Reg->FindUnitState(ImpH);
+	if (!State)
+	{
+		CompleteTest(EFunctionalTestResult::Error, TEXT("impetuous state lost"));
+		return;
+	}
+	const FUnitOrder* Order = Reg->FindOrder(ImpH);
+	const bool bCharged = Order && Order->Type == FUnitOrder::EType::AttackUnit;
+
+	switch (Phase)
+	{
+	case EPhase::Guarded:
+	{
+		if (TicksInPhase == 1)
+		{
+			Reg->SetUnitGuardToggle(ImpH, true);
+		}
+		if (bCharged || State->bAutoCharging)
+		{
+			CompleteTest(EFunctionalTestResult::Error, TEXT("guard failed to suppress the auto-charge"));
+			return;
+		}
+		if (TicksInPhase >= 600)
+		{
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT ToggleBehaviors Phase=Guarded suppressed OK (10 s, enemy inside the radius)"));
+			Phase = EPhase::Unguarded;
+			TicksInPhase = 0;
+			PhaseBudget = 900;
+		}
+		break;
+	}
+	case EPhase::Unguarded:
+	{
+		if (TicksInPhase == 1)
+		{
+			Reg->SetUnitGuardToggle(ImpH, false);
+		}
+		if (State->bAutoCharging && bCharged)
+		{
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT ToggleBehaviors Phase=Unguarded charged at tick %d (window OK)"), TicksInPhase);
+			Phase = EPhase::Phase3;
+			TicksInPhase = 0;
+			PhaseBudget = 3600;
+		}
+		else if (TicksInPhase >= 600)
+		{
+			CompleteTest(EFunctionalTestResult::Error, TEXT("no auto-charge within the unguarded window"));
+			return;
+		}
+		break;
+	}
+	case EPhase::Override:
+	{
+		if (TicksInPhase == 1)
+		{
+			// The player order right after the re-enabled charge: the serial
+			// bump cancels OUR auto-charge (the RC7 guard, generalized).
+			Reg->IssueMoveOrder(ImpH, FVector2D(-2000.f, 0.f), 180.f);
+		}
+		if (!State->bAutoCharging)
+		{
+			const FUnitOrder* Current = Reg->FindOrder(ImpH);
+			if (!Current || Current->Type != FUnitOrder::EType::Move)
+			{
+				CompleteTest(EFunctionalTestResult::Error, TEXT("player override did not stick"));
+				return;
+			}
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT ToggleBehaviors Phase=Override cancelled at tick %d (player Move stands)"), TicksInPhase);
+			CompleteTest(EFunctionalTestResult::Succeeded, TEXT("guard/charge/phase3/override complete"));
+		}
+		else if (TicksInPhase >= 300)
+		{
+			CompleteTest(EFunctionalTestResult::Error, TEXT("auto-charge survived the player order bump"));
+			return;
+		}
+		break;
+	}
+	case EPhase::Phase3:
+	{
+		// The phase-3 toggle rows re-asserted (compact): (1) FireAtWill=0
+		// holds fire; (2) re-enabling resumes; (3) the skirmish break fires
+		// when the threat closes. The archer row (EDU 2) carries the
+		// spawn-stamped skirmish default (A8).
+		const FUnitHandle ArchH = Archers->GetUnitHandle();
+		const FUnitRuntimeState* ArchState = Reg->FindUnitState(ArchH);
+		if (!ArchState)
+		{
+			CompleteTest(EFunctionalTestResult::Error, TEXT("archer state lost"));
+			return;
+		}
+		if (TicksInPhase == 1)
+		{
+			Reg->IssueAttackUnitOrder(ArchH, Threat->GetUnitHandle());
+			Reg->IssueMoveOrder(Threat->GetUnitHandle(), FVector2D(-4000.f, -2000.f), 0.f);
+			ShotsMark = Debug->GetRangedShots();
+			Reg->SetUnitFireToggles(ArchH, /*bFireAtWill*/ false, ArchState->bSkirmish);
+			HoldFireMark = Debug->GetRangedShots();
+		}
+		if (TicksInPhase == 240)
+		{
+			if (Debug->GetRangedShots() != HoldFireMark)
+			{
+				CompleteTest(EFunctionalTestResult::Error, TEXT("FireAtWill=0 did not hold fire"));
+				return;
+			}
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT ToggleBehaviors Phase=Phase3 holdFire OK (4 s, shots=%d)"), HoldFireMark);
+			Reg->SetUnitFireToggles(ArchH, true, ArchState->bSkirmish);
+		}
+		if (TicksInPhase == 360)
+		{
+			if (Debug->GetRangedShots() <= HoldFireMark)
+			{
+				CompleteTest(EFunctionalTestResult::Error, TEXT("FireAtWill=1 did not resume fire"));
+				return;
+			}
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT ToggleBehaviors Phase=Phase3 resume OK (shots %d -> %d); skirmish break watch (threat closing)"),
+				HoldFireMark, Debug->GetRangedShots());
+		}
+		// The skirmish break/resume rows: the closing threat crosses the
+		// break band -> the archer auto-retreats (bRetreating); after the
+		// threat's approach order ends and the distance clears the band, the
+		// archer stops (the SkirmishBehavior machine's compact form).
+		if (TicksInPhase >= 400 && ArchState->bRetreating)
+		{
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT ToggleBehaviors Phase=Phase3 skirmish break OK at tick %d"), TicksInPhase);
+			Phase = EPhase::Override;
+			TicksInPhase = 0;
+			PhaseBudget = 5400;
+			// Re-arm the override preconditions: the impetuous unit re-charges
+			// (its charge from the Unguarded phase was consumed); the Override
+			// phase's player Move then cancels it.
+			Reg->SetUnitGuardToggle(ImpH, false);
+		}
+		else if (TicksInPhase >= 7200)
+		{
+			CompleteTest(EFunctionalTestResult::Error,
+				FString::Printf(TEXT("skirmish break never fired (threat dist watch)")));
+			return;
+		}
+		break;
+	}
+	case EPhase::Done:
+	default:
+		break;
+	}
 }
 
 void AToggleBehaviorsTest::SetCvars()
 {
+	static const TCHAR* CombatNames[5] = {
+		TEXT("Battle.Combat.SpatialHash"), TEXT("Battle.Combat.Clusters"),
+		TEXT("Battle.Combat.Tally"), TEXT("Battle.Combat.Assign"), TEXT("Battle.Combat.Resolve") };
+	for (int32 i = 0; i < 5; ++i)
+	{
+		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(CombatNames[i]))
+		{
+			SavedCombat[i] = C->GetInt();
+			C->Set(1, ECVF_SetByCode);
+		}
+	}
+	RangedSetCvars(SavedRanged);
+	// The ToggleBehaviors tuning: the pin ON; the impetuous radius at the
+	// spec default (the enemy sits at 20 m inside it); the deep break
+	// threshold keeps the fighting subject Routing-free through the machine
+	// (the charge contact grinds real kills -- wavering is allowed, routing
+	// would cancel the auto-charge the Override phase needs alive).
+	const float Values[] = { 1.f, 1.f, 4.f, -3.f, 6.f, 0.9f, 2.f, 0.25f, 60.f, 2.f, 0.5f, 0.5f };
+	MoraleSetCvars(SavedMorale, Values, 12);
 }
 
 void AToggleBehaviorsTest::RestoreCvars()
 {
+	static const TCHAR* CombatNames[5] = {
+		TEXT("Battle.Combat.SpatialHash"), TEXT("Battle.Combat.Clusters"),
+		TEXT("Battle.Combat.Tally"), TEXT("Battle.Combat.Assign"), TEXT("Battle.Combat.Resolve") };
+	for (int32 i = 0; i < 5; ++i)
+	{
+		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(CombatNames[i]))
+		{
+			C->Set(SavedCombat[i], ECVF_SetByCode);
+		}
+	}
+	RangedRestoreCvars(SavedRanged);
+	MoraleRestoreCvars(SavedMorale, 12);
 }
 
 void AToggleBehaviorsTest::Destroyed()

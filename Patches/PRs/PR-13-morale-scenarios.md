@@ -32,3 +32,35 @@ The exit criteria are scenario-shaped: "S7 passes; routing cascade observable ac
 ## Rollback
 
 The four scenarios join the PR gate; a revert restores the skeletons (fail-by-design) -- never a sim-behavior change. The scenario code is test-module only.
+
+## Status (2026-10-31, the PR-chain session: EXECUTED -- all four scenarios PASS)
+
+Func tier **23/27**: T4.3-T4.6 green; the failures are EXACTLY the four
+known pre-existing ones (DeterminismTwoRun / S4_ShieldWall /
+S4_WidthOverride / S5_Mob -- the Task 1/2 dossiers). Unit tier 83/83
+unchanged. Evidence: `Tools/CI/pr13_evidence.log` (verbatim lines) +
+`Docs/phases/phase-4/progress.md` (the PR-13 section, per-scenario
+tuning notes and measured fixes). Highlights:
+
+- S7_RoutCascade: wavering(18) < break(50) order; flee anchor -40 m away
+  from the threat with the servo's Flee state stamped; the cascade wavers
+  the neighbor with zero own casualties (isolation run B diffs it at
+  CascadeRadiusM 0); rally at tick 447 under the general's aura (run B
+  never rallies); the pursuer's contact angle 112 lands in the rear band
+  [96,192).
+- OfficerDeath: the amplified spike ratio EXACTLY 3.00 (officer 2.523 vs
+  baseline 0.841 at a fixed tick alignment); the general variant's
+  Battle.Team.GeneralDied events + the stamped shock decaying monotonically.
+- EffectEndToEnd: the Tired goldens (0.800/0.850/0.900) visible in the
+  fragment with latency 1 frame; the stacking aggregate 0.850 = 1 + (0.05
+  base - 0.2 catalog mod).
+- ToggleBehaviors: the guard suppression window, the charge at tick 10
+  unguarded, FireAtWill hold/resume, the skirmish break, the player-order
+  serial-bump cancel.
+
+Measured fixes folded in (full notes in the progress log): the morale
+cvar restore + fixture teardown ride CompleteTest (the framework's
+Destroyed lands after the next test starts -- the leaked Enable=1 broke
+S0_SyncLatency until fixed); the auto-charge serial-guard clear runs
+regardless of the FSM state; the overlap write offsets the attribute
+BASE, not the mod-inclusive current.

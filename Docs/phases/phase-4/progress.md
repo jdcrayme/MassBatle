@@ -229,6 +229,61 @@
   the counters in place; WinningLocally's kills half has no feed (the
   resolution pass runs worker-side -- KillWindow stays 0, disclosed).
 
+## PR-13 -- the four morale scenario bodies (T4.3-T4.6)
+
+- [pr13.1] Helpers beside the C-3 one-home ranged list: `MoraleSetCvars/
+  MoraleRestoreCvars` (the 12-slot indexed list: Enable + DeterministicTick
+  session-on, the tuned threshold/aura/rally subset), `KillRosterEntity`
+  (a scripted kill through the death path: FDeadTag deferred + flushed in
+  the test Tick -- the observer/receiver chain fires), `MoraleSpawnActor`
+  (the officer/general authoring passthrough).
+- [pr13.2] `S7_RoutCascade` (T4.3) -- TWO seeded runs. Run A: sergeant
+  fixture (base 6, Disciplined) + the general at 28 m + the enemy at 30 m;
+  scripted attrition onto the center; wavering(18) < break(50) order; the
+  flee (anchor -40 m away from the threat, bRoutFleeing, the servo's Flee
+  state); the cascade (the neighbor wavers with zero own casualties);
+  the rally at tick 447 under the aura; the rear-arc chase (angle 112 in
+  [96,192)). Run B (isolation): no general + CascadeRadiusM 0 -- the
+  neighbor stays Steady, the center stays Routing. Tuning notes: the
+  rally threshold 2.5 sits above the post-break morale (~1.1 fresh spike)
+  so the flee window survives and below the recovered morale (~2.9); the
+  neighbors clear the corridor at the chase (contact auto-pairing ambushed
+  the marching pursuer -- measured); the run-B radius switch rides
+  BeginRunB.
+- [pr13.3] `OfficerDeath` (T4.4) -- three sub-runs at a FIXED tick
+  alignment (kill at +12, sample at +42, two morale ticks of decay): the
+  baseline soldier spike 0.841; the officer spike 2.523 = ratio 3.00
+  (the x3 golden); OfficerDeaths=1; the general kill stamps the team
+  shock 5.897 + `Battle.Team.GeneralDied` on the watcher's ASC (x3
+  same-team events); the shock decays monotonically (5.796 -> 5.598).
+- [pr13.4] `EffectEndToEnd` (T4.5) -- the drive (a far Move order; Tired at
+  integral 45 = 300 morale ticks): the Tired goldens attack 0.800 /
+  defense 0.850 / speed 0.900 with fragment latency 1 frame from the
+  attribute write; the stacking aggregate 0.850 = 1 + (0.05 base write -
+  0.2 catalog mod). Fix recorded: the overlap offsets the BASE
+  (GetNumericAttributeBase), not the mod-inclusive current (the first
+  probe double-counted the aggregator mod -- measured 0.65).
+- [pr13.5] `ToggleBehaviors` (T4.6) -- GuardMode suppresses the auto-charge
+  for the 10 s window (enemy inside the 30 m radius); unguarded charges at
+  tick 10; the phase-3 rows: FireAtWill=0 holds fire (4 s), re-enabling
+  resumes (0 -> 36 shots), the skirmish break fires at tick 1745 under the
+  closing threat; the player Move cancels the auto-charge (the serial
+  guard -- the pass's clear now runs REGARDLESS of the FSM state; the
+  Steady-gated clear left stale bookkeeping -- measured). The subject's
+  Impetuous discipline is stamped through the registry seam (the fixture
+  has no impetuous EDU token -- disclosed).
+- [pr13.6] Test-hygiene fix (measured): the cvar restore + fixture teardown
+  moved into CompleteTest (the framework's Destroyed lands AFTER the next
+  test starts -- the leaked Enable=1 broke S0_SyncLatency's dirty-flag
+  window; restored to green). The morale scenarios now leave the world
+  exactly as they found it.
+- [pr13.7] Evidence: build green; unit tier 83/83 (unchanged); func tier
+  **23/27 -- the four morale scenarios PASS, the failures are EXACTLY the
+  four known** (DeterminismTwoRun / S4_ShieldWall / S4_WidthOverride /
+  S5_Mob -- the Tasks 1-2 dossiers, untouched). Verbatim lines:
+  `Tools/CI/pr13_evidence.log` (20 lines) + the full log in
+  `Tools/CI/last_run/func.log`.
+
 ## Deferred to the implementing run (the brief's Tasks 1-9)
 
 - **Task 1** -- blocker 1 hunt (mixed clash+volley two-run mm-scale
