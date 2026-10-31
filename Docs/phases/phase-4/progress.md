@@ -307,6 +307,40 @@
   owner's PIE session (the writeup's editor-session item; no Unreal MCP
   session was available -- the PR-11 posture).
 
+## PR-15 -- determinism (T4.7), staleness (T4.8), the SoakRout variant (code side)
+
+- [pr15.1] The T4.8 staleness probe landed as an exec fixture:
+  `Battle.Morale.StalenessProbe` (the T2.9/T3.6 loaded shape -- 2x500
+  sergeants at contact, 1000 entities) with the morale pass on the
+  SHIPPING natural period (Enable=1, DeterministicTick=0 -- under the pin
+  the age is the tick cadence by construction, the T4.7 carve-out); the
+  probe dumps `EXEC_RESULT MoraleStaleness TickAgeMax=%.3f Period=%.3f
+  MoraleTicks=%d Verdict=PASS/OVER` at tick 2100 via the debug subsystem's
+  `ArmMoraleStalenessProbe` (the T3.6 pattern; the bound is one period +
+  the frame-quantization margin).
+- [pr15.2] The SoakRout soak variant: `Battle.MovementSoakController`'s
+  spawn mix gains the ARMY GENERAL (unit 0: bIsGeneral + one officer) and
+  the IMPETUOUS row (unit 1, the discipline stamped through the registry
+  seam); the morale session flags (Enable=1 + DeterministicTick=1 -- the
+  soak's determinism) ride the mix flag. The FINAL line APPENDS
+  `routs=%d rallies=%d shattered=%d officerDeaths=%d moraleTicks=%d` (the
+  F14 rule; flag off prints zeros -- the parsed positions do not move).
+  `MoraleTicks` joins the debug counters (RecordMoraleTick per pass tick).
+- [pr15.3] The T4.7 two-run extension: NOT landed this session -- the gate
+  it extends (`DeterminismTwoRun`, the mixed clash+volley two-run) is the
+  Task 1 blocker itself (still failing; the hunt has not run -- the run's
+  task order picks up at Tasks 1-2). Per the PR-15 writeup's own
+  disposition row: the extension's morale-term delta is provable only on a
+  green base or the melee-only worlds; landing the extension now would add
+  a red-on-red gate with no isolatable signal. The extension's shape (the
+  general + impetuous row + the scripted break/rally + the pin) is
+  specified in the writeup; it lands with Task 1's disposition.
+- [pr15.4] Machine evidence this session: build green; unit tier 83/83;
+  func tier 23/27 = exactly the four known (the PR-15 code is additive --
+  no regressions). The T4.8 verdict line + the SoakRout FINAL line need
+  their harness hookup (the probe as a PR-gate fixture) + one staged
+  nightly -- Task 8's remainder, riding Task 2's unblock.
+
 ## Deferred to the implementing run (the brief's Tasks 1-9)
 
 - **Task 1** -- blocker 1 hunt (mixed clash+volley two-run mm-scale

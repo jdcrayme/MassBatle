@@ -96,4 +96,7 @@ namespace BattleExec
 	MASSBATTLE_API void MoraleToggle(const TArray<FString>& Args, UWorld* World);
 	MASSBATTLE_API void MoraleDump(const TArray<FString>& Args, UWorld* World);
 	MASSBATTLE_API void MoraleSpawnRout(const TArray<FString>& Args, UWorld* World);
+
+	// -- Phase 4a (PR-15: the T4.8 staleness probe; the T3.6 shape) --
+	MASSBATTLE_API void MoraleStalenessProbe(const TArray<FString>& Args, UWorld* World);
 }

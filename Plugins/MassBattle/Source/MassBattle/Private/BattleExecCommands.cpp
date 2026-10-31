@@ -1650,6 +1650,88 @@ void MoraleSpawnRout(const TArray<FString>& Args, UWorld* World)
 
 } // namespace BattleExec
 
+// ---- Phase 4a (PR-15): the T4.8 staleness probe fixture ----
+
+namespace BattleExec
+{
+
+void MoraleStalenessProbe(const TArray<FString>& Args, UWorld* World)
+{
+	UUnitRegistrySubsystem* Registry = World ? World->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	UBattleCostGridSubsystem* CostGrid = World ? World->GetSubsystem<UBattleCostGridSubsystem>() : nullptr;
+	UBattleDebugSubsystem* Debug = World ? World->GetSubsystem<UBattleDebugSubsystem>() : nullptr;
+	if (!Registry || !CostGrid || !Debug)
+	{
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT MoraleStalenessProbe FAIL no world/subsystems"));
+		return;
+	}
+	CostGrid->ResetToFlat();
+	EnableDemoCombatPipeline();
+	// The SHIPPING staleness path: Enable on, the NATURAL period (the pin
+	// OFF -- under the pin the age is the tick cadence by construction, the
+	// T4.7 carve-out; MC1 bounds the natural path).
+	if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Morale.Enable")))
+	{
+		C->Set(1, ECVF_SetByCode);
+	}
+	if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Morale.DeterministicTick")))
+	{
+		C->Set(0, ECVF_SetByCode);
+	}
+	Registry->ResetBattleState();
+	Debug->ResetDiagnostics();
+
+	// The T2.9/T3.6 loaded shape: two 500-man sergeant lines at contact --
+	// the known-stress pairing window -- with the morale pass folding over
+	// every unit each tick (the R-M7 cost watch).
+	TArray<FEduUnit> Rows;
+	FEduParseError Err;
+	if (!LoadGoldenEduRows(Rows, Err))
+	{
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT MoraleStalenessProbe FAIL EDU fixture (%s)"),
+			Err.bFailed ? *Err.Message : TEXT("unreadable"));
+		return;
+	}
+	auto SpawnLine = [&](int32 Count, const FVector2D& PosM, float YawDeg, uint8 TeamId) -> bool
+	{
+		const int32 EduRow = FindEduRowIndexByDictionary(Rows, TEXT("Sergeant_Spearmen"));
+		if (EduRow == INDEX_NONE)
+		{
+			return false;
+		}
+		FBattleRowStats Stats;
+		FString Error;
+		if (!FBattleRowStats::FromEdu(Rows[EduRow], Stats, Error))
+		{
+			return false;
+		}
+		FUnitSpawnSpec Spec;
+		Spec.EduRowIndex = EduRow;
+		Spec.SoldierCount = Count;
+		Spec.UnitName = Stats.TypeName;
+		Spec.SpawnPos = PosM * 100.f;
+		Spec.SpawnYaw = YawDeg;
+		Spec.NumRanks = 10;
+		Spec.TeamId = TeamId;
+		const FBattleSpawnResult Result = UBattleSpawnLibrary::SpawnUnit(World, Spec, Stats);
+		return Result.Unit.IsValid();
+	};
+	if (!SpawnLine(500, FVector2D(0.f, 0.f), 0.f, 0) || !SpawnLine(500, FVector2D(-3.5f, 0.f), 180.f, 1))
+	{
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT MoraleStalenessProbe FAIL spawn"));
+		return;
+	}
+	Registry->IssueAttackUnitOrder(Registry->GetSortedHandles().Last(), Registry->GetSortedHandles()[0]);
+
+	// The probe: the verdict at tick 2100 (35 s at the fixed 60 tick/s) --
+	// the window spans the clash start (the loaded steady state).
+	Debug->ArmMoraleStalenessProbe(2100);
+	UE_LOG(LogMassBattle, Display,
+		TEXT("EXEC_RESULT MoraleStalenessProbe OK entities=1000 (2x500 in contact) morale=on naturalPeriod probe@2100"));
+}
+
+} // namespace BattleExec
+
 // ---- Phase 2 task 2 registration (combat data spine probes) ----
 
 static FAutoConsoleCommandWithWorldAndArgs GBattleOrderAttackUnit(
@@ -1717,3 +1799,8 @@ static FAutoConsoleCommandWithWorldAndArgs GBattleMoraleSpawnRout(
 	TEXT("Battle.Morale.SpawnRout"),
 	TEXT("M5 rout-cycle fixture (PR-12/PR-14): a general + two adjacent infantry vs an enemy line, morale session-on; EXEC_RESULT SpawnRout"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BattleExec::MoraleSpawnRout));
+
+static FAutoConsoleCommandWithWorldAndArgs GBattleMoraleStalenessProbe(
+	TEXT("Battle.Morale.StalenessProbe"),
+	TEXT("T4.8 (PR-15): the T2.9/T3.6 loaded shape (2x500 in contact) with the morale pass on the SHIPPING natural period; the probe dumps EXEC_RESULT MoraleStaleness TickAgeMax/Period/Verdict at tick 2100"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BattleExec::MoraleStalenessProbe));

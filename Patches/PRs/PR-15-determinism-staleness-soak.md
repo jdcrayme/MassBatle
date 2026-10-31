@@ -32,3 +32,21 @@ MC10 demands two-run hash equality on a mixed battle INCLUDING morale, effects, 
 ## Rollback
 
 All gates are test/baseline-side; the soak variant is flag-gated. No sim-behavior rollback surface beyond `Battle.Morale.SoakRout=0`.
+
+## Status (2026-10-31, the PR-chain session: PROBE + SOAK LANDED; the two-run extension waits on Task 1)
+
+- The T4.8 staleness probe landed (`Battle.Morale.StalenessProbe`, the
+  T2.9/T3.6 loaded shape with the morale pass on the SHIPPING natural
+  period; the `MoraleStaleness` verdict line dumps at tick 2100 via the
+  debug probe). The T4.8 gate-test hookup + one staged run remain.
+- The SoakRout variant landed: the soak mix gains the general + the
+  impetuous row; the morale session flags ride the mix; the FINAL line
+  appends `routs/rallies/shattered/officerDeaths/moraleTicks` (the F14
+  rule; flag off = zeros). The SoakRout staged nightly rides Task 2's
+  unblock.
+- The T4.7 two-run extension is NOT landed: its base gate
+  (`DeterminismTwoRun`) is the unresolved Task 1 blocker -- a red-on-red
+  extension has no isolatable morale signal. The writeup's disposition row
+  anticipated exactly this; the extension lands with Task 1's closure.
+- No-regression evidence: build green; unit 83/83; func 23/27 = exactly
+  the four known failures (the Task 1/2 dossiers).

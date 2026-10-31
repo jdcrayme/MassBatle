@@ -100,6 +100,10 @@ void UMoraleTickProcessor::TickMorale(FMassEntityManager& EM, FMassExecutionCont
 {
 	UWorld* World = Context.GetWorld();
 	UBattleDebugSubsystem* Debug = World ? World->GetSubsystem<UBattleDebugSubsystem>() : nullptr;
+	if (Debug)
+	{
+		Debug->RecordMoraleTick(); // the soak variant's FINAL-line counter (PR-15)
+	}
 
 	// ---- Unit bodies (the fold's geometry source): anchor/facing from the
 	// formation shared fragment, team from the spawn spec, Z from the anchor

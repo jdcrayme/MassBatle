@@ -205,9 +205,17 @@ public:
 	int32 GetRallies() const { return Rallies; }
 	int32 GetShattered() const { return Shattered; }
 	int32 GetOfficerDeaths() const { return OfficerDeaths; }
+	/** The T4.8 staleness probe (the T2.9/T3.6 pattern): dump the morale
+	 *  staleness verdict at N ticks after arming; disarms after the dump.
+	 *  TickAgeMax accumulates from RecordMoraleTickAge (the pass). */
+	void ArmMoraleStalenessProbe(int32 InTicks) { MoraleStalenessProbeTicks = InTicks; }
+
 	/** Units under a living general's aura at the last morale tick. */
 	void SetAuraActiveCount(int32 Count) { AuraActive = Count; }
 	int32 GetAuraActive() const { return AuraActive; }
+	/** The morale tick counter (the soak variant's FINAL-line field; PR-15). */
+	void RecordMoraleTick() { ++MoraleTicks; }
+	int32 GetMoraleTicks() const { return MoraleTicks; }
 
 	/** Test hook: zero the diagnostic counters (scenario start). */
 	void ResetDiagnostics();
@@ -271,6 +279,8 @@ private:
 	int32 Shattered = 0;
 	int32 OfficerDeaths = 0;
 	int32 AuraActive = 0;
+	int32 MoraleTicks = 0;
+	int32 MoraleStalenessProbeTicks = -1;
 
 	FCriticalSection OverlayMutex;
 	TArray<FBattleOverlayLine> PendingOverlayLines;

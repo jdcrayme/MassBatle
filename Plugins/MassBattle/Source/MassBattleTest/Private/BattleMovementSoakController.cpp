@@ -1,5 +1,6 @@
 #include "BattleMovementSoakController.h"
 #include "BattleRanged.h"
+#include "BattleMorale.h"
 #include "BattleExecCommands.h"
 #include "BattleDebugSubsystem.h"
 #include "BattleProjectileSubsystem.h"
@@ -154,6 +155,18 @@ void UBattleMovementSoakController::OnTick(float TimeDelta)
 		// at the field center. Flag off = the T1.8 baseline byte-for-byte
 		// (no row changes, no TeamId writes, no orders, no stream draws).
 		const bool bVolleySoak = FRangedCVars::SoakVolley();
+		// Phase 4a (PR-15): the rout-mix morale session -- Enable on and the
+		// PIN on (the soak's determinism: the morale tick rides the sim
+		// cadence, the T4.7 carve-out). Process-scoped; the flags off = the
+		// baseline byte-identical (the pass early-outs, no counters move).
+		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Morale.Enable")))
+		{
+			C->Set(FMoraleCVars::SoakRout() ? 1 : 0, ECVF_SetByCode);
+		}
+		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Morale.DeterministicTick")))
+		{
+			C->Set(FMoraleCVars::SoakRout() ? 1 : 0, ECVF_SetByCode);
+		}
 		const int32 TotalUnits = UnitsPerRow * UnitRows;
 		int32 ArcherUnits = 0;
 		// The archer row is matched by dictionary name (B-3): re-ordering the
@@ -166,6 +179,14 @@ void UBattleMovementSoakController::OnTick(float TimeDelta)
 			const int32 Col = i % UnitsPerRow;
 			const int32 Row = i / UnitsPerRow;
 			const bool bArcher = bVolleySoak && (ArcherRow != INDEX_NONE) && (i % 4 == 3);
+			// Phase 4a rout mix (Battle.Morale.SoakRout=1, PR-15): unit 0 is
+			// the ARMY GENERAL (bIsGeneral + one officer) and unit 1 the
+			// IMPETUOUS row (the discipline stamped through the registry seam
+			// -- the fixture has no impetuous EDU token, the ToggleBehaviors
+			// posture). The morale session flags flip at the mix start.
+			const bool bRoutSoak = FMoraleCVars::SoakRout();
+			const bool bGeneral = bRoutSoak && i == 0;
+			const bool bImpetuous = bRoutSoak && i == 1;
 			FUnitSpawnSpec Spec;
 			Spec.EduRowIndex = bArcher ? ArcherRow : (i % Rows.Num());
 			Spec.SoldierCount = 40;
@@ -173,6 +194,8 @@ void UBattleMovementSoakController::OnTick(float TimeDelta)
 			Spec.SpawnPos = FVector2D(-4500.f + Col * 3000.f, Row * 3000.f);
 			Spec.SpawnYaw = 90.f;
 			Spec.TeamId = bArcher ? 1 : 0;
+			Spec.OfficerCount = bGeneral ? 1 : 0;
+			Spec.bIsGeneral = bGeneral;
 			FBattleSpawnResult Result;
 			FString Error;
 			if (!UBattleSpawnLibrary::SpawnUnitFromEduRow(World, Spec, Rows[Spec.EduRowIndex], Result, Error) || !Result.Unit.IsValid())
@@ -180,6 +203,13 @@ void UBattleMovementSoakController::OnTick(float TimeDelta)
 				UE_LOG(LogGauntlet, Error, TEXT("GAUNTLET BattleMovementSoak spawn %d failed: %s"), i, *Error);
 				FinishTest(1);
 				return;
+			}
+			if (bImpetuous)
+			{
+				if (FUnitRuntimeState* State = Registry->FindMutableUnitState(Result.Unit))
+				{
+					State->Discipline = EBattleDiscipline::Impetuous;
+				}
 			}
 			if (bArcher)
 			{
@@ -609,7 +639,7 @@ void UBattleMovementSoakController::OnTick(float TimeDelta)
 			// the write_baseline regex parses positionally, existing fields
 			// never move. Flag off prints 0/0/0/0 (the line length changes;
 			// the parsed positions do not).
-			TEXT("GAUNTLET BattleMovementSoak FINAL settled stuck=%d separation=%d archetypes=%d (spawn %d) garrisoned=%d unsettled=%d phases=[None=%d App=%d Queue=%d Ingress=%d Occupy=%d Settled=%d Egress=%d] duringSoak escalations=%d/%d duringSoak separationEvents=%d/%d duringSoak maxDeepStuck=%d/%d dressErr=%.2f/%.1fm(phase2=%d) fieldWide=%d skippedUnits=%d clashOrders=%d testMode=%d ok=%d volleys=%d inFlightPeak=%d friendlyHits=%d poolDrops=%d"),
+			TEXT("GAUNTLET BattleMovementSoak FINAL settled stuck=%d separation=%d archetypes=%d (spawn %d) garrisoned=%d unsettled=%d phases=[None=%d App=%d Queue=%d Ingress=%d Occupy=%d Settled=%d Egress=%d] duringSoak escalations=%d/%d duringSoak separationEvents=%d/%d duringSoak maxDeepStuck=%d/%d dressErr=%.2f/%.1fm(phase2=%d) fieldWide=%d skippedUnits=%d clashOrders=%d testMode=%d ok=%d volleys=%d inFlightPeak=%d friendlyHits=%d poolDrops=%d routs=%d rallies=%d shattered=%d officerDeaths=%d moraleTicks=%d"),
 			StuckNow, SeparatedNow, ArchetypesNow, ArchetypeCountAtSpawn,
 			GarrisonedNow, GarrisonedUnsettled,
 			PhaseCounts[0], PhaseCounts[1], PhaseCounts[2], PhaseCounts[3], PhaseCounts[4], PhaseCounts[5], PhaseCounts[6],
@@ -621,7 +651,13 @@ void UBattleMovementSoakController::OnTick(float TimeDelta)
 			Debug ? Debug->GetInFlightPeak() : 0,
 			Debug ? Debug->GetRangedFriendlyHits() : 0,
 			(World->GetSubsystem<UBattleProjectileSubsystem>()
-				? World->GetSubsystem<UBattleProjectileSubsystem>()->GetPool().GetDrops() : 0));
+				? World->GetSubsystem<UBattleProjectileSubsystem>()->GetPool().GetDrops() : 0),
+			// Phase 4a (PR-15): the morale counters APPEND (the F14 rule).
+			Debug ? Debug->GetRouts() : 0,
+			Debug ? Debug->GetRallies() : 0,
+			Debug ? Debug->GetShattered() : 0,
+			Debug ? Debug->GetOfficerDeaths() : 0,
+			Debug ? Debug->GetMoraleTicks() : 0);
 		Phase = EPhase::Done;
 		FinishTest(bOk ? 0 : 1);
 	}

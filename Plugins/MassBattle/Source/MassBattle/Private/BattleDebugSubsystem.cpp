@@ -1,5 +1,6 @@
 #include "BattleDebugSubsystem.h"
 #include "BattleRegistry.h"
+#include "BattleMorale.h"
 #include "BattleMovementFragments.h"
 #include "BattleExecCommands.h"
 #include "BattleProjectileSubsystem.h"
@@ -71,6 +72,8 @@ void UBattleDebugSubsystem::ResetDiagnostics()
 	Shattered = 0;
 	OfficerDeaths = 0;
 	AuraActive = 0;
+	MoraleTicks = 0;
+	MoraleStalenessProbeTicks = -1;
 }
 
 void UBattleDebugSubsystem::RecordGarrisonSettled(int32 FilingTicks, int32 QueueWaitTicks)
@@ -119,6 +122,19 @@ void UBattleDebugSubsystem::Tick(float DeltaTime)
 	{
 		DumpMetrics();
 		PerfProbeTicks = -1;
+	}
+
+	// T4.8 morale staleness probe (PR-15; the T3.6 shape): the MC1 bound --
+	// the value's age never exceeds one period under load. TickAgeMax is the
+	// max sim-second age sampled by the morale pass since the last reset.
+	if (MoraleStalenessProbeTicks > 0 && --MoraleStalenessProbeTicks == 0)
+	{
+		MoraleStalenessProbeTicks = -1;
+		const float Period = FMoraleCVars::TickPeriod();
+		const bool bPass = TickAgeMax <= Period * 1.5f; // one period + the frame-quantization margin
+		UE_LOG(LogMassBattle, Display,
+			TEXT("EXEC_RESULT MoraleStaleness TickAgeMax=%.3f Period=%.3f MoraleTicks=%d Verdict=%s"),
+			TickAgeMax, Period, MoraleTicks, bPass ? TEXT("PASS") : TEXT("OVER"));
 	}
 	Super::Tick(DeltaTime);
 
