@@ -85,4 +85,22 @@ namespace FPathFrameLayout
 			(static_cast<float>(File) - (static_cast<float>(NumFiles) - 1.f) * 0.5f) * FileSpacing);
 		return Anchor + FVector2D(Offset.X * Cos - Offset.Y * Sin, Offset.X * Sin + Offset.Y * Cos);
 	}
+
+	FVector2D OfficerSlotPositionM(const FVector2D& Anchor, float FacingYawDeg,
+		int32 OfficerOrdinal, int32 OfficerCount, int32 NumFiles, float FileSpacing, float RankSpacing)
+	{
+		// The M2TW officer posture: one rank spacing in FRONT of the front
+		// rank (rank -1 in AnchorFormula's frame => offset +RankSpacing),
+		// laterally centered on the formation's file span -- ordinals
+		// interleave in fractional file units so two officers stand half a
+		// file either side of the center (the lateral convention: +Y = left
+		// of facing, matching AnchorFormula).
+		const float Rad = FMath::DegreesToRadians(FacingYawDeg);
+		const float Cos = FMath::Cos(Rad);
+		const float Sin = FMath::Sin(Rad);
+		const FVector2D Offset(RankSpacing,
+			(static_cast<float>(OfficerOrdinal) - static_cast<float>(FMath::Max(1, OfficerCount) - 1) * 0.5f)
+				* FileSpacing);
+		return Anchor + FVector2D(Offset.X * Cos - Offset.Y * Sin, Offset.X * Sin + Offset.Y * Cos);
+	}
 }

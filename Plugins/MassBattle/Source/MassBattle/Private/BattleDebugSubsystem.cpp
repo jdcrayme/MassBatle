@@ -63,6 +63,14 @@ void UBattleDebugSubsystem::ResetDiagnostics()
 	RangedFriendlyHits = 0;
 	// Phase 3 (task 7): the in-flight peak.
 	InFlightPeak = 0;
+	// Phase 4a (PR-12): the morale accumulators.
+	MoraleMs = 0.0;
+	TickAgeMax = 0.f;
+	Routs = 0;
+	Rallies = 0;
+	Shattered = 0;
+	OfficerDeaths = 0;
+	AuraActive = 0;
 }
 
 void UBattleDebugSubsystem::RecordGarrisonSettled(int32 FilingTicks, int32 QueueWaitTicks)
@@ -342,11 +350,13 @@ void UBattleDebugSubsystem::DumpMetrics()
 	}
 
 	UE_LOG(LogMassBattle, Display,
-	       TEXT("EXEC_RESULT BattleMetrics Frame=%d Archetypes=%d Units=%d UnitSyncMs=%.3f BookkeepingHash=%u OverlayHook=%d CombatHashMs=%.3f TallyMs=%.3f AssignMs=%.3f Rolls=%d/%d ChargeConnects=%d DeathsF/F/R=%d/%d/%d InFlight=%d StepMs=%.3f GroundHits=%d TtlExpired=%d PoolDrops=%d PoolCapacity=%d FireMs=%.3f Shots=%d Holds=%d Impacts=%d FriendlyHits=%d InFlightPeak=%d"),
+	       TEXT("EXEC_RESULT BattleMetrics Frame=%d Archetypes=%d Units=%d UnitSyncMs=%.3f BookkeepingHash=%u OverlayHook=%d CombatHashMs=%.3f TallyMs=%.3f AssignMs=%.3f Rolls=%d/%d ChargeConnects=%d DeathsF/F/R=%d/%d/%d InFlight=%d StepMs=%.3f GroundHits=%d TtlExpired=%d PoolDrops=%d PoolCapacity=%d FireMs=%.3f Shots=%d Holds=%d Impacts=%d FriendlyHits=%d InFlightPeak=%d MoraleMs=%.3f TickAgeMax=%.3f Routs=%d Rallies=%d Shattered=%d OfficerDeaths=%d AuraActive=%d"),
 	       LastMetrics.Frame, ArchetypeCount, LastMetrics.UnitCount,
 	       LastMetrics.UnitSyncMs, static_cast<uint32>(LastMetrics.RegistryHash32), BattleDebugShowOverlay,
 	       CombatHashMs, TallyMs, AssignMs, CombatRolls.load(), CombatRollsLanded.load(), ChargeConnects.load(),
 	       DeathsByArc[0], DeathsByArc[1], DeathsByArc[2],
 	       PoolInFlight, ProjectileStepMs, ProjectileGroundHits, ProjectileTtlExpired, PoolDrops, PoolCapacity,
-	       RangedFireMs, RangedShots, RangedHolds, RangedImpacts, RangedFriendlyHits, InFlightPeak);
+	       RangedFireMs, RangedShots, RangedHolds, RangedImpacts, RangedFriendlyHits, InFlightPeak,
+	       // Phase 4a morale fields APPEND (the F14 positional rule).
+	       MoraleMs, TickAgeMax, Routs, Rallies, Shattered, OfficerDeaths, AuraActive);
 }

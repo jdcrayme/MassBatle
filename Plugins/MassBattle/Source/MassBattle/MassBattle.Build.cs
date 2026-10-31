@@ -26,6 +26,10 @@ public class MassBattle : ModuleRules
 			"MassMovement",    // phase1 T1: FMassVelocityFragment adoption (arch §3.1 note); engine movement stack stays reference-only under A1
 			// GAS arrives with Phase 0 unit actors; linking now avoids a config churn later
 			"GameplayAbilities",
+			// Phase 4a (PR-12): the ASC subclass's vtable pulls the gameplay-task
+			// owner interface impls (UGameplayTasksComponent::OnGameplayTaskActivated/
+			// Deactivated) -- an explicit link, the MassCore reality-fix pattern.
+			"GameplayTasks",
 			// Task 9: FGameplayTag / FGameplayTagContainer (death up-path events)
 			"GameplayTags",
 			// FunctionalTesting/Gauntlet deps moved to the MassBattleTest

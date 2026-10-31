@@ -8,6 +8,8 @@
 #include "BattlePathFrameLayout.h"
 #include "BattleCompression.h"
 #include "BattleDebugSubsystem.h"
+#include "BattleRegistry.h"
+#include "BattleMorale.h"
 #include "MassBattleModule.h"
 
 #include "MassExecutionContext.h"
@@ -175,6 +177,9 @@ void UFormationSlotResolveProcessor::ConfigureQueries(const TSharedRef<FMassEnti
 	ResolveQuery.AddRequirement<FTransformFragment>(EMassFragmentAccess::ReadOnly);
 	ResolveQuery.AddRequirement<FMassVelocityFragment>(EMassFragmentAccess::ReadOnly);
 	ResolveQuery.AddRequirement<FOwnerUnitFragment>(EMassFragmentAccess::ReadOnly); // canonical order source (RC8)
+	// Phase 4a (PR-12, A5): the officer override reads the spawn-stamped
+	// bOfficer fragment value (identity, not a tag -- ADR-35).
+	ResolveQuery.AddRequirement<FBaseStatsFragment>(EMassFragmentAccess::ReadOnly);
 	// Task 10 debug pass: the slot-circle colors ride the combat pair state
 	// (written by the assign pass, game thread -- read-only here, worker-safe).
 	ResolveQuery.AddRequirement<FCombatPairFragment>(EMassFragmentAccess::ReadOnly);
@@ -707,6 +712,27 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 		float MaxSlotError = 0.f;
 		float SlotErrorSum = 0.f;
 		int32 SlotErrorCount = 0;
+		// Phase 4a (PR-12, A5): the officer override inputs -- one registry
+		// read per chunk (worker-safe scoped read inside FindUnitState).
+		// Gated on Battle.Morale.Enable (flags-off identity: officers keep
+		// their grid slots) and skipped while filing a garrison interior.
+		bool bOfficerOverride = FMoraleCVars::Enable() && !bFiling;
+		int32 OfficerBase = INDEX_NONE;
+		int32 OfficerTotal = 0;
+		if (bOfficerOverride)
+		{
+			if (UUnitRegistrySubsystem* RegState = Context.GetWorld()->GetSubsystem<UUnitRegistrySubsystem>())
+			{
+				if (const FUnitRuntimeState* UnitState = RegState->FindUnitState(Formation.OwnerUnit))
+				{
+					OfficerBase = UnitState->OfficerRosterBase;
+					OfficerTotal = UnitState->OfficerCount;
+				}
+			}
+			bOfficerOverride = OfficerBase != INDEX_NONE && OfficerTotal > 0;
+		}
+		const auto BaseStatsView = Context.GetFragmentView<FBaseStatsFragment>();
+		const auto OwnerViews = Context.GetFragmentView<FOwnerUnitFragment>();
 		for (int32 i = 0; i < NumEntities; ++i)
 		{
 			const int32 Slot = Assignment[i];
@@ -726,7 +752,22 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 			// the slot the soldier walks to.
 			FVector2D TargetPosM = SlotPosM[Slot];
 			float TargetYawDeg = SlotYaw[Slot];
-			if (bFallIn && bFanIn && HandoffDistM > 0.f)
+			// Phase 4a officer override (front-center-forward, A5): takes
+			// precedence over the slot/fan-in selection; the entity is a
+			// roster member whose grid slot goes unfilled by design.
+			const bool bOfficerEntity = bOfficerOverride
+				&& BaseStatsView.Num() == NumEntities && OwnerViews.Num() == NumEntities
+				&& BaseStatsView[i].bOfficer != 0
+				&& OwnerViews[i].RosterIndex >= OfficerBase;
+			if (bOfficerEntity)
+			{
+				TargetPosM = FPathFrameLayout::OfficerSlotPositionM(
+					FVector2D(Formation.AnchorPos) * 0.01f, Formation.FacingYaw,
+					OwnerViews[i].RosterIndex - OfficerBase, OfficerTotal,
+					Formation.NumFiles, FileSpacingM, RankSpacingM);
+				TargetYawDeg = Formation.FacingYaw;
+			}
+			else if (bFallIn && bFanIn && HandoffDistM > 0.f)
 			{
 				const float DistFinalM = FVector2D::Distance(EntityPosM[i], FinalSlotPosM[Slot]);
 				AssignFrags[i].bFinalLocked = FUnitLocomotion::FallInHandoffLatch(
@@ -758,6 +799,10 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 			Targets[i].TargetPos = NewTargetPos;
 			Targets[i].TargetYaw = TargetYawDeg;
 			// Phase 2 B1: fold this entity's error into the unit metric.
+			// Officers are excluded under the override: their target is
+			// off-grid BY DESIGN (a permanent fake error would poison the
+			// dressing metrics the soak asserts on).
+			if (!bOfficerEntity)
 			{
 				const float ErrorM = FVector2D::Distance(EntityPosM[i], TargetPosM);
 				MaxSlotError = FMath::Max(MaxSlotError, ErrorM);

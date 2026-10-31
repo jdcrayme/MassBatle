@@ -81,41 +81,9 @@ namespace
 		return true;
 	}
 
-	/** Per-pass unit->actor cache (EC9): ONE actor sweep per fire pass --
-	 *  the previous per-unit TActorIterator scan was O(units x actors) per
-	 *  tick on the game thread. Reset at pass start; filled lazily on the
-	 *  first mirror call. */
-	TMap<FUnitHandle, TWeakObjectPtr<AUnitActor>> GActorsByUnit;
-
-	/** A14 UI mirror: the registry owns the fraction's authority; the unit
-	 *  actor's AmmoPool attribute mirrors it for HUD reads. No actor (unit
-	 *  tier worlds) -> no-op. */
-	void MirrorAmmoPoolToGas(UWorld* InWorld, const FUnitHandle& InHandle, float Fraction)
-	{
-		if (GActorsByUnit.Num() == 0)
-		{
-			for (TActorIterator<AUnitActor> It(InWorld); It; ++It)
-			{
-				if (It->GetUnitHandle().IsValid())
-				{
-					GActorsByUnit.Add(It->GetUnitHandle(), TWeakObjectPtr<AUnitActor>(*It));
-				}
-			}
-		}
-		AUnitActor* Actor = GActorsByUnit.FindRef(InHandle).Get();
-		if (!Actor)
-		{
-			return;
-		}
-		if (UAbilitySystemComponent* ASC = Actor->GetAbilitySystemComponent())
-		{
-			const FGameplayAttribute Attribute = UUnitAttributeSet::FindAttributeByName(TEXT("AmmoPool"));
-			if (Attribute.IsValid())
-			{
-				ASC->SetNumericAttributeBase(Attribute, FMath::Clamp(Fraction, 0.f, 1.f));
-			}
-		}
-	}
+	// Phase 4a (A15/audit D-4): the AmmoPool GAS mirror moved to UnitSync --
+	// the sync pass is the single GAS-mirror writer for aggregate attributes.
+	// GActorsByUnit / MirrorAmmoPoolToGas deleted with the move.
 }
 
 void RunRangedFirePass(UWorld* World, float DeltaSeconds)
@@ -146,7 +114,8 @@ void RunRangedFirePass(UWorld* World, float DeltaSeconds)
 
 	GAnchorsM.Reset();
 	GEnemyOf.Reset();
-	GActorsByUnit.Reset(); // per-pass: ONE sweep serves every mirror call
+	// (The per-pass GActorsByUnit reset went with the D-4 mirror move --
+	// UnitSync owns the GAS mirror now.)
 	// Pass-level maps (sorted order -> deterministic first-wins): unit
 	// anchors (the skirmish geometry + the volley aim point) and the
 	// engagement-record enemy (the A11 target fallback).
@@ -526,17 +495,13 @@ void RunRangedFirePass(UWorld* World, float DeltaSeconds)
 			}
 		}
 
-		// The out-of-ammo aggregate (RC5/A14): flip once, mirror the fraction
-		// to the UI attribute (authority stays registry-side; AmmoSum was
-		// computed for the overlay above).
+		// The out-of-ammo aggregate (RC5/A14): flip once. The GAS AmmoPool
+		// MIRROR moved to UnitSync (phase 4a A15/audit D-4: the sync pass is
+		// the single GAS-mirror writer for aggregate attributes) -- the fire
+		// pass stays the authority's updater only.
 		if (AmmoSum == 0)
 		{
 			Registry->FlipUnitOutOfAmmo(Handle);
-		}
-		if (Debug)
-		{
-			MirrorAmmoPoolToGas(World, Handle,
-				ComputeAmmoFraction(AmmoSum, State->RangedInitialAmmo, State->InitialRosterSize));
 		}
 
 		if (Debug)

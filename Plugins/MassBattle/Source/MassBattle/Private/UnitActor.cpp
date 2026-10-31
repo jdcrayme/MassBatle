@@ -1,5 +1,6 @@
 #include "UnitActor.h"
 #include "BattleGameplayTags.h"
+#include "BattleMoraleEffects.h"
 #include "BattleSpawnLibrary.h"
 #include "BattleRegistry.h"
 #include "BattleExecCommands.h"
@@ -20,7 +21,9 @@ AUnitActor::AUnitActor()
 	// formation anchored to the actor stacked at the origin.
 	SetRootComponent(CreateDefaultSubobject<USceneComponent>(TEXT("Root")));
 
-	AbilitySystem = CreateDefaultSubobject<UAbilitySystemComponent>(TEXT("AbilitySystem"));
+	// The project's ASC subclass (PR-12): forwards the protected
+	// ExecutePeriodicEffect for the deterministic pin's forced executions.
+	AbilitySystem = CreateDefaultSubobject<UBattleAbilitySystemComponent>(TEXT("AbilitySystem"));
 	AttributeSet = CreateDefaultSubobject<UUnitAttributeSet>(TEXT("AttributeSet"));
 	// The ASC must own the set or SetNumericAttributeBase cannot resolve it.
 	AbilitySystem->AddAttributeSetSubobject(AttributeSet.Get());
@@ -47,6 +50,7 @@ void AUnitActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	// its Mass entities. Teardown is valid only while the world's Mass entity
 	// manager is alive and not mid-processing (GetSubsystem returns null after
 	// subsystem deinit, which is the guard for world-teardown ordering).
+	RemoveMoraleEffects();
 	Super::EndPlay(EndPlayReason);
 
 	UWorld* World = GetWorld();
@@ -114,6 +118,91 @@ void AUnitActor::OnAttributeChanged(const FOnAttributeChangeData& Data)
 			Registry->MarkStatsDirty(UnitHandle);
 		}
 	}
+}
+
+// -- Phase 4a GE lifecycle (PR-12; the Task 3 audit shapes the calls) --
+
+bool AUnitActor::EnsureMoraleTickApplied()
+{
+	if (!AbilitySystem || !FMoraleCVars::Enable() || !UnitHandle.IsValid())
+	{
+		return MoraleTickHandle.IsValid();
+	}
+	if (MoraleTickHandle.IsValid())
+	{
+		return true;
+	}
+	UBattleMoraleTickEffect* Def = UBattleMoraleTickEffect::StaticClass()->GetDefaultObject<UBattleMoraleTickEffect>();
+	FGameplayEffectContextHandle Context = AbilitySystem->MakeEffectContext();
+	FGameplayEffectSpec EffectSpec(Def, Context);
+	// The pin decision rides the SPEC (the def's Period is a placeholder):
+	// NO_PERIOD under the deterministic pin means the application gate never
+	// creates the natural FTimerManager timer (GameplayEffect.cpp:4497), so
+	// the pass's forced ExecutePeriodicEffect calls are the ONLY executions.
+	EffectSpec.Period = FMoraleCVars::DeterministicTick()
+		? FGameplayEffectConstants::NO_PERIOD
+		: FMoraleCVars::TickPeriod();
+	MoraleTickHandle = AbilitySystem->ApplyGameplayEffectSpecToSelf(EffectSpec);
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT MoraleTickApplied Actor=%s Unit=%u:%u Period=%.3f Pinned=%d Handle=%d"),
+		*GetName(), UnitHandle.Index, UnitHandle.Serial, EffectSpec.Period,
+		FMoraleCVars::DeterministicTick() ? 1 : 0, MoraleTickHandle.IsValid() ? 1 : 0);
+	return MoraleTickHandle.IsValid();
+}
+
+void AUnitActor::ForceMoraleTickExecution()
+{
+	if (AbilitySystem && MoraleTickHandle.IsValid())
+	{
+		AbilitySystem->ForceExecutePeriodicEffect(MoraleTickHandle);
+	}
+}
+
+void AUnitActor::ApplyFatigueBand(EBattleFatigueState State)
+{
+	if (!AbilitySystem || !FMoraleCVars::Enable())
+	{
+		return;
+	}
+	const int32 Band = static_cast<int32>(State);
+	if (Band == AppliedFatigueBand)
+	{
+		return;
+	}
+	if (FatigueBandHandle.IsValid())
+	{
+		AbilitySystem->RemoveActiveGameplayEffect(FatigueBandHandle);
+		FatigueBandHandle = FActiveGameplayEffectHandle();
+	}
+	// Fresh applies nothing: removing the previous band's GE returns the
+	// *Mod attributes to base (the table's Fresh row is all 1.0 by design).
+	if (TSubclassOf<UGameplayEffect> BandClass = BattleFatigueEffectClass(Band))
+	{
+		FGameplayEffectContextHandle Context = AbilitySystem->MakeEffectContext();
+		FGameplayEffectSpec EffectSpec(BandClass->GetDefaultObject<UGameplayEffect>(), Context);
+		EffectSpec.Period = FGameplayEffectConstants::NO_PERIOD; // infinite, static modifiers, never executes
+		FatigueBandHandle = AbilitySystem->ApplyGameplayEffectSpecToSelf(EffectSpec);
+	}
+	UE_LOG(LogMassBattle, Verbose, TEXT("EXEC_RESULT FatigueBand Actor=%s Unit=%u:%u Band=%d Applied=%d"),
+		*GetName(), UnitHandle.Index, UnitHandle.Serial, Band, FatigueBandHandle.IsValid() ? 1 : 0);
+	AppliedFatigueBand = Band;
+}
+
+void AUnitActor::RemoveMoraleEffects()
+{
+	if (AbilitySystem)
+	{
+		if (MoraleTickHandle.IsValid())
+		{
+			AbilitySystem->RemoveActiveGameplayEffect(MoraleTickHandle);
+		}
+		if (FatigueBandHandle.IsValid())
+		{
+			AbilitySystem->RemoveActiveGameplayEffect(FatigueBandHandle);
+		}
+	}
+	MoraleTickHandle = FActiveGameplayEffectHandle();
+	FatigueBandHandle = FActiveGameplayEffectHandle();
+	AppliedFatigueBand = 0;
 }
 
 const TArray<FGameplayAttribute>& UUnitAttributeSet::GetAllAttributes()

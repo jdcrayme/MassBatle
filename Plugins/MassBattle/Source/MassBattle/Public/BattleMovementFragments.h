@@ -163,6 +163,14 @@ struct FUnitFormationSharedFragment : public FMassSharedFragment
 	 *  registry OrderSerial is the source of truth). */
 	UPROPERTY() uint32 PlannedOrderSerial = 0;
 
+	/** Phase 4a (PR-12, MC5): the unit's current order is OUR rout flee --
+	 *  stamped by the morale pass (game thread) from the registry's
+	 *  bRoutFleeing bookkeeping; the servo stamps EBattleMovementState::Flee
+	 *  from it (a MOVEMENT flag, never morale state -- the A12 discipline).
+	 *  0 whenever the morale pass is gated off (flags-off identity). Never
+	 *  hashed (the flee bookkeeping is transient, the RC7 posture). */
+	UPROPERTY() uint8 bFleeMove = 0;
+
 	/** T1.7 commit rule: the squeeze/morph decision locks once made for the
 	 *  current pass -- no re-decision mid-corridor (no thrash). */
 	UPROPERTY() uint8 PassLocked = 0;

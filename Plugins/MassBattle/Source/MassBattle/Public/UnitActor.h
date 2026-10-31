@@ -10,7 +10,9 @@
 #include "AbilitySystemInterface.h"
 #include "GameplayEffect.h"
 #include "AttributeSet.h"
+#include "BattleMoraleEffects.h"
 #include "BattleTypes.h"
+#include "BattleMorale.h"
 #include "BattleSpawnLibrary.h"
 #include "UnitActor.generated.h"
 
@@ -83,6 +85,28 @@ public:
 	/** Spawn the entity roster (Task 6 spawn path) from SpawnSpec + row stats. */
 	bool SpawnEntities(FBattleSpawnResult& OutResult, FString& OutError);
 
+	// -- Phase 4a GE lifecycle (PR-12; spec morale-and-gas sections 4.8-4.9) --
+
+	/** Apply-on-first-sight of the MoraleTick GE (the morale pass calls this
+	 *  every tick; a no-op when already applied, disabled, or unspawned).
+	 *  The spec's Period rides the deterministic pin: NO_PERIOD under
+	 *  Battle.Morale.DeterministicTick=1 (no natural FTimerManager timer --
+	 *  the pass's forced ExecutePeriodicEffect calls are the ONLY
+	 *  executions, the Task 3 R-M2 verdict), TickPeriod in shipping. */
+	bool EnsureMoraleTickApplied();
+
+	/** The pin's forced period execution (game thread; the Task 3 audit:
+	 *  UAbilitySystemComponent::ExecutePeriodicEffect). */
+	void ForceMoraleTickExecution();
+
+	/** FatigueState catalog band crossing (A8): removes the previous band's
+	 *  GE and applies the new one (aggregation event, never a timer). Fresh
+	 *  applies nothing -- removal returns the *Mod attributes to base. */
+	void ApplyFatigueBand(EBattleFatigueState State);
+
+	/** Removes the MoraleTick + fatigue-band GEs (EndPlay / teardown). */
+	void RemoveMoraleEffects();
+
 	/** Registry handle once spawned; invalid before. */
 	FUnitHandle GetUnitHandle() const { return UnitHandle; }
 
@@ -128,7 +152,7 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Battle")
 	bool bIsGeneral = false;
 
-	UPROPERTY(VisibleAnywhere, Category = "Battle") TObjectPtr<UAbilitySystemComponent> AbilitySystem;
+	UPROPERTY(VisibleAnywhere, Category = "Battle") TObjectPtr<UBattleAbilitySystemComponent> AbilitySystem;
 	UPROPERTY(VisibleAnywhere, Category = "Battle") TObjectPtr<UUnitAttributeSet> AttributeSet;
 
 protected:
@@ -136,6 +160,12 @@ protected:
 
 	FUnitSpawnSpec Spec;
 	FUnitHandle UnitHandle;
+
+	/** Active MoraleTick / fatigue-band GE handles (PR-12; transient actor
+	 *  state -- the registry's morale block is the sim authority, A14). */
+	FActiveGameplayEffectHandle MoraleTickHandle;
+	FActiveGameplayEffectHandle FatigueBandHandle;
+	int32 AppliedFatigueBand = 0;
 
 	/** EDU-row -> typed stats cache (parsed rows are immutable). */
 	TMap<int32, FBattleRowStats> RowStatsCache;

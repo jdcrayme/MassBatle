@@ -1452,6 +1452,204 @@ static FAutoConsoleCommandWithWorldAndArgs GBattleOrderExitGarrison(
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BattleExec::OrderExitGarrison));
 
 }
+
+// ---- Phase 4a (PR-12): the morale surface (toggle/dump/rout fixture) ----
+
+namespace BattleExec
+{
+
+void MoraleToggle(const TArray<FString>& Args, UWorld* World)
+{
+	UUnitRegistrySubsystem* Registry = World ? World->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	if (!Registry || Args.Num() < 3)
+	{
+		UE_LOG(LogMassBattle, Display,
+			TEXT("EXEC_RESULT MoraleToggle FAIL BadArgs (need: UnitIndex Guard 0|1)"));
+		return;
+	}
+	const FUnitHandle Matched = MatchUnitIndex(Registry, FCString::Atoi(*Args[0]));
+	if (!Matched.IsValid())
+	{
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT MoraleToggle FAIL NoSuchUnit Index=%d"),
+			FCString::Atoi(*Args[0]));
+		return;
+	}
+	if (Args[1] != TEXT("Guard"))
+	{
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT MoraleToggle FAIL BadToggle %s (Guard)"), *Args[1]);
+		return;
+	}
+	const bool bValue = FCString::Atoi(*Args[2]) != 0;
+	const bool bOk = Registry->SetUnitGuardToggle(Matched, bValue);
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT MoraleToggle %s Unit=%u:%u Toggle=Guard Value=%d"),
+		bOk ? TEXT("OK") : TEXT("FAIL"), Matched.Index, Matched.Serial, bValue ? 1 : 0);
+}
+
+void MoraleDump(const TArray<FString>& Args, UWorld* World)
+{
+	UUnitRegistrySubsystem* Registry = World ? World->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	if (!Registry || Args.Num() < 1)
+	{
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT MoraleDump FAIL BadArgs (need: UnitIndex)"));
+		return;
+	}
+	const FUnitHandle Matched = MatchUnitIndex(Registry, FCString::Atoi(*Args[0]));
+	if (!Matched.IsValid())
+	{
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT MoraleDump FAIL NoSuchUnit Index=%d"),
+			FCString::Atoi(*Args[0]));
+		return;
+	}
+	FUnitMoraleStateView View;
+	Registry->GetUnitMoraleState(Matched, View);
+	static const TCHAR* StateNames[] = { TEXT("Steady"), TEXT("Wavering"), TEXT("Routing"), TEXT("Shattered") };
+	static const TCHAR* DisciplineNames[] = { TEXT("Low"), TEXT("Normal"), TEXT("Disciplined"), TEXT("Impetuous") };
+	const int32 StateIdx = FMath::Clamp(static_cast<int32>(View.RoutState), 0, 3);
+	const int32 DisciplineIdx = FMath::Clamp(static_cast<int32>(View.Discipline), 0, 3);
+	if (!View.bValid)
+	{
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT MoraleDump FAIL StaleHandle Unit=%u:%u"),
+			Matched.Index, Matched.Serial);
+		return;
+	}
+	UE_LOG(LogMassBattle, Display,
+		TEXT("EXEC_RESULT MoraleDump Unit=%u:%u State=%s RoutCount=%d Guard=%d Discipline=%s Fleeing=%d"),
+		Matched.Index, Matched.Serial, StateNames[StateIdx], View.RoutCount,
+		View.bGuardMode ? 1 : 0, DisciplineNames[DisciplineIdx], View.bRoutFleeing ? 1 : 0);
+	UE_LOG(LogMassBattle, Display,
+		TEXT("EXEC_RESULT MoraleDumpValues Unit=%u:%u Morale=%.2f Fatigue=%.2f Exertion=%.2f TickAge=%.2fs"),
+		Matched.Index, Matched.Serial, View.LastMoraleValue, View.LastFatigueValue,
+		View.ExertionIntegral,
+		Registry->FindUnitState(Matched) && View.LastMoraleTickSimTime >= 0.f
+			? (World ? World->GetTimeSeconds() - View.LastMoraleTickSimTime : -1.f)
+			: -1.f);
+	if (const FMoraleTickInputs* Inputs = Registry->FindMoraleInputs(Matched))
+	{
+		UE_LOG(LogMassBattle, Display,
+			TEXT("EXEC_RESULT MoraleDumpInputs Unit=%u:%u Base=%.2f Casualty=%.2f Spike=%.2f Odds=%.2f Mask=%d Friends=%d Aura=%.2f Shock=%.2f Height=%.2f Winning=%.2f"),
+			Matched.Index, Matched.Serial, Inputs->BaseMorale, Inputs->CasualtyFraction,
+			Inputs->FreshCasualtySpike, Inputs->LocalOdds, Inputs->ArcExposureMask,
+			Inputs->RoutingFriendsNearby, Inputs->GeneralAuraBonus, Inputs->GeneralDeathShock,
+			Inputs->HeightAdvantage, Inputs->WinningLocally);
+	}
+	else
+	{
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT MoraleDumpInputs Unit=%u:%u NONE (the pass has not folded)"),
+			Matched.Index, Matched.Serial);
+	}
+}
+
+void EnableMoralePipeline()
+{
+	// The session-on morale gates (the D-3 posture): the master flag stays
+	// default-0 until the FSM lands end-to-end; fixtures (SpawnRout, the M5
+	// sample, the T4 scenarios) flip it for their session. ONE home.
+	for (const TCHAR* Name : { TEXT("Battle.Morale.Enable") })
+	{
+		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(Name))
+		{
+			C->Set(1, ECVF_SetByCode);
+		}
+	}
+}
+
+void MoraleSpawnRout(const TArray<FString>& Args, UWorld* World)
+{
+	UUnitRegistrySubsystem* Registry = World ? World->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	UBattleCostGridSubsystem* CostGrid = World ? World->GetSubsystem<UBattleCostGridSubsystem>() : nullptr;
+	if (!Registry || !CostGrid)
+	{
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SpawnRout FAIL no world/registry"));
+		return;
+	}
+	CostGrid->ResetToFlat();
+	EnableDemoCombatPipeline();
+	EnableMoralePipeline();
+
+	// The M5 rout-cycle fixture (PR-12 item 9 / PR-14; dictionary-keyed
+	// rows, the B-3 lesson): Team 0 = a general + two adjacent infantry;
+	// Team 1 = one enemy unit engaging them frontally. The scripted half
+	// (attrition onto the center unit) rides Battle.Exec kill/attrition
+	// commands; this command spawns the SHAPE + the engagement order.
+	TArray<FEduUnit> Rows;
+	FEduParseError Err;
+	if (!LoadGoldenEduRows(Rows, Err))
+	{
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SpawnRout FAIL EDU fixture (%s)"),
+			Err.bFailed ? *Err.Message : TEXT("unreadable"));
+		return;
+	}
+
+	struct FRoutUnit
+	{
+		const TCHAR* Dictionary;
+		int32 Count;
+		FVector2D PosM;
+		float YawDeg;
+		uint8 TeamId;
+		int32 OfficerCount;
+		bool bIsGeneral;
+	};
+	const FRoutUnit Units[] = {
+		{ TEXT("Sergeant_Spearmen"), 16, FVector2D(-28.f, 0.f), 0.f, 0, 2, true },  // the general, ~28 m behind
+		{ TEXT("Peasant_Levy"), 12, FVector2D(0.f, -3.5f), 0.f, 0, 0, false },      // center (the attrition target)
+		{ TEXT("Peasant_Levy"), 12, FVector2D(0.f, 3.5f), 0.f, 0, 0, false },       // neighbor (the cascade read)
+		{ TEXT("Peasant_Levy"), 12, FVector2D(14.f, 0.f), 180.f, 1, 0, false },     // the enemy line
+	};
+
+	Registry->ResetBattleState();
+	TArray<FUnitHandle> Spawned;
+	for (const FRoutUnit& Unit : Units)
+	{
+		const int32 EduRow = FindEduRowIndexByDictionary(Rows, Unit.Dictionary);
+		if (EduRow == INDEX_NONE)
+		{
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SpawnRout FAIL unknown EDU dictionary '%s'"),
+				Unit.Dictionary);
+			return;
+		}
+		FBattleRowStats Stats;
+		FString Error;
+		if (!FBattleRowStats::FromEdu(Rows[EduRow], Stats, Error))
+		{
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SpawnRout FAIL FromEdu %s (%s)"), Unit.Dictionary, *Error);
+			return;
+		}
+		FUnitSpawnSpec Spec;
+		Spec.EduRowIndex = EduRow;
+		Spec.SoldierCount = Unit.Count;
+		Spec.UnitName = Stats.TypeName;
+		Spec.SpawnPos = Unit.PosM * 100.f;
+		Spec.SpawnYaw = Unit.YawDeg;
+		Spec.NumRanks = 2;
+		Spec.TeamId = Unit.TeamId;
+		Spec.OfficerCount = Unit.OfficerCount;
+		Spec.bIsGeneral = Unit.bIsGeneral;
+		const FBattleSpawnResult Result = UBattleSpawnLibrary::SpawnUnit(World, Spec, Stats);
+		if (!Result.Unit.IsValid())
+		{
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SpawnRout FAIL spawn %s"), Unit.Dictionary);
+			return;
+		}
+		Spawned.Add(Result.Unit);
+	}
+	// The engagement: the enemy attacks the CENTER unit (the attrition
+	// target); the general holds (the aura anchor at ~28 m -- inside the
+	// 60 m aura radius of both friendly units).
+	Registry->IssueAttackUnitOrder(Spawned[3], Spawned[1]);
+
+	FString Ids;
+	for (const FUnitHandle& H : Spawned)
+	{
+		Ids += FString::Printf(TEXT(" %u:%u"), H.Index, H.Serial);
+	}
+	UE_LOG(LogMassBattle, Display,
+		TEXT("EXEC_RESULT SpawnRout OK rows=4 (general,center,neighbor,enemy) Units=%s MoraleSession=on"),
+		*Ids);
+}
+
+} // namespace BattleExec
+
 // ---- Phase 2 task 2 registration (combat data spine probes) ----
 
 static FAutoConsoleCommandWithWorldAndArgs GBattleOrderAttackUnit(
@@ -1504,3 +1702,18 @@ static FAutoConsoleCommandWithWorldAndArgs GBattleRangedSpawnVolley(
 	TEXT("Battle.Ranged.SpawnVolley"),
 	TEXT("[line|skirmish] -- task 4 M4 gray-box fixture: archers vs a formed line at volley range, flags on; EXEC_RESULT SpawnVolley"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BattleExec::RangedSpawnVolley));
+
+static FAutoConsoleCommandWithWorldAndArgs GBattleMoraleToggle(
+	TEXT("Battle.Morale.Toggle"),
+	TEXT("<UnitIndex> <Guard> <0|1> -- spec morale-and-gas 4.11 toggle surface (MC9); EXEC_RESULT MoraleToggle"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BattleExec::MoraleToggle));
+
+static FAutoConsoleCommandWithWorldAndArgs GBattleMoraleDump(
+	TEXT("Battle.Morale.Dump"),
+	TEXT("<UnitIndex> -- rout state, values + staleness, the contribution-input breakdown, rout count, toggles; EXEC_RESULT MoraleDump lines"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BattleExec::MoraleDump));
+
+static FAutoConsoleCommandWithWorldAndArgs GBattleMoraleSpawnRout(
+	TEXT("Battle.Morale.SpawnRout"),
+	TEXT("M5 rout-cycle fixture (PR-12/PR-14): a general + two adjacent infantry vs an enemy line, morale session-on; EXEC_RESULT SpawnRout"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(&BattleExec::MoraleSpawnRout));

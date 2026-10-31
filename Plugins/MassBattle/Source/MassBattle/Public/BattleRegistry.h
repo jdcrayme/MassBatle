@@ -14,6 +14,7 @@
 #include "Subsystems/WorldSubsystem.h"
 #include "Misc/MTAccessDetector.h"
 #include "BattleTypes.h"
+#include "BattleMorale.h"
 #include "BattleRegistry.generated.h"
 
 struct FBattleSaveData;
@@ -73,6 +74,22 @@ struct FTeamGeneralRecord
 {
 	FUnitHandle Unit;
 	FMassEntityHandle OfficerEntity;
+};
+
+/** The morale read surface's view (PR-12, A11 order-surface pattern; the
+ *  A4 dump/diagnostic consumers). Defaults on a stale handle (bValid=false). */
+struct FUnitMoraleStateView
+{
+	bool bValid = false;
+	EBattleRoutState RoutState = EBattleRoutState::Steady;
+	uint8 RoutCount = 0;
+	float LastMoraleValue = 0.f;
+	float LastFatigueValue = 0.f;
+	float LastMoraleTickSimTime = -1.f;
+	float ExertionIntegral = 0.f;
+	bool bGuardMode = false;
+	EBattleDiscipline Discipline = EBattleDiscipline::Normal;
+	bool bRoutFleeing = false;
 };
 
 /**
@@ -389,6 +406,49 @@ public:
 	void RebuildMoraleAuxState();
 	void RebuildMoraleAuxStateInternal();
 
+	// -- Phase 4a morale-pass surface (PR-12; spec morale-and-gas §3.1/§4.4-4.6) --
+
+	/** The pass's per-unit input block (registry-resident scratch, EC9: the
+	 *  TMap entry is created at the morale spawn stamp / first fold and
+	 *  cleared with the battle -- never per-tick allocated). Written by the
+	 *  morale pass at the tick, read by the exec calc (A14: the block is the
+	 *  only channel from the pass into the stack evaluation). */
+	FMoraleTickInputs* FindMoraleInputsMutable(FUnitHandle Handle);
+	const FMoraleTickInputs* FindMoraleInputs(FUnitHandle Handle) const;
+
+	/** The exec calc's one registry write (the T4.8 staleness stamp; sim
+	 *  game-seconds). Locked wrapper -- the exec calc runs inside GE
+	 *  execution, outside any processor's access scope. */
+	void StampMoraleTickTime(FUnitHandle Handle, float SimTimeS);
+
+	/** The morale tick's per-world cadence accumulator (the
+	 *  CombatClusterCooldown pattern: processor-owned, registry-stored). */
+	float GetMoraleTickCooldown() const { return MoraleTickCooldown; }
+	void SetMoraleTickCooldown(float Seconds) { MoraleTickCooldown = Seconds; }
+
+	/** The RC7 generalization (A7, spec §4.4-4.5; game thread). Decision
+	 *  EBattleRoutDecision::Flee: auto-flagged Move DIRECTLY AWAY from
+	 *  FleeAnchorCm (facing away), `FlagUnitEngagementsDead` both directions,
+	 *  bRoutFleeing bookkeeping with the order-serial guard (a player order
+	 *  bump cancels our flee -- re-evaluated next tick). Decision
+	 *  RallyStop: auto-flagged Stop; the pairs were already released at the
+	 *  break. Returns false (no-op) when the handle is stale or a player
+	 *  order supersedes (the RC7 guard). */
+	bool ApplyUnitRoutDecision(FUnitHandle Handle, int32 Decision,
+		const FVector2D& FleeAnchorCm, float FacingYawDeg);
+
+	/** The morale read surface (the A11 pattern; defaults + bValid=false on
+	 *  a stale handle). */
+	void GetUnitMoraleState(FUnitHandle Handle, FUnitMoraleStateView& Out) const;
+
+	/** True when the unit holds at least one live engagement record (either
+	 *  direction) -- the morale pass's bFighting exertion input (spec 4.3). */
+	bool UnitHasLiveEngagement(FUnitHandle Handle) const;
+
+	/** The team shock decay push (spec 4.2): every entry decays by the
+	 *  closed form at the morale pass's tick. Locked wrapper (game thread). */
+	void DecayMoraleTeamShocks(float Dt);
+
 	/** Idempotent: marking twice in one frame leaves one dirty entry. */
 	void MarkStatsDirty(FUnitHandle Handle);
 	void ClearStatsDirty(FUnitHandle Handle);
@@ -559,4 +619,12 @@ private:
 	 *  (rebuilt from specs at restore, RebuildMoraleAuxState). */
 	TMap<uint8, FTeamGeneralRecord> TeamGenerals;
 	TMap<uint8, float> TeamGeneralDeathShock;
+
+	/** Per-unit morale input blocks (the exec calc's read side; entries
+	 *  created at the morale spawn stamp / first fold, cleared with the
+	 *  battle -- EC9, no per-tick allocation). */
+	TMap<FUnitHandle, FMoraleTickInputs> MoraleInputsScratch;
+
+	/** Morale tick cadence accumulator (game thread only). */
+	float MoraleTickCooldown = 0.f;
 };

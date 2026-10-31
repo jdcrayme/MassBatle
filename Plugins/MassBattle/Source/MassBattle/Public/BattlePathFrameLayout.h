@@ -36,4 +36,14 @@ namespace FPathFrameLayout
 	 *  LayoutOffset = (-rank*RankSpacing, (file-(files-1)/2)*FileSpacing). */
 	MASSBATTLE_API FVector2D AnchorFormula(const FVector2D& Anchor, float FacingYawDeg, int32 Rank, int32 File, int32 NumFiles,
 		float RankSpacing, float FileSpacing);
+
+	/** Phase 4a officer slot (PR-12, brief A5; spec morale-and-gas section 4.7):
+	 *  the front-center-forward position of officer `Ordinal` of `OfficerCount`
+	 *  -- one rank spacing AHEAD of the front rank (rank -1), files centered
+	 *  (fractional file positions interleave for even counts), world meters.
+	 *  Consumers: FormationSlotResolve's target override (gated
+	 *  Battle.Morale.Enable; flags-off keeps officers on their grid slots --
+	 *  the byte-identity invariant). */
+	MASSBATTLE_API FVector2D OfficerSlotPositionM(const FVector2D& Anchor, float FacingYawDeg,
+		int32 OfficerOrdinal, int32 OfficerCount, int32 NumFiles, float FileSpacing, float RankSpacing);
 }

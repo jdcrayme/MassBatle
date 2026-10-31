@@ -41,3 +41,38 @@ Everything the morale core needs is staged: the `BattleMorale` seam is T4.1/T4.2
 ## Rollback
 
 `Battle.Morale.Enable=0` restores byte-identical pre-morale behavior: no GE applied, no catalog, the processor early-outs, the death-path officer branch gates off. Every subsystem addition is additive; the UnitSync corrections are the one behavior-visible pair (both couplings verified consumer-free -- disclosed, not reverted by the flag).
+
+## Status (2026-10-31, the PR-chain session: EXECUTED with two disclosures)
+
+Executed in full except the item-10 flip (evidence-blocked) and the
+overlay rows (PR-14's editor-session item). Landing record:
+`Docs/phases/phase-4/progress.md` (PR-12 section + the dated
+discrepancies). Evidence:
+
+- Build green (`MassBattleEditor Win64 Development`); unit tier **83/83**;
+  func tier **19/27 = exactly the expected 8** (four known + four
+  skeletons) with the flag at its 0 default -- the flags-off identity.
+- The Task 3 verdicts drove the shape: the pin applies the MoraleTick spec
+  with `Period = NO_PERIOD` (no natural timer; the forced
+  `ExecutePeriodicEffect` calls are the ONLY executions); the symbol is
+  PROTECTED in 5.8.4 -- the audited amendment is the project ASC subclass
+  (`UBattleAbilitySystemComponent`), the same engine path.
+- `MakeOutgoingSpec` (not the ability-side name) + direct
+  `FGameplayEffectSpec(Def, Context)` construction; Override mods for the
+  per-tick Morale/Fatigue writes (Additive would accumulate per period --
+  the instant/periodic path applies to the BASE value).
+- F4-6 (new machine lesson): the 5.8 Mass scheduler skips zero-query
+  processors -- the pass carries a nominal never-iterated query.
+- The UnitSync corrections are landed and disclosed (both couplings were
+  consumer-free; MoraleBonus IS hash-covered, so the aura-sum change moves
+  full-hash VALUES -- the block-10 disclosure class, no stored literals).
+- The item-10 flip is EVIDENCE-BLOCKED: with Enable=1 the probe ran the
+  pipeline live (MoraleTickApplied/MoraleRout/RoutFlee lines) but
+  `PairLifecycle` regressed -- the levy's base morale (2) sits under the
+  placeholder WaveringThreshold (4.0) and one casualty routes it (Low
+  offset +2). Two placeholder families need the T6.1 co-audit; the flag
+  stays 0 and the T4 scenarios set it session-on (PR-13's MoraleSetCvars).
+- Flee speed rides the walk default (the member-speed cap bounds routers
+  like any march; the run profile is the servo's designed surface --
+  disclosed). WinningLocally's kills half has no worker-side feed v1
+  (KillWindow stays 0 -- disclosed).

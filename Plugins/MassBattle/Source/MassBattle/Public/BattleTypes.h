@@ -151,6 +151,16 @@ enum class EBattleRoutState : uint8
 	Shattered = 3
 };
 
+/** The rout apply's decision (PR-12, A7 -- the RC7 apply generalized): Flee
+ *  issues the auto-flagged Move directly away from the threat anchor;
+ *  RallyStop issues the auto-flagged Stop (pairs were released at the
+ *  break). Kept int at the registry API (the ESkirmishDecision precedent). */
+enum class EBattleRoutDecision : uint8
+{
+	Flee = 0,
+	RallyStop = 1
+};
+
 
 /** Plain-struct mirror of the closed GAS attribute set (arch §10.1). Cached in
  *  the registry; UnitSync derives the shared-fragment multipliers from it. */
@@ -306,6 +316,27 @@ struct FUnitRuntimeState
 	/** Rally attempts so far in the current rout (the roll's count input,
 	 *  A13; resets on rally or on a new break). */
 	uint32 RallyAttempts = 0;
+
+	// -- PR-12 morale-pass transient bookkeeping (NOT saved, NOT hashed --
+	// the LastMoraleTickSimTime class; a restored battle re-derives) --
+	/** Decaying recent-loss window for the WinningLocally term (spec 4.2;
+	 *  NotifyMoraleCasualty feeds it). The KILLS half of the window has no
+	 *  game-thread feed yet (the resolution pass runs worker-side; kill
+	 *  attribution is a disclosed v1 gap) -- the field exists so the feed
+	 *  lands without a layout change. */
+	float DeathWindow = 0.f;
+	float KillWindow = 0.f;
+	/** The nearest enemy envelope anchor at the last fold (centimeters) --
+	 *  the flee order's "directly away from the nearest threat" anchor. */
+	FVector2D LastThreatAnchorCm = FVector2D::ZeroVector;
+	bool bThreatValid = false;
+
+	/** Impetuous auto-charge bookkeeping (A11/MC9; transient like the flee
+	 *  bookkeeping): true while the current order is OUR auto-charge
+	 *  AttackUnit; the serial check cancels on a player bump (re-issues only
+	 *  onto idle or its own charge, never over a player order). */
+	bool bAutoCharging = false;
+	uint32 AutoChargeSerial = 0;
 
 };
 

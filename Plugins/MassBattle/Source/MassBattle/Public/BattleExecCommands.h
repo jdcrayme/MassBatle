@@ -89,4 +89,11 @@ namespace BattleExec
 
 	// -- Phase 3 task 7 (T3.6 perf gate; the T2.9 pattern) --
 	MASSBATTLE_API void RangedPerfStress(const TArray<FString>& Args, UWorld* World);
+
+	// -- Phase 4a (PR-12: the morale surface -- session gates, toggle, dump,
+	// the M5 rout-cycle fixture) --
+	MASSBATTLE_API void EnableMoralePipeline();
+	MASSBATTLE_API void MoraleToggle(const TArray<FString>& Args, UWorld* World);
+	MASSBATTLE_API void MoraleDump(const TArray<FString>& Args, UWorld* World);
+	MASSBATTLE_API void MoraleSpawnRout(const TArray<FString>& Args, UWorld* World);
 }

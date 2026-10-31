@@ -10,6 +10,33 @@
 
 ## Discrepancies (dated, newest first)
 
+- **2026-10-31 (PR-12, the Enable flip is EVIDENCE-BLOCKED)** -- the task-6
+  flip (`Battle.Morale.Enable` default 0 -> 1) regressed the PR gate on the
+  probe: `PairLifecycle` failed with `MoraleRout Unit=1:1 State=Wavering
+  Morale=2.00` at spawn and `State=Routing Morale=0.62` after casualties.
+  Root cause: the EDU fixture's levy base morale (2) sits BELOW the
+  placeholder WaveringThreshold (4.0), and the Low-discipline break offset
+  (+2 on the 0.0 break threshold) puts levy one casualty from routing --
+  two A16 placeholder families (the 4.12 thresholds vs the phase-0 fixture
+  stat_mental values) never co-audited. Per ground rule 6's gate-proven
+  intent the default stays 0; the cvar help text carries the finding; the
+  T4 scenarios (PR-13) set the flag session-on so the gates are unaffected.
+  The flip is a T6.1-audit follow-up with this evidence recorded.
+- **2026-10-31 (PR-12, F4-6)** -- the 5.8 Mass scheduler SKIPS zero-query
+  processors (`LogMass: Warning: MoraleTickProcessor_0 has no registered
+  queries while being asked for matching archetypes`): the pass never ran
+  until a nominal `FMassEntityQuery` (FOwnerUnitFragment, never iterated)
+  was registered. The first Enable=1 probe was invalid before the fix; the
+  re-run after it produced the flip evidence above.
+- **2026-10-31 (PR-12, API)** -- `UAbilitySystemComponent::
+  ExecutePeriodicEffect` is PROTECTED in 5.8.4 (the natural timer's delegate
+  binds it from engine-internal friend context; no external caller exists).
+  Amendment to the Task 3 audit (engine-api Part A section 16 row 9): the
+  deterministic pin's forced execution goes through a project ASC subclass
+  (`UBattleAbilitySystemComponent::ForceExecutePeriodicEffect` -- the same
+  engine code path, no reimplementation). The subclass's vtable pulled
+  `UGameplayTasksComponent` symbols: `GameplayTasks` added to the module
+  dependencies (the MassCore reality-fix pattern).
 - **2026-10-31 (Task 3, API audit)** -- brief section 4 named
   `UAbilitySystemComponent::MakeOutgoingGameplayEffectSpec`; in pinned 5.8.4
   that name exists ONLY on `UGameplayAbility`
@@ -135,6 +162,72 @@
   The explicit "count 8" soak-line evidence is the nightly's
   `BattleMovementSoakController` FINAL line -- deferred with Tasks 8/9
   (no nightly was run in this pass).
+
+## PR-12 -- the morale pipeline (brief Tasks 5-6 content; the writeup's ten items)
+
+- [pr12.1] `BattleMoraleEffects.h/.cpp` (new): `UBattleMoraleTickEffect`
+  (infinite, one execution definition), `UBattleMoraleExecCalc` (registry-fed
+  inputs -> `EvaluateMorale` ONCE (A14) -> Override writes on Morale +
+  Fatigue; the T4.8 staleness stamp is its one registry write, sim game
+  seconds), `UBattleAbilitySystemComponent` (the protected-symbol forward),
+  the six-class FatigueState catalog (additive `*Mod` writes at the golden
+  table minus 1; Fresh never applies; the reload multiplier rides
+  RangedAttackMod -- disclosed).
+- [pr12.2] `MoraleTickProcessor.h/.cpp` (new): the game-thread pass, group
+  Battle, after TallyProcessor / before RangedFireProcessor. Per-frame cost
+  = one accumulator compare; ALL work at the tick boundary (decay pushes,
+  exertion, the geometric folds over records/envelopes, the pin's forced
+  executions, the mirror + FSM + rally in sorted-handle order, the
+  auto-charge, the flee flag, the metrics). Nominal query for the 5.8
+  scheduler (F4-6).
+- [pr12.3] Registry: `MoraleInputsScratch` (EC9 per-battle entries),
+  `FindMoraleInputs(Mutable)`, `StampMoraleTickTime`, the tick-cooldown
+  accumulator, `ApplyUnitRoutDecision` (the RC7 generalization: flee Move
+  away from the threat + serial guard + EXEC_RESULT lines; rally Stop),
+  `GetUnitMoraleState`, `UnitHasLiveEngagement`, `DecayMoraleTeamShocks`;
+  `FUnitRuntimeState` += DeathWindow/KillWindow/threat anchor/auto-charge
+  bookkeeping (transient class); `NotifyMoraleCasualty` feeds the
+  DeathWindow; `ResetBattleState` clears the scratch.
+- [pr12.4] UnitActor: `EnsureMoraleTickApplied` (apply-on-first-sight; the
+  spec's Period rides the pin: NO_PERIOD under DeterministicTick=1 -- no
+  natural timer, the Task 3 verdict), `ForceMoraleTickExecution`,
+  `ApplyFatigueBand` (the catalog crossing), `RemoveMoraleEffects`
+  (EndPlay); the ASC is now the subclass.
+- [pr12.5] UnitSync corrections (A8/A15/ADR-36, the R-M9 grep posture:
+  zero consumers): `FatigueAttackMult/DefenseMult` -> identity 1.f (the
+  catalog owns fatigue through the *Mod aggregation); `MoraleBonus` -> the
+  aura sum (the input block's GeneralAuraBonus; the absolute level no
+  longer leaks into a bonus). D-4: the AmmoPool GAS mirror moved from the
+  fire pass to UnitSync (single mirror writer; the mirror runs for every
+  chunk -- the fragment ammo sum changes without the snapshot dirty flag).
+- [pr12.6] Officer placement (A5): `FPathFrameLayout::OfficerSlotPositionM`
+  (front-center-forward, rank -1, fractional-file centering) +
+  FormationSlotResolve's override (gated `Battle.Morale.Enable`, skipped
+  while garrison-filing; officers excluded from the dressing-error metric).
+  Servo: `bFleeMove` (formation fragment) stamps `EBattleMovementState::Flee`
+  (a movement flag, never morale state -- A12).
+- [pr12.7] ExecBridge: `Battle.Morale.Toggle <Unit> Guard <0|1>`,
+  `Battle.Morale.Dump <Unit>` (state/values/staleness + the ten-term input
+  breakdown), `Battle.Morale.SpawnRout` (the M5 fixture: general + two
+  adjacent + enemy line, dictionary-keyed, morale session-on), and
+  `EnableMoralePipeline` (the D-3 session-gate pattern). Metrics:
+  MoraleMs/TickAgeMax/Routs/Rallies/Shattered/OfficerDeaths/AuraActive in
+  ResetDiagnostics + BattleMetrics (APPENDED fields, the F14 rule);
+  RecordOfficerDeath rides the death-path officer branch.
+- [pr12.8] Evidence: build green (the only tree warnings are the
+  pre-existing C4457 class); unit tier **83/83** (Enable=0; the flags-off
+  identity); func tier **19/27 = exactly the expected 8** (four known +
+  four skeletons; PairLifecycle back green). The Enable=1 probe (after
+  F4-6's fix): the pipeline live end to end -- `MoraleTickApplied` +
+  `MoraleRout` wavering/routing with `RoutFlee` orders in the func log --
+  with PairLifecycle's morale-driven regression the recorded flip blocker
+  (the disclosure above). SpawnRout's PIE/evidence run rides the next
+  editor session (PR-14's session; the fixture is registered).
+- [pr12.9] NOT done here (disclosed): the `Battle.Morale.Enable` -> 1 flip
+  (evidence-blocked, see the discrepancy); the morale overlay rows
+  (morale bars/aura rings/flee arrows) are PR-14's editor-session item with
+  the counters in place; WinningLocally's kills half has no feed (the
+  resolution pass runs worker-side -- KillWindow stays 0, disclosed).
 
 ## Deferred to the implementing run (the brief's Tasks 1-9)
 

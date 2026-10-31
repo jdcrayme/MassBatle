@@ -473,6 +473,17 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 				bCombatOverride = true;
 			}
 
+			// Phase 4a (PR-12, MC5): the unit's rout flee stamps the Flee
+			// movement state. The morale pass owns the flag (a MOVEMENT
+			// flag, not morale state -- the A12 discipline); pairs were
+			// released at the break, so the combat override above cannot
+			// mask it (an entity still paired while its unit routs keeps
+			// its pair state until the release lands).
+			if (Formation.bFleeMove != 0 && !bCombatOverride)
+			{
+				State = EBattleMovementState::Flee;
+			}
+
 			// Formation-flow v2 (owner ask 2026-10-28: "entity slot seeking
 			// speed needs to be significantly higher than the unit movement
 			// speed"): error-gated seek boost. A dressed entity keeps the

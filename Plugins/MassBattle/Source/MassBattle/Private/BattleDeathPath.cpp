@@ -218,6 +218,10 @@ void UBattleDeathSignalReceiver::SignalEntities(FMassEntityManager& EntityManage
 					OfficerPayload.Target = UnitActor;
 					OfficerPayload.EventMagnitude = static_cast<float>(RosterIndex);
 					UAbilitySystemBlueprintLibrary::SendGameplayEventToActor(UnitActor, OfficerTag, OfficerPayload);
+					if (UBattleDebugSubsystem* DebugSub = Context.GetWorld()->GetSubsystem<UBattleDebugSubsystem>())
+					{
+						DebugSub->RecordOfficerDeath(); // B.4 morale counter (PR-12)
+					}
 				}
 				// (c) the general: team shock + record invalidation + the
 				//     team-wide event fan-out.

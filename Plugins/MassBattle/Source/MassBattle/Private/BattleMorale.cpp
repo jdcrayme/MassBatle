@@ -10,9 +10,13 @@ namespace
 	TAutoConsoleVariable<int32> GCMoraleEnable(
 		TEXT("Battle.Morale.Enable"),
 		0,
-		TEXT("Master morale flag (tick GE + FSM + effects). Flipped to default 1 at "
-			 "task 6's FSM landing end-to-end (ground rule 6; B.8 item 6). 0 = "
-			 "pre-morale behavior: no GE applied, no catalog, the pass early-outs."),
+		TEXT("Master morale flag (tick GE + FSM + effects). The task-6 flip to "
+			 "default 1 is EVIDENCE-BLOCKED (measured 2026-10-31): the fixture's "
+			 "levy base morale (2) sits below the placeholder WaveringThreshold "
+			 "(4.0), so levy units waver at spawn and route at one casualty -- "
+			 "PairLifecycle regressed on the flip probe (Morale=2.00 wavering, "
+			 "0.62 routing). The flip waits for the T6.1 threshold audit; the "
+			 "T4 scenarios and fixtures set the flag session-on."),
 		ECVF_Default);
 
 	TAutoConsoleVariable<float> GCMoraleTickPeriod(

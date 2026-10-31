@@ -235,6 +235,9 @@ void UUnitRegistrySubsystem::SetUnitMoraleSpawnState(FUnitHandle Handle, EBattle
 	State->Discipline = Discipline;
 	State->OfficerRosterBase = OfficerCount > 0 ? OfficerRosterBase : INDEX_NONE;
 	State->OfficerCount = FMath::Clamp(OfficerCount, 0, 3);
+	// The exec calc's input block rides the same stamp (EC9: one entry per
+	// unit per battle, zeroed -- the pass folds into it).
+	MoraleInputsScratch.Add(Handle, FMoraleTickInputs());
 	if (bIsGeneral && OfficerCount > 0)
 	{
 		const FUnitSpawnSpec* Spec = SpecsByIndex.Find(Handle.Index);
@@ -286,6 +289,10 @@ void UUnitRegistrySubsystem::NotifyMoraleCasualty(FUnitHandle Handle, bool bOffi
 		const float Amplitude = FMoraleCVars::SpikePerCasualty()
 			* (bOfficer ? FMoraleCVars::OfficerSpikeMultiplier() : 1.f);
 		State->FreshCasualtySpike += Amplitude;
+		// The WinningLocally window's loss half (spec §4.2): every death adds
+		// 1; the pass decays it. The kills half has no game-thread feed yet
+		// (KillWindow stays 0 v1 -- disclosed).
+		State->DeathWindow += 1.f;
 		UE_LOG(LogMassBattle, Verbose, TEXT("MoraleCasualty Unit=%u:%u Officer=%d Spike=%+.2f"),
 			Handle.Index, Handle.Serial, bOfficer ? 1 : 0, State->FreshCasualtySpike);
 	}
@@ -366,6 +373,168 @@ void UUnitRegistrySubsystem::RebuildMoraleAuxStateInternal()
 			Record.OfficerEntity = State.Roster[State.OfficerRosterBase];
 		}
 	}
+}
+
+// -- Phase 4a morale-pass surface (PR-12) --
+
+FMoraleTickInputs* UUnitRegistrySubsystem::FindMoraleInputsMutable(FUnitHandle Handle)
+{
+	// No access scope: game-thread-only pass scratch, the same posture as the
+	// CombatClusterCooldown accumulator. Entries persist per battle (EC9).
+	return MoraleInputsScratch.Find(Handle);
+}
+
+const FMoraleTickInputs* UUnitRegistrySubsystem::FindMoraleInputs(FUnitHandle Handle) const
+{
+	return MoraleInputsScratch.Find(Handle);
+}
+
+void UUnitRegistrySubsystem::StampMoraleTickTime(FUnitHandle Handle, float SimTimeS)
+{
+	// The exec calc's one registry write (the T4.8 staleness stamp). Locked:
+	// GE execution runs outside any processor's access scope.
+	UE_MT_SCOPED_WRITE_ACCESS(AccessDetector);
+	if (FUnitRuntimeState* State = Units.Find(Handle))
+	{
+		State->LastMoraleTickSimTime = SimTimeS;
+	}
+}
+
+bool UUnitRegistrySubsystem::ApplyUnitRoutDecision(FUnitHandle Handle, int32 Decision,
+	const FVector2D& FleeAnchorCm, float FacingYawDeg)
+{
+	// The RC7 apply generalized (A7, spec morale-and-gas sections 4.4-4.5):
+	// the order-serial guard, the auto-flag bookkeeping, and the EXEC_RESULT
+	// lines mirror ApplyUnitSkirmishDecision.
+	if (!Handle.IsValid())
+	{
+		return false;
+	}
+	bool bRoutFleeing = false;
+	uint32 RoutFleeSerial = 0;
+	FUnitOrder::EType OrderType = FUnitOrder::EType::None;
+	uint32 OrderSerial = 0;
+	{
+		UE_MT_SCOPED_READ_ACCESS(AccessDetector);
+		const FUnitRuntimeState* State = Units.Find(Handle);
+		if (!State)
+		{
+			return false;
+		}
+		bRoutFleeing = State->bRoutFleeing;
+		RoutFleeSerial = State->RoutFleeSerial;
+		OrderType = State->CurrentOrder.Type;
+		OrderSerial = State->OrderSerial;
+	}
+
+	if (bRoutFleeing && RoutFleeSerial != OrderSerial)
+	{
+		// A player order superseded our flee: cancel the bookkeeping, never
+		// re-issue while that order stands (the FSM re-evaluates next tick).
+		UE_MT_SCOPED_WRITE_ACCESS(AccessDetector);
+		if (FUnitRuntimeState* State = Units.Find(Handle))
+		{
+			State->bRoutFleeing = false;
+		}
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT RoutFleeCancel Unit=%u:%u PlayerOrderSerial=%u"),
+			Handle.Index, Handle.Serial, OrderSerial);
+		return false;
+	}
+
+	if (Decision == static_cast<int32>(EBattleRoutDecision::Flee))
+	{
+		// Displaceable orders: idle/stop/attack-approach/OUR OWN flee (a
+		// refresh re-aims away from the CURRENT threat). A player Move/
+		// Garrison is movement intent and is never overridden.
+		const bool bDisplaceable = OrderType == FUnitOrder::EType::None
+			|| OrderType == FUnitOrder::EType::Stop
+			|| OrderType == FUnitOrder::EType::AttackUnit
+			|| OrderType == FUnitOrder::EType::AttackMove
+			|| (bRoutFleeing && RoutFleeSerial == OrderSerial);
+		if (!bDisplaceable)
+		{
+			return false;
+		}
+		// FleeAnchorCm is the MOVE TARGET the caller derived (mirrored away
+		// from the threat); the facing is away-from-threat. The command rides
+		// the default walk speed -- the member-speed cap (WalkSpeed x
+		// SpeedMult) bounds routers like any march; the run profile is the
+		// servo's designed surface (disclosed in the phase report).
+		IssueMoveOrder(Handle, FleeAnchorCm, FacingYawDeg);
+		UE_MT_SCOPED_WRITE_ACCESS(AccessDetector);
+		if (FUnitRuntimeState* State = Units.Find(Handle))
+		{
+			State->bRoutFleeing = true;
+			State->RoutFleeSerial = State->OrderSerial;
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT RoutFlee Unit=%u:%u AwayFrom=(%.1f,%.1f)m Facing=%.1f Serial=%u RoutCount=%d"),
+				Handle.Index, Handle.Serial, FleeAnchorCm.X * 0.01f, FleeAnchorCm.Y * 0.01f,
+				FacingYawDeg, State->OrderSerial, State->RoutCount);
+		}
+		return true;
+	}
+
+	if (Decision == static_cast<int32>(EBattleRoutDecision::RallyStop))
+	{
+		// The rally apply: halt the flee (pairs were released at the break;
+		// the assign pass re-pairs naturally once the unit is Steady/Wavering
+		// and in contact again).
+		IssueStopOrder(Handle);
+		UE_MT_SCOPED_WRITE_ACCESS(AccessDetector);
+		if (FUnitRuntimeState* State = Units.Find(Handle))
+		{
+			State->bRoutFleeing = false;
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT RallyApplied Unit=%u:%u Stop Serial=%u RoutCount=%d"),
+				Handle.Index, Handle.Serial, State->OrderSerial, State->RoutCount);
+		}
+		return true;
+	}
+	return false;
+}
+
+bool UUnitRegistrySubsystem::UnitHasLiveEngagement(FUnitHandle Handle) const
+{
+	UE_MT_SCOPED_READ_ACCESS(AccessDetector);
+	for (const TPair<FEngagementKey, FEngagementRecord>& Pair : Engagements)
+	{
+		if (Pair.Value.bDead == 0 && (Pair.Key.Attacker == Handle || Pair.Key.Defender == Handle))
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+void UUnitRegistrySubsystem::DecayMoraleTeamShocks(float Dt)
+{
+	// Spec section 4.2: the team-wide general-death shock decays by the
+	// same closed form as the per-unit spike; the pass pushes it per tick.
+	UE_MT_SCOPED_WRITE_ACCESS(AccessDetector);
+	for (TPair<uint8, float>& Pair : TeamGeneralDeathShock)
+	{
+		Pair.Value = EvaluateDecay(Pair.Value, Dt, FMoraleCVars::GeneralShockHalfLifeS());
+	}
+}
+
+void UUnitRegistrySubsystem::GetUnitMoraleState(FUnitHandle Handle, FUnitMoraleStateView& Out) const
+{
+	UE_MT_SCOPED_READ_ACCESS(AccessDetector);
+	const FUnitRuntimeState* State = Units.Find(Handle);
+	if (!State)
+	{
+		Out = FUnitMoraleStateView();
+		return;
+	}
+	Out.bValid = true;
+	Out.RoutState = State->RoutState;
+	Out.RoutCount = State->RoutCount;
+	Out.LastMoraleValue = State->LastMoraleValue;
+	Out.LastFatigueValue = State->LastFatigueValue;
+	Out.LastMoraleTickSimTime = State->LastMoraleTickSimTime;
+	Out.ExertionIntegral = State->ExertionIntegral;
+	Out.bGuardMode = State->bGuardMode;
+	Out.Discipline = State->Discipline;
+	Out.bRoutFleeing = State->bRoutFleeing;
 }
 
 bool UUnitRegistrySubsystem::SetUnitFireToggles(FUnitHandle Handle, bool bFireAtWill, bool bSkirmish)
@@ -1129,6 +1298,8 @@ void UUnitRegistrySubsystem::ResetBattleState()
 	// battle-scoped with the rest of the registry.
 	TeamGenerals.Reset();
 	TeamGeneralDeathShock.Reset();
+	MoraleInputsScratch.Reset();
+	MoraleTickCooldown = 0.f;
 	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT ResetBattleState ok"));
 }
 

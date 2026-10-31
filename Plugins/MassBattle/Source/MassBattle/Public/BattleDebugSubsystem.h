@@ -186,6 +186,29 @@ public:
 	int32 GetGarrisonFilingTicksAvg() const { return GarrisonFilings > 0 ? GarrisonFilingTicksTotal / GarrisonFilings : 0; }
 	int32 GetGarrisonQueueWaitTicksAvg() const { return GarrisonQueueWaits > 0 ? GarrisonQueueWaitTicksTotal / GarrisonQueueWaits : 0; }
 
+	// -- Phase 4a morale metrics (B.8 item 4; PR-12; game thread writers) --
+
+	/** The morale pass cost (the TallyMs pattern; dumped in BattleMetrics). */
+	void RecordMoraleMs(double Ms) { MoraleMs = Ms; }
+	double GetMoraleMs() const { return MoraleMs; }
+	/** The T4.8 staleness sample: max value age at the last morale tick
+	 *  (sim seconds; the MC1 bound is one period). */
+	void RecordMoraleTickAge(float AgeS) { TickAgeMax = FMath::Max(TickAgeMax, AgeS); }
+	float GetTickAgeMax() const { return TickAgeMax; }
+	/** Rout FSM + officer event counters (the soak variant's FINAL-line
+	 *  fields read these). */
+	void RecordRout() { ++Routs; }
+	void RecordRally() { ++Rallies; }
+	void RecordShattered() { ++Shattered; }
+	void RecordOfficerDeath() { ++OfficerDeaths; }
+	int32 GetRouts() const { return Routs; }
+	int32 GetRallies() const { return Rallies; }
+	int32 GetShattered() const { return Shattered; }
+	int32 GetOfficerDeaths() const { return OfficerDeaths; }
+	/** Units under a living general's aura at the last morale tick. */
+	void SetAuraActiveCount(int32 Count) { AuraActive = Count; }
+	int32 GetAuraActive() const { return AuraActive; }
+
 	/** Test hook: zero the diagnostic counters (scenario start). */
 	void ResetDiagnostics();
 
@@ -239,6 +262,15 @@ private:
 	int32 GarrisonFilingTicksTotal = 0;
 	int32 GarrisonQueueWaits = 0;
 	int32 GarrisonQueueWaitTicksTotal = 0;
+
+	// Phase 4a morale metric accumulators (game thread only).
+	double MoraleMs = 0.0;
+	float TickAgeMax = 0.f;
+	int32 Routs = 0;
+	int32 Rallies = 0;
+	int32 Shattered = 0;
+	int32 OfficerDeaths = 0;
+	int32 AuraActive = 0;
 
 	FCriticalSection OverlayMutex;
 	TArray<FBattleOverlayLine> PendingOverlayLines;
