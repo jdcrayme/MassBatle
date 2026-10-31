@@ -477,7 +477,8 @@ void ADemoPlayerController::OnLMBReleased()
 	bMarqueeActive = false;
 
 	UDemoUnitVisualSubsystem* Visuals = VisualSubsystem();
-	if (!Visuals)
+	UUnitRegistrySubsystem* Registry = GetWorld() ? GetWorld()->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	if (!Visuals || !Registry)
 	{
 		return;
 	}
@@ -494,6 +495,85 @@ void ADemoPlayerController::OnLMBReleased()
 
 	if (bClick)
 	{
+		// -- PR-2 banner clicks FIRST (the M2TW world layer): the banners are
+		// the primary pick surface; the world pick below stays the fallback
+		// for clicks between banners. Friendly banner: select (shift toggles;
+		// double-click selects all units of that EDU type). Enemy banner with
+		// a non-empty selection: ATTACK it (the same verb the RMB-on-enemy
+		// path issues). --
+		FUnitHandle BannerUnit;
+		if (Visuals->FindBannerAtScreen(Current, BannerUnit))
+		{
+			const EDemoTeam BannerTeam = Visuals->GetTeam(BannerUnit);
+			if (BannerTeam == EDemoTeam::Player)
+			{
+				const double Now = FPlatformTime::Seconds();
+				const bool bDoubleClick = LastBannerClick == BannerUnit
+					&& (Now - LastBannerClickTime) < 0.35;
+				LastBannerClickTime = Now;
+				LastBannerClick = BannerUnit;
+
+				TArray<FUnitHandle> TypeGroup;
+				if (bDoubleClick)
+				{
+					// Select all friendly units of the same EDU type (the spec's
+					// D.16 double-click; grouped by the spawn spec's row).
+					const FUnitSpawnSpec* ClickedSpec = Registry->FindUnitSpec(BannerUnit);
+					TArray<FUnitHandle> PlayerUnits;
+					Visuals->GetUnitsOfTeam(EDemoTeam::Player, PlayerUnits);
+					for (const FUnitHandle& H : PlayerUnits)
+					{
+						const FUnitSpawnSpec* Spec = Registry->FindUnitSpec(H);
+						if (ClickedSpec && Spec && Spec->EduRowIndex == ClickedSpec->EduRowIndex)
+						{
+							TypeGroup.Add(H);
+						}
+					}
+					UE_LOG(LogDemoBattle, Display,
+						TEXT("EXEC_RESULT DemoOrder BannerSelectType Units=%d"), TypeGroup.Num());
+				}
+				if (IsInputKeyDown(EKeys::LeftShift))
+				{
+					if (NewSelection.Find(BannerUnit) != INDEX_NONE)
+					{
+						NewSelection.Remove(BannerUnit);
+					}
+					else
+					{
+						NewSelection.Add(BannerUnit);
+					}
+				}
+				else
+				{
+					NewSelection = bDoubleClick ? TypeGroup : TArray<FUnitHandle>{ BannerUnit };
+				}
+				SetSelection(NewSelection);
+				return;
+			}
+
+			// Enemy banner + a live selection = the attack gesture.
+			if (NewSelection.Num() > 0)
+			{
+				UUnitRegistrySubsystem* RegistrySys = GetWorld() ? GetWorld()->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+				int32 Issued = 0;
+				if (RegistrySys)
+				{
+					for (const FUnitHandle& H : NewSelection)
+					{
+						if (H != BannerUnit && RegistrySys->IssueAttackUnitOrder(H, BannerUnit))
+						{
+							PlayerOrderedUnits.Add(H);
+							++Issued;
+						}
+					}
+				}
+				UE_LOG(LogDemoBattle, Display,
+					TEXT("EXEC_RESULT DemoOrder BannerAttack Issued=%d of %d Target=%u:%u"),
+					Issued, NewSelection.Num(), BannerUnit.Index, BannerUnit.Serial);
+			}
+			return; // an enemy banner click never changes the selection
+		}
+
 		FUnitHandle Picked;
 		EDemoTeam PlayerTeam = EDemoTeam::Player;
 		if (PickUnitAtScreen(Current, Picked, &PlayerTeam))

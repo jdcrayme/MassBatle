@@ -54,8 +54,18 @@ public:
 	bool IsSelected(FUnitHandle Handle) const;
 
 	/** Body summary from the head entity's formation shared fragment. False
-	 *  for stale handles / units without a spawned roster yet. */
+	 *  for stale handles / units without a spawned roster yet. PR-2: the
+	 *  summary carries the banner fields (rout state, morale/fatigue, ammo,
+	 *  toggles, general/garrison flags) -- the same data the banners draw. */
 	bool GetUnitBodyInfo(FUnitHandle Handle, FDemoUnitBodyInfo& OutInfo) const;
+
+	// -- PR-2 banner rects (the ONE projection home for draw + hit tests) --
+	/** Screen rect of the unit's banner this frame (expanded or collapsed
+	 *  flag). False when the unit is off-screen / has no body yet. */
+	bool GetBannerRect(FUnitHandle Handle, FBox2D& OutRect, bool& bOutCollapsed) const;
+	/** Topmost banner under the screen point (registration order reversed --
+	 *  later-registered units draw on top). False when none. */
+	bool FindBannerAtScreen(const FVector2D& ScreenPos, FUnitHandle& OutUnit) const;
 
 private:
 	UInstancedStaticMeshComponent* EnsureVisual(FUnitHandle Handle, EDemoTeam Team);
@@ -64,6 +74,10 @@ private:
 
 	/** Registration order = stable draw/iterate order. */
 	TArray<FUnitHandle> Units;
+	/** PR-2: screen rects recomputed each Tick (the banners' draw + hit-test
+	 *  home; ProjectWorldLocationToScreen on the first player controller). */
+	TMap<FUnitHandle, FBox2D> BannerRects;
+	TSet<FUnitHandle> BannerCollapsed;
 	TMap<FUnitHandle, EDemoTeam> TeamByUnit;
 	TMap<FUnitHandle, TObjectPtr<UInstancedStaticMeshComponent>> VisualByUnit;
 	TSet<FUnitHandle> Selected;

@@ -9,6 +9,7 @@
 #include "GameFramework/GameModeBase.h"
 #include "DemoTypes.h"
 #include "BattleScenarioAsset.h"
+#include "BattleSpawnLibrary.h"
 #include "DemoGameMode.generated.h"
 
 class ADemoUnitActor;
@@ -37,6 +38,12 @@ public:
 	/** PR-1: the current beat's HUD surface (INDEX_NONE beat = idle). */
 	const FName& GetBeatLabel() const { return BeatLabel; }
 	int32 GetBeatIndex() const { return CurrentBeat; }
+
+	/** PR-2: the EDU row stats for a unit's row (the banner hover card's
+	 *  ATK/DEF/CHG/ARM/SHD/RNG block). The golden fixture parses once at
+	 *  boot; the cache is keyed by the spawn spec's EduRowIndex. Null when
+	 *  the fixture is unreadable or the handle is stale. */
+	const FBattleRowStats* FindRowStatsForUnit(FUnitHandle Handle);
 
 	/** PR-1 shoring: the delayed real-attack repro (the owner report
 	 *  2026-10-31: RMB attack walks to the enemy and never engages). Fires
@@ -113,6 +120,11 @@ private:
 	/** The demo-session straggler-pace override's shipped value (restored in
 	 *  EndPlay; the func-tier travel-leak discipline). */
 	int32 SavedStragglerPace = 1;
+
+	// -- PR-2 banner stats (the row cache; one parse of the golden fixture) --
+	void EnsureRowStatsCache();
+	TMap<int32, FBattleRowStats> RowStatsByRowIdx;
+	bool bRowStatsCacheBuilt = false;
 
 	/** One-time click-path probe after the level settles: resolves each
 	 *  registered structure's own footprint center through the SAME static

@@ -9,6 +9,7 @@
 #include "Engine/Canvas.h"
 #include "Engine/Engine.h"
 #include "Engine/Font.h"
+#include "BattleSpawnLibrary.h"
 #include "Kismet/GameplayStatics.h"
 #include "UObject/ConstructorHelpers.h"
 
@@ -37,7 +38,7 @@ void ADemoHUD::DrawHUD()
 
 	DrawControlsHint();
 	DrawBeatLabel();
-	DrawUnitLabels();
+	DrawUnitBanners();
 	DrawSelectionCircles();
 	DrawMarquee();
 	DrawOrderDragPreview();
@@ -149,13 +150,64 @@ void ADemoHUD::DrawBeatLabel()
 		FMath::Max(4.f, Canvas->SizeX * 0.5f - 140.f), 14.f, 1.1f, 1.1f);
 }
 
-void ADemoHUD::DrawUnitLabels()
+// -- PR-2 banners ---------------------------------------------------------------
+// The M2TW world layer: one card per unit anchored above the body center,
+// collapsed to a small flag when the projected frontage is narrow (zoom LOD),
+// re-expanded on hover. The data is the demo's public-API read surface: the
+// visual subsystem's body summary (the same struct the PC hit tests use) plus
+// the game mode's EDU row-stats cache for the hover card. The morale chip
+// mirrors MoraleTickProcessor::DrawMoraleOverlay's state color family (the
+// plugin's overlay stays the analytic home; this is the presentation copy).
+
+namespace
 {
-	UDemoUnitVisualSubsystem* Visuals = GetWorld()->GetSubsystem<UDemoUnitVisualSubsystem>();
-	if (!Visuals || !GEngine || !GEngine->GetMediumFont())
+	FColor RoutStateColor(uint8 RoutState)
+	{
+		static const FColor StateColors[4] = {
+			FColor(80, 220, 80),   // Steady: green
+			FColor(240, 220, 60),  // Wavering: yellow
+			FColor(240, 70, 50),   // Routing: red
+			FColor(120, 20, 20)    // Shattered: dark red
+		};
+		return StateColors[FMath::Clamp(static_cast<int32>(RoutState), 0, 3)];
+	}
+
+	const TCHAR* RoutStateName(uint8 RoutState)
+	{
+		static const TCHAR* Names[4] = { TEXT("Steady"), TEXT("Wavering"), TEXT("Routing"), TEXT("Shattered") };
+		return Names[FMath::Clamp(static_cast<int32>(RoutState), 0, 3)];
+	}
+
+	const TCHAR* GlyphFor(const FBattleRowStats* Stats)
+	{
+		if (!Stats)
+		{
+			return TEXT("?");
+		}
+		if (Stats->bCavalry) { return TEXT("CA"); }
+		if (Stats->bBow) { return TEXT("MS"); }
+		return TEXT("IN");
+	}
+}
+
+void ADemoHUD::DrawUnitBanners()
+{
+	UDemoUnitVisualSubsystem* Visuals = GetWorld() ? GetWorld()->GetSubsystem<UDemoUnitVisualSubsystem>() : nullptr;
+	ADemoPlayerController* PC = Cast<ADemoPlayerController>(GetOwningPlayerController());
+	if (!Visuals || !PC || !Canvas || !GEngine || !GEngine->GetMediumFont())
 	{
 		return;
 	}
+
+	// Hover: the banner under the mouse this frame (display only; the click
+	// path hit tests the same rects on the controller side).
+	HoveredBanner = FUnitHandle();
+	float MouseX = 0.f, MouseY = 0.f;
+	if (PC->GetMousePosition(MouseX, MouseY))
+	{
+		Visuals->FindBannerAtScreen(FVector2D(MouseX, MouseY), HoveredBanner);
+	}
+
 	for (const FUnitHandle& Handle : Visuals->GetAllUnits())
 	{
 		FDemoUnitBodyInfo Info;
@@ -163,14 +215,196 @@ void ADemoHUD::DrawUnitLabels()
 		{
 			continue;
 		}
-		const FVector2D Screen = Project(Info.BodyCenterCm);
-		const FString Label = FString::Printf(TEXT("%s  (%d)"),
-			Info.UnitName.IsEmpty() ? TEXT("Unit") : *Info.UnitName, Info.SoldierCount);
-		Canvas->SetDrawColor(Visuals->GetTeam(Handle) == EDemoTeam::Player ? 255 : 255,
-			Visuals->GetTeam(Handle) == EDemoTeam::Player ? 255 : 153,
-			Visuals->GetTeam(Handle) == EDemoTeam::Player ? 255 : 140, 255);
-		Canvas->DrawText(GEngine->GetMediumFont(), Label, Screen.X - 40.f, Screen.Y - 34.f, 0.7f, 0.7f);
+		FBox2D Rect;
+		bool bCollapsed = false;
+		if (!Visuals->GetBannerRect(Handle, Rect, bCollapsed))
+		{
+			continue;
+		}
+		const bool bSelected = Visuals->IsSelected(Handle);
+		const FLinearColor TeamColor = Info.Team == EDemoTeam::Enemy
+			? FLinearColor(0.9f, 0.25f, 0.2f)
+			: FLinearColor(0.2f, 0.55f, 0.95f);
+		const FColor TeamFColor = Info.Team == EDemoTeam::Enemy ? FColor(230, 64, 51) : FColor(51, 140, 242);
+
+		if (bCollapsed && Handle != HoveredBanner)
+		{
+			// The small flag: team-colored body + the morale chip at the base.
+			DrawRect(FLinearColor(0.05f, 0.05f, 0.07f, 0.75f), Rect.Min.X, Rect.Min.Y, Rect.GetSize().X, Rect.GetSize().Y);
+			DrawRect(TeamColor, Rect.Min.X + 2.f, Rect.Min.Y + 2.f, Rect.GetSize().X - 4.f, Rect.GetSize().Y - 10.f);
+			DrawRect(FLinearColor(RoutStateColor(Info.RoutState)), Rect.Min.X + 2.f, Rect.Max.Y - 8.f, Rect.GetSize().X - 4.f, 6.f);
+			continue;
+		}
+
+		// The expanded card: 96 x 30.
+		DrawRect(FLinearColor(0.05f, 0.05f, 0.07f, 0.8f), Rect.Min.X, Rect.Min.Y, Rect.GetSize().X, Rect.GetSize().Y);
+		DrawRect(TeamColor, Rect.Min.X, Rect.Min.Y, 3.f, Rect.GetSize().Y);
+		if (bSelected)
+		{
+			DrawRect(FLinearColor::White, Rect.Min.X, Rect.Min.Y, Rect.GetSize().X, 1.f);
+			DrawRect(FLinearColor::White, Rect.Min.X, Rect.Max.Y - 1.f, Rect.GetSize().X, 1.f);
+			DrawRect(FLinearColor::White, Rect.Max.X - 1.f, Rect.Min.Y, 1.f, Rect.GetSize().Y);
+		}
+
+		ADemoGameMode* GM = GetWorld() ? Cast<ADemoGameMode>(GetWorld()->GetAuthGameMode()) : nullptr;
+		const FBattleRowStats* Stats = GM ? GM->FindRowStatsForUnit(Handle) : nullptr;
+		Canvas->SetDrawColor(235, 235, 235, 235);
+		Canvas->DrawText(GEngine->GetMediumFont(), GlyphFor(Stats), Rect.Min.X + 6.f, Rect.Min.Y + 3.f, 0.55f, 0.55f);
+		Canvas->DrawText(GEngine->GetMediumFont(), Info.UnitName, Rect.Min.X + 22.f, Rect.Min.Y + 3.f, 0.58f, 0.58f);
+
+		// Soldier bar (live roster vs the spawn size).
+		const float Denom = FMath::Max(1, Info.InitialRoster);
+		const float Frac = FMath::Clamp(static_cast<float>(Info.SoldierCount) / Denom, 0.f, 1.f);
+		DrawRect(FLinearColor(0.15f, 0.15f, 0.17f, 0.9f), Rect.Min.X + 5.f, Rect.Min.Y + 20.f, 54.f, 6.f);
+		DrawRect(FLinearColor(0.3f, 0.85f, 0.35f, 0.95f), Rect.Min.X + 5.f, Rect.Min.Y + 20.f, 54.f * Frac, 6.f);
+		Canvas->SetDrawColor(220, 220, 220, 220);
+		Canvas->DrawText(GEngine->GetMediumFont(), FString::Printf(TEXT("%d"), Info.SoldierCount),
+			Rect.Min.X + 62.f, Rect.Min.Y + 18.f, 0.5f, 0.5f);
+
+		// Morale chip (the overlay's state color family) + general star.
+		const FColor Chip = RoutStateColor(Info.RoutState);
+		DrawRect(FLinearColor(Chip), Rect.Min.X + 80.f, Rect.Min.Y + 4.f, 8.f, 8.f);
+		if (Info.bGeneral)
+		{
+			// A four-point star, gold -- the general's mark.
+			const float Cx = Rect.Min.X + 90.5f, Cy = Rect.Min.Y + 8.f;
+			DrawLine(Cx, Cy - 5.f, Cx, Cy + 5.f, FColor(255, 210, 60), 2.f);
+			DrawLine(Cx - 5.f, Cy, Cx + 5.f, Cy, FColor(255, 210, 60), 2.f);
+		}
+
+		// Ammo pips for missile rows (4 pips; "OA" when dry). Melee rows show
+		// nothing -- the glyph carries the type.
+		if (Info.AmmoFraction >= 0.f)
+		{
+			if (Info.bOutOfAmmo)
+			{
+				Canvas->SetDrawColor(240, 70, 50, 235);
+				Canvas->DrawText(GEngine->GetMediumFont(), TEXT("OA"), Rect.Min.X + 66.f, Rect.Min.Y + 3.f, 0.5f, 0.5f);
+			}
+			else
+			{
+				const int32 Pips = FMath::Clamp(FMath::CeilToInt(Info.AmmoFraction * 4.f), 0, 4);
+				for (int32 p = 0; p < 4; ++p)
+				{
+					DrawRect(p < Pips ? FLinearColor(0.95f, 0.8f, 0.3f, 0.95f) : FLinearColor(0.25f, 0.25f, 0.28f, 0.9f),
+						Rect.Min.X + 66.f + p * 6.f, Rect.Min.Y + 20.f, 4.f, 6.f);
+				}
+			}
+		}
+
+		// Toggle badges, right-aligned: G = guard on, H = fire hold, S = skirmish.
+		float BadgeX = Rect.Max.X - 6.f;
+		Canvas->SetDrawColor(150, 200, 255, 235);
+		if (Info.bSkirmish)
+		{
+			Canvas->DrawText(GEngine->GetMediumFont(), TEXT("S"), BadgeX -= 8.f, Rect.Min.Y + 18.f, 0.5f, 0.5f);
+		}
+		if (!Info.bFireAtWill)
+		{
+			Canvas->SetDrawColor(240, 70, 50, 235);
+			Canvas->DrawText(GEngine->GetMediumFont(), TEXT("H"), BadgeX -= 8.f, Rect.Min.Y + 18.f, 0.5f, 0.5f);
+		}
+		if (Info.bGuardMode)
+		{
+			Canvas->SetDrawColor(255, 210, 60, 235);
+			Canvas->DrawText(GEngine->GetMediumFont(), TEXT("G"), BadgeX -= 8.f, Rect.Min.Y + 18.f, 0.5f, 0.5f);
+		}
 	}
+
+	// The hover stats card (after all banners: draws on top).
+	if (HoveredBanner.IsValid())
+	{
+		FBox2D Rect;
+		bool bCollapsedDummy = false;
+		if (Visuals->GetBannerRect(HoveredBanner, Rect, bCollapsedDummy))
+		{
+			DrawHoverCard(HoveredBanner, Rect);
+		}
+	}
+}
+
+void ADemoHUD::DrawHoverCard(FUnitHandle Handle, const FBox2D& BannerRect)
+{
+	UDemoUnitVisualSubsystem* Visuals = GetWorld() ? GetWorld()->GetSubsystem<UDemoUnitVisualSubsystem>() : nullptr;
+	ADemoGameMode* GM = GetWorld() ? Cast<ADemoGameMode>(GetWorld()->GetAuthGameMode()) : nullptr;
+	UUnitRegistrySubsystem* Registry = GetWorld() ? GetWorld()->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	if (!Visuals || !Registry || !Canvas || !GEngine || !GEngine->GetMediumFont())
+	{
+		return;
+	}
+	FDemoUnitBodyInfo Info;
+	if (!Visuals->GetUnitBodyInfo(Handle, Info))
+	{
+		return;
+	}
+	const FBattleRowStats* Stats = GM ? GM->FindRowStatsForUnit(Handle) : nullptr;
+
+	// Below the banner, clamped into the viewport.
+	constexpr float W = 232.f, H = 88.f;
+	float X = BannerRect.Min.X;
+	float Y = BannerRect.Max.Y + 4.f;
+	const float vw = static_cast<float>(Canvas->SizeX), vh = static_cast<float>(Canvas->SizeY);
+	X = FMath::Clamp(X, 4.f, FMath::Max(4.f, vw - W - 4.f));
+	Y = FMath::Clamp(Y, 4.f, FMath::Max(4.f, vh - H - 4.f));
+
+	DrawRect(FLinearColor(0.04f, 0.04f, 0.06f, 0.88f), X, Y, W, H);
+	DrawRect(FLinearColor(0.2f, 0.55f, 0.95f, 0.9f), X, Y, 3.f, H);
+
+	FLinearColor TeamColor = Info.Team == EDemoTeam::Enemy
+		? FLinearColor(0.9f, 0.25f, 0.2f)
+		: FLinearColor(0.2f, 0.55f, 0.95f);
+	DrawRect(TeamColor, X + 8.f, Y + 6.f, 6.f, 6.f);
+	Canvas->SetDrawColor(240, 240, 240, 245);
+	Canvas->DrawText(GEngine->GetMediumFont(), FString::Printf(TEXT("%s  (%s)"),
+		*Info.UnitName, RoutStateName(Info.RoutState)), X + 20.f, Y + 4.f, 0.6f, 0.6f);
+
+	const TCHAR* TypeName = Stats
+		? (Stats->bCavalry ? TEXT("Cavalry") : (Stats->bBow ? TEXT("Missile infantry") : TEXT("Melee infantry")))
+		: TEXT("--");
+	Canvas->SetDrawColor(200, 200, 205, 235);
+	Canvas->DrawText(GEngine->GetMediumFont(), FString::Printf(TEXT("%s   x%d/%d"),
+		TypeName, Info.SoldierCount, Info.InitialRoster), X + 8.f, Y + 22.f, 0.55f, 0.55f);
+
+	FString StatLine = TEXT("ATK --  DEF --  CHG --  ARM --  SHD --");
+	if (Stats)
+	{
+		StatLine = FString::Printf(TEXT("ATK %.0f  DEF %.0f  CHG %.0f  ARM %.0f  SHD %.0f"),
+			Stats->MeleeAttack, Stats->MeleeDefense, Stats->ChargeDistance, Stats->Armor, Stats->Shield);
+	}
+	Canvas->DrawText(GEngine->GetMediumFont(), StatLine, X + 8.f, Y + 38.f, 0.55f, 0.55f);
+
+	FString LiveLine = FString::Printf(TEXT("MOR %.2f  FAT %.2f"), Info.MoraleValue, Info.FatigueValue);
+	if (Info.AmmoFraction >= 0.f)
+	{
+		LiveLine += FString::Printf(TEXT("  AMMO %.0f%%%s"), Info.AmmoFraction * 100.f, Info.bOutOfAmmo ? TEXT(" DRY") : TEXT(""));
+	}
+	else if (Stats)
+	{
+		LiveLine += FString::Printf(TEXT("  RNG %.0fm"), Stats->RangedRangeM);
+	}
+	Canvas->SetDrawColor(165, 215, 165, 235);
+	Canvas->DrawText(GEngine->GetMediumFont(), LiveLine, X + 8.f, Y + 54.f, 0.55f, 0.55f);
+
+	const TCHAR* OrderName = TEXT("--");
+	if (const FUnitOrder* Order = Registry->FindOrder(Handle))
+	{
+		switch (Order->Type)
+		{
+		case FUnitOrder::EType::Move: OrderName = TEXT("Move"); break;
+		case FUnitOrder::EType::Stop: OrderName = TEXT("Halt"); break;
+		case FUnitOrder::EType::Garrison: OrderName = TEXT("Garrison"); break;
+		case FUnitOrder::EType::ExitGarrison: OrderName = TEXT("Egress"); break;
+		case FUnitOrder::EType::AttackMove: OrderName = TEXT("Attack-move"); break;
+		case FUnitOrder::EType::AttackUnit: OrderName = TEXT("Attack"); break;
+		default: break;
+		}
+	}
+	Canvas->SetDrawColor(255, 224, 64, 235);
+	Canvas->DrawText(GEngine->GetMediumFont(), FString::Printf(TEXT("Order: %s   G:%s F:%s S:%s"),
+		OrderName,
+		Info.bGuardMode ? TEXT("on") : TEXT("off"),
+		Info.bFireAtWill ? TEXT("on") : TEXT("HOLD"),
+		Info.bSkirmish ? TEXT("on") : TEXT("off")), X + 8.f, Y + 70.f, 0.55f, 0.55f);
 }
 
 void ADemoHUD::DrawSelectionCircles()

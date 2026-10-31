@@ -220,6 +220,83 @@ void UDemoUnitVisualSubsystem::Tick(float DeltaTime)
 				/*bWorldSpace*/ true, /*bMarkRenderStateDirty*/ true, /*bTeleport*/ true);
 		}
 	}
+
+	// -- PR-2 banner rects: ONE projection pass per tick, consumed by the HUD
+	// (draw) and the player controller (click hit tests). The zoom-LOD
+	// collapse is measured in screen space: the projected frontage narrower
+	// than the expanded card collapses to the small flag (M2TW convention).
+	BannerRects.Reset();
+	BannerCollapsed.Reset();
+	APlayerController* PC = World->GetFirstPlayerController();
+	if (!PC)
+	{
+		return;
+	}
+	for (const FUnitHandle& Handle : Units)
+	{
+		FDemoUnitBodyInfo Info;
+		if (!GetUnitBodyInfo(Handle, Info))
+		{
+			continue;
+		}
+		const FVector Center(Info.BodyCenterCm.X, Info.BodyCenterCm.Y, DemoUi::BodyLabelZCm);
+		FVector2D Screen;
+		if (!PC->ProjectWorldLocationToScreen(Center, Screen))
+		{
+			continue;
+		}
+		// Projected frontage (the facing's right vector endpoints).
+		const float Rad = FMath::DegreesToRadians(Info.FacingYawDeg);
+		const FVector2D Right(-FMath::Sin(Rad), FMath::Cos(Rad));
+		const float HalfFrontCm = Info.NumFiles * Info.FileSpacingM * 50.f;
+		FVector2D EdgeL, EdgeR;
+		const bool bEdges = PC->ProjectWorldLocationToScreen(
+			FVector(Info.BodyCenterCm.X - Right.X * HalfFrontCm, Info.BodyCenterCm.Y - Right.Y * HalfFrontCm, DemoUi::BodyLabelZCm), EdgeL)
+			&& PC->ProjectWorldLocationToScreen(
+			FVector(Info.BodyCenterCm.X + Right.X * HalfFrontCm, Info.BodyCenterCm.Y + Right.Y * HalfFrontCm, DemoUi::BodyLabelZCm), EdgeR);
+		const float FrontPx = bEdges ? FVector2D::Distance(EdgeL, EdgeR) : 0.f;
+
+		// The expanded card is 96 x 30 px; the collapsed flag 14 x 20.
+		constexpr float CardW = 96.f, CardH = 30.f, FlagW = 14.f, FlagH = 20.f;
+		const bool bCollapsed = bEdges && FrontPx < CardW * 1.5f;
+		const float W = bCollapsed ? FlagW : CardW;
+		const float H = bCollapsed ? FlagH : CardH;
+		// Anchored ABOVE the body center (a 6 px gap for the selection ring).
+		BannerRects.Add(Handle, FBox2D(Screen + FVector2D(-W * 0.5f, -(H + 6.f)), Screen + FVector2D(W * 0.5f, -6.f)));
+		if (bCollapsed)
+		{
+			BannerCollapsed.Add(Handle);
+		}
+	}
+}
+
+bool UDemoUnitVisualSubsystem::GetBannerRect(FUnitHandle Handle, FBox2D& OutRect, bool& bOutCollapsed) const
+{
+	const FBox2D* Rect = BannerRects.Find(Handle);
+	if (!Rect)
+	{
+		return false;
+	}
+	OutRect = *Rect;
+	bOutCollapsed = BannerCollapsed.Contains(Handle);
+	return true;
+}
+
+bool UDemoUnitVisualSubsystem::FindBannerAtScreen(const FVector2D& ScreenPos, FUnitHandle& OutUnit) const
+{
+	// Registration order reversed: later units draw on top, so they pick first.
+	for (int32 i = Units.Num() - 1; i >= 0; --i)
+	{
+		if (const FBox2D* Rect = BannerRects.Find(Units[i]))
+		{
+			if (Rect->IsInside(ScreenPos))
+			{
+				OutUnit = Units[i];
+				return true;
+			}
+		}
+	}
+	return false;
 }
 
 UInstancedStaticMeshComponent* UDemoUnitVisualSubsystem::EnsureVisual(FUnitHandle Handle, EDemoTeam Team)
@@ -434,6 +511,7 @@ bool UDemoUnitVisualSubsystem::GetUnitBodyInfo(FUnitHandle Handle, FDemoUnitBody
 	OutInfo.FileSpacingM = F->FileSpacing * 0.01f;
 	OutInfo.RankSpacingM = F->RankSpacing * 0.01f;
 	OutInfo.SoldierCount = Roster->Num();
+	OutInfo.bGarrisoned = (F->GarrisonMode != EGarrisonMode::None);
 
 	// Body center = anchor (front-rank center) minus front * half rank depth
 	// (identical to the soak controller's probe math).
@@ -445,6 +523,23 @@ bool UDemoUnitVisualSubsystem::GetUnitBodyInfo(FUnitHandle Handle, FDemoUnitBody
 	if (const FUnitSpawnSpec* Spec = Registry->FindUnitSpec(Handle))
 	{
 		OutInfo.UnitName = Spec->UnitName;
+		OutInfo.InitialRoster = Spec->SoldierCount + Spec->OfficerCount;
+		OutInfo.bGeneral = Spec->bIsGeneral;
 	}
+	// PR-2 banner fields: rout state (the chip's color index), the live
+	// morale/fatigue snapshot values, the ammo fraction (negative = not
+	// missile-capable) and the fire-toggle read-back (the badges).
+	if (const FUnitRuntimeState* State = Registry->FindUnitState(Handle))
+	{
+		OutInfo.RoutState = static_cast<uint8>(State->RoutState);
+		OutInfo.bGuardMode = State->bGuardMode;
+	}
+	if (const FBattleAttributeSnapshot* Attr = Registry->FindCachedAttributes(Handle))
+	{
+		OutInfo.MoraleValue = Attr->Morale;
+		OutInfo.FatigueValue = Attr->Fatigue;
+	}
+	OutInfo.AmmoFraction = Registry->GetUnitAmmoFraction(Handle);
+	Registry->GetUnitFireToggles(Handle, OutInfo.bFireAtWill, OutInfo.bSkirmish, OutInfo.bOutOfAmmo);
 	return true;
 }

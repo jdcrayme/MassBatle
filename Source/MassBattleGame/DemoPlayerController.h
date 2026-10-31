@@ -158,6 +158,10 @@ private:
 	/** Every unit the player has issued an order to (see WasPlayerOrdered). */
 	TSet<FUnitHandle> PlayerOrderedUnits;
 
+	// -- PR-2 banner clicks (double-click select-all-of-type timing) --
+	FUnitHandle LastBannerClick;
+	double LastBannerClickTime = -1.0;
+
 	// -- order drag state --
 	bool bDraggingOrder = false;
 	FVector2D DragStartScreen = FVector2D::ZeroVector;

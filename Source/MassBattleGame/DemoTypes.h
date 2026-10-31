@@ -18,7 +18,8 @@ enum class EDemoTeam : uint8
 
 /** Unit body summary read from the head entity's FUnitFormationSharedFragment
  *  (same derivation as the soak controller / T1.7 asserts). Used by picking,
- *  HUD drawing and formation-drag math. */
+ *  HUD drawing and formation-drag math. PR-2 banner fields appended: the
+ *  always-visible card + the hover stats read the SAME struct. */
 struct FDemoUnitBodyInfo
 {
 	FUnitHandle Handle;
@@ -33,6 +34,22 @@ struct FDemoUnitBodyInfo
 	float RankSpacingM = 1.2f;
 	int32 SoldierCount = 0;
 	FString UnitName;
+
+	// -- PR-2 banner fields (all demo-module reads through the public API) --
+	/** EBattleRoutState (the morale chip's color index). */
+	uint8 RoutState = 0;
+	float MoraleValue = 0.f;
+	float FatigueValue = 0.f;
+	/** Ammo pool fraction; < 0 = the unit is not missile-capable. */
+	float AmmoFraction = -1.f;
+	/** Roster at spawn (soldiers + officers) -- the soldier bar's denominator. */
+	int32 InitialRoster = 0;
+	bool bGeneral = false;
+	bool bGarrisoned = false;
+	bool bGuardMode = false;
+	bool bFireAtWill = true;
+	bool bSkirmish = false;
+	bool bOutOfAmmo = false;
 };
 
 namespace DemoUi

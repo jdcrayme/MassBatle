@@ -333,6 +333,49 @@ void ADemoGameMode::BindSequencerToLevelUnits()
 	}
 }
 
+void ADemoGameMode::EnsureRowStatsCache()
+{
+	if (bRowStatsCacheBuilt)
+	{
+		return;
+	}
+	bRowStatsCacheBuilt = true;
+	TArray<FEduUnit> Rows;
+	FEduParseError Err;
+	if (!BattleExec::LoadGoldenEduRows(Rows, Err))
+	{
+		UE_LOG(LogDemoBattle, Error, TEXT("EXEC_RESULT DemoRowStats FAIL EDU fixture (%s)"),
+			Err.bFailed ? *Err.Message : TEXT("unreadable"));
+		return;
+	}
+	for (int32 i = 0; i < Rows.Num(); ++i)
+	{
+		FBattleRowStats Stats;
+		FString Error;
+		if (FBattleRowStats::FromEdu(Rows[i], Stats, Error))
+		{
+			RowStatsByRowIdx.Add(i, Stats);
+		}
+	}
+	UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoRowStats rows=%d (the banner stats cache)"), RowStatsByRowIdx.Num());
+}
+
+const FBattleRowStats* ADemoGameMode::FindRowStatsForUnit(FUnitHandle Handle)
+{
+	EnsureRowStatsCache();
+	UUnitRegistrySubsystem* Registry = GetWorld() ? GetWorld()->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	if (!Registry)
+	{
+		return nullptr;
+	}
+	const FUnitSpawnSpec* Spec = Registry->FindUnitSpec(Handle);
+	if (!Spec)
+	{
+		return nullptr;
+	}
+	return RowStatsByRowIdx.Find(Spec->EduRowIndex);
+}
+
 void ADemoGameMode::AttackTestFire(int32 UnitIdx, int32 TargetIdx)
 {
 	UUnitRegistrySubsystem* Registry = GetWorld() ? GetWorld()->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
