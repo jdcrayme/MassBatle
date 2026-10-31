@@ -160,6 +160,12 @@ private:
 	float MaxWheelSlotErrorM = 0.f;
 	bool bPhaseAFlagsOn = false;
 
+	// The spawn-time live-entity total (sum of the spawn results). The
+	// settle assertion is CONSERVATION: no entity lost or gained across the
+	// march. Derived, not a literal: the phase-4a EDU officer lines grow the
+	// Row-1 rosters (42, not 40).
+	int32 SpawnedEntityTotal = 0;
+
 	UPROPERTY() TArray<TObjectPtr<AUnitActor>> Units;
 };
 

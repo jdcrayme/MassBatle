@@ -294,6 +294,7 @@ namespace
 				else if (ASkirmishBehaviorTest* Skirm = Cast<ASkirmishBehaviorTest>(TestActor))
 				{
 					Skirm->BeginTest();
+				}
 				else if (AS7RoutCascadeTest* Rout = Cast<AS7RoutCascadeTest>(TestActor))
 				{
 					Rout->BeginTest();
@@ -309,8 +310,6 @@ namespace
 				else if (AToggleBehaviorsTest* Toggle = Cast<AToggleBehaviorsTest>(TestActor))
 				{
 					Toggle->BeginTest();
-				}
-
 				}
 				// T0.9: apply + assert the test-mode contract at scenario start
 				// (roadmap B.0: assert ACTIVE engine settings, not CVars being

@@ -927,9 +927,10 @@ void AUnitMarchWheelTest::StartTest()
 			CompleteTest(EFunctionalTestResult::Error, FString::Printf(TEXT("spawn failed: %s"), *Error));
 			return;
 		}
+		SpawnedEntityTotal += SpawnResult.NumEntities;
 		Units.Add(Actor);
 	}
-	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S1_MarchWheel Spawned Units=8 Entities=320"));
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S1_MarchWheel Spawned Units=8 Entities=%d"), SpawnedEntityTotal);
 	for (int32 i = 0; i < Units.Num(); ++i)
 	{
 		if (const FUnitFormationSharedFragment* F = FindFormation(World, Units[i]->GetUnitHandle()))
@@ -1273,9 +1274,10 @@ void AUnitMarchWheelTest::Tick(float DeltaSeconds)
 		float MinDistM = 0.f;
 		int32 NearOriginCount = 0;
 		ComputeMinSeparation(MinDistM, NearOriginCount);
-		if (TotalEntities != 320)
+		if (TotalEntities != SpawnedEntityTotal)
 		{
-			AddError(FString::Printf(TEXT("T1.5 FAIL: expected 320 live entities, got %d"), TotalEntities));
+			AddError(FString::Printf(TEXT("T1.5 FAIL: expected %d live entities (the spawn total), got %d"),
+				SpawnedEntityTotal, TotalEntities));
 			bOk = false;
 		}
 		UE_LOG(LogMassBattle, Display,
@@ -6429,14 +6431,17 @@ void AS6VolleyTest::Tick(float DeltaSeconds)
 		if (State->bOutOfAmmo)
 		{
 			// The conservation identity at the drain: shots fired == the
-			// aggregate decrement (16 men x 25 ammo == the final ShotsFired
-			// sum).
+			// aggregate decrement (every roster man x 25 ammo == the final
+			// ShotsFired sum). The head count derives from the roster: the
+			// phase-4a EDU officer line adds a 17th shooter to the 16
+			// authored soldiers.
+			const int32 Men = Registry->GetRosterSize(Archers->GetUnitHandle());
 			const int32 Fired = UnitShotsFired(Archers);
 			const float Fraction = Registry->GetUnitAmmoFraction(Archers->GetUnitHandle());
-			if (Fired != 16 * 25)
+			if (Fired != Men * 25)
 			{
 				CompleteTest(EFunctionalTestResult::Error,
-					FString::Printf(TEXT("conservation broken: fired=%d want=%d"), Fired, 16 * 25));
+					FString::Printf(TEXT("conservation broken: fired=%d want=%d (roster %d x 25)"), Fired, Men * 25, Men));
 				return;
 			}
 			if (FMath::Abs(Fraction) > 1e-3f)

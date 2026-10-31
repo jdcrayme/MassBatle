@@ -383,9 +383,11 @@ public:
 
 	/** Restore helper (spec §3.5): rebuilds the per-team general records
 	 *  from the restored specs + rosters (the records are transient by
-	 *  design; the shock resets to 0 -- disclosed). Called at the end of
-	 *  RestoreBattleState. */
+	 *  design; the shock resets to 0 -- disclosed). The locked wrapper
+	 *  exists for out-of-restore callers; RestoreBattleState calls the
+	 *  Internal form (it already holds the write access). */
 	void RebuildMoraleAuxState();
+	void RebuildMoraleAuxStateInternal();
 
 	/** Idempotent: marking twice in one frame leaves one dirty entry. */
 	void MarkStatsDirty(FUnitHandle Handle);

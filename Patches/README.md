@@ -130,6 +130,24 @@ default terms per unit, which changes every existing full-hash VALUE
 (the two-run equality class is unaffected -- both runs hash the same;
 no stored hash literals exist; disclosed in 0028's commit note).
 
+Machine verification (2026-10-31, the implementing machine): the series
+landed on `main` directly (`afb0b69..aaa0dd0`, `git am`, authorship
+preserved, zero conflicts against `c61dfac`) and Task 0 ran the same day.
+Five first-pass fixes folded on top (full record:
+`Docs/phases/phase-4/progress.md`, F4-1..F4-5) -- two splice compile
+blockers in this series (0028 pasted the v3 morale block into
+`FUnitSaveEntry` twice; 0025 lost the Skirmish branch's closing brace in
+the harness chain), one nested MT-access crash (`RebuildMoraleAuxState`
+scoped its own write access inside `RestoreBattleState`'s -- the
+`...Internal` split applied), and the roster-growth re-signs the EDU
+sweep missed (three unit goldens + the S1/S6 scenario literals now derive
+from the spawn). Evidence: build green; unit tier **83/83** (the three
+`Battle.Unit.Morale.*` suites + re-signed EduRoundTrip 16-key,
+SaveRoundTrip v3, HashTerms block 10, SpawnComposition unchanged); func
+tier **19/27 = exactly the expected 8** (four known + four fail-by-design
+skeletons, all counted). Tasks 1-9 (blocker hunts first) remain the
+implementing run's work.
+
 ## Verification status
 
 Static authorship for the phase-3 series (same posture as the audit series):

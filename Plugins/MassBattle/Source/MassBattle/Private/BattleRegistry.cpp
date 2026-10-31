@@ -337,10 +337,17 @@ void UUnitRegistrySubsystem::SetTeamGeneralDeathShock(uint8 TeamId, float Value)
 
 void UUnitRegistrySubsystem::RebuildMoraleAuxState()
 {
+	UE_MT_SCOPED_WRITE_ACCESS(AccessDetector);
+	RebuildMoraleAuxStateInternal();
+}
+
+void UUnitRegistrySubsystem::RebuildMoraleAuxStateInternal()
+{
 	// Spec §3.5: the per-team records are transient -- rebuild from the
 	// restored specs + rosters. The shock resets to 0 (a restored battle
-	// starts un-shocked; disclosed). Called at the end of RestoreBattleState.
-	UE_MT_SCOPED_WRITE_ACCESS(AccessDetector);
+	// starts un-shocked; disclosed). RestoreBattleState calls the Internal
+	// form directly: it already holds the write access, and a nested scoped
+	// access asserts the detector (the NotifyCombatEntityDeathInternal pattern).
 	TeamGenerals.Reset();
 	TeamGeneralDeathShock.Reset();
 	for (TPair<FUnitHandle, FUnitRuntimeState>& Pair : Units)
@@ -1396,7 +1403,7 @@ bool UUnitRegistrySubsystem::RestoreBattleState(const FBattleSaveData& InData)
 
 	// Phase 4a (spec morale-and-gas §3.5): the transient per-team records
 	// rebuild from the restored specs + rosters.
-	RebuildMoraleAuxState();
+	RebuildMoraleAuxStateInternal();
 
 	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SaveProbe Restore Units=%d Engagements=%d RngStreams=%d Schema=%u"),
 	       Units.Num(), Engagements.Num(), InData.RngStreams.Num(), InData.SchemaVersion);

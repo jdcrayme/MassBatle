@@ -142,8 +142,15 @@ bool FEntityConfig_Integrity::RunTest(const FString& Parameters)
 	TArray<FUnitHandle> Units;
 	for (int32 RowIdx = 0; RowIdx < Rows.Num(); ++RowIdx)
 	{
+		FBattleRowStats RowStats;
+		if (!TestTrue(FString::Printf(TEXT("row %d FromEdu"), RowIdx),
+			FBattleRowStats::FromEdu(Rows[RowIdx], RowStats, Error)))
+		{
+			AddError(Error);
+			continue;
+		}
 		FUnitSpawnSpec Spec;
-		Spec.EduRowIndex = RowIdx; // SoldierCount 0 -> the row's own count (40)
+		Spec.EduRowIndex = RowIdx; // SoldierCount 0 -> the row's own count
 		Spec.UnitName = FString::Printf(TEXT("T0_%d"), RowIdx);
 
 		FBattleSpawnResult Result;
@@ -158,8 +165,11 @@ bool FEntityConfig_Integrity::RunTest(const FString& Parameters)
 		const TArray<FMassEntityHandle>* Roster = Registry->FindRoster(Result.Unit);
 		if (TestNotNull(FString::Printf(TEXT("row %d roster published"), RowIdx), Roster))
 		{
-			TestEqual(FString::Printf(TEXT("row %d roster size == EDU soldier count"), RowIdx),
-				Roster->Num(), 40);
+			// The roster includes the officer line's entities since the
+			// phase-4a EDU re-sign (spec morale-and-gas section 3.3): the
+			// expectation derives from the parsed row, not a literal.
+			TestEqual(FString::Printf(TEXT("row %d roster size == EDU soldier + officer count"), RowIdx),
+				Roster->Num(), RowStats.SoldierCount + RowStats.OfficerCount);
 		}
 	}
 

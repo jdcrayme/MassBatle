@@ -1208,9 +1208,11 @@ bool FCombat_RangedFirePass::RunTest(const FString& Parameters)
 		TestTrue(TEXT("no spawn skipped the fixture"), Archers.IsValid());
 		TestEqual(TEXT("arced hold: no shots with friends in the zone"), World->GetSubsystem<UBattleProjectileSubsystem>()->GetPool().GetLiveCount(), 0);
 		// The Holds counter proves it was a RULE hold, not a bug-hold (R-R6):
-		// all 40 eligible shooters held.
+		// every eligible shooter held (the roster includes the officer line's
+		// entities since the phase-4a EDU re-sign, so the expectation derives
+		// from the spawn, not a literal).
 		UBattleDebugSubsystem* Debug = World->GetSubsystem<UBattleDebugSubsystem>();
-		TestEqual(TEXT("rule-holds counted for the whole unit"), Debug ? Debug->GetRangedHolds() : -1, 40);
+		TestEqual(TEXT("rule-holds counted for the whole unit"), Debug ? Debug->GetRangedHolds() : -1, Registry->GetRosterSize(Archers));
 		World->DestroyWorld(false);
 	}
 
@@ -1350,7 +1352,9 @@ bool FCombat_RangedImpacts::RunTest(const FString& Parameters)
 		BuildTestHash(World, Registry);
 		RunRangedFirePass(World, DT);
 		UBattleProjectileSubsystem* Projectiles = World->GetSubsystem<UBattleProjectileSubsystem>();
-		TestEqual(TEXT("flow A volley in flight"), Projectiles->GetPool().GetLiveCount(), 40);
+		// One shot per shooter; the roster includes the officer line's
+		// entities since the phase-4a EDU re-sign (derived, not a literal).
+		TestEqual(TEXT("flow A volley in flight"), Projectiles->GetPool().GetLiveCount(), Registry->GetRosterSize(Archers));
 
 		for (int32 Tick = 0; Tick < 300; ++Tick)
 		{
