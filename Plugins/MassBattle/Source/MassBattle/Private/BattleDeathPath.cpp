@@ -3,6 +3,7 @@
 #include "MassCommonFragments.h"
 #include "BattleFragments.h"
 #include "BattleGameplayTags.h"
+#include "BattleMorale.h"
 #include "BattleRegistry.h"
 #include "MassBattleModule.h"
 
@@ -115,6 +116,10 @@ void UBattleDeathSignalReceiver::ConfigureQueries(const TSharedRef<FMassEntityMa
 	// Driven by EntitySignals in SignalEntities, not by composition.
 	EntityQuery.AddRequirement<FOwnerUnitFragment>(EMassFragmentAccess::ReadOnly);
 		EntityQuery.AddRequirement<FTransformFragment>(EMassFragmentAccess::ReadOnly);
+		// Phase 4a (spec morale-and-gas section 4.7): the officer branch reads
+		// bOfficer from the base-stats fragment view (the chunk-idiomatic read;
+		// the entity is still alive at signal time).
+		EntityQuery.AddRequirement<FBaseStatsFragment>(EMassFragmentAccess::ReadOnly);
 }
 
 void UBattleDeathSignalReceiver::SignalEntities(FMassEntityManager& EntityManager, FMassExecutionContext& Context, FMassSignalNameLookup& EntitySignals)
@@ -129,6 +134,7 @@ void UBattleDeathSignalReceiver::SignalEntities(FMassEntityManager& EntityManage
 	{
 		const TConstArrayView<FOwnerUnitFragment> Owners = Context.GetFragmentView<FOwnerUnitFragment>();
 		const TConstArrayView<FTransformFragment> Transforms = Context.GetFragmentView<FTransformFragment>();
+		const TConstArrayView<FBaseStatsFragment> BaseStats = Context.GetFragmentView<FBaseStatsFragment>();
 		for (int32 i = 0; i < Context.GetNumEntities(); ++i)
 		{
 			const FMassEntityHandle Entity = Context.GetEntity(i);
@@ -173,6 +179,7 @@ void UBattleDeathSignalReceiver::SignalEntities(FMassEntityManager& EntityManage
 			// Up-path completion: gameplay event on the unit actor.
 			UWorld* World = Context.GetWorld();
 			bool bGasSent = false;
+			AUnitActor* UnitActor = nullptr;
 			for (TActorIterator<AUnitActor> It(World); It; ++It)
 			{
 				if (It->GetUnitHandle() == Unit)
@@ -184,7 +191,52 @@ void UBattleDeathSignalReceiver::SignalEntities(FMassEntityManager& EntityManage
 					Payload.Target = *It;
 					UAbilitySystemBlueprintLibrary::SendGameplayEventToActor(*It, DiedTag, Payload);
 					bGasSent = true;
+					UnitActor = *It;
 					break;
+				}
+			}
+
+			// Phase 4a (spec morale-and-gas §4.7, MC8): the officer branch.
+			// Reads the entity's bOfficer fragment value -- the entity is still
+			// alive here (the destroy defers below) and the fragment is the
+			// identity, immune to the roster compaction inside HandleUnitDeath.
+			// Gated on Battle.Morale.Enable: flags-off stays byte-identical
+			// (no spike, no events, no bookkeeping -- the R-R8 pattern).
+			if (FMoraleCVars::Enable())
+			{
+				const bool bOfficer = BaseStats.IsValidIndex(i) && BaseStats[i].bOfficer != 0;
+				// (a) the fresh-casualty spike: every death accumulates, officers
+				//     amplified (the decay runs in the morale pass, PR-12).
+				Registry->NotifyMoraleCasualty(Unit, bOfficer);
+				if (bOfficer && UnitActor)
+				{
+					// (b) Battle.Unit.OfficerDied on the owning unit's ASC.
+					const FGameplayTag& OfficerTag = TAG_Battle_Unit_OfficerDied.GetTag();
+					ensureMsgf(OfficerTag.IsValid(), TEXT("Battle.Unit.OfficerDied native tag must be registered (BattleGameplayTags.cpp)"));
+					FGameplayEventData OfficerPayload;
+					OfficerPayload.EventTag = OfficerTag;
+					OfficerPayload.Target = UnitActor;
+					OfficerPayload.EventMagnitude = static_cast<float>(RosterIndex);
+					UAbilitySystemBlueprintLibrary::SendGameplayEventToActor(UnitActor, OfficerTag, OfficerPayload);
+				}
+				// (c) the general: team shock + record invalidation + the
+				//     team-wide event fan-out.
+				uint8 Team = 0;
+				if (Registry->NotifyGeneralEntityDeath(Entity, Team))
+				{
+					const FGameplayTag& GeneralTag = TAG_Battle_Team_GeneralDied.GetTag();
+					ensureMsgf(GeneralTag.IsValid(), TEXT("Battle.Team.GeneralDied native tag must be registered (BattleGameplayTags.cpp)"));
+					for (TActorIterator<AUnitActor> It(World); It; ++It)
+					{
+						const FUnitSpawnSpec* Spec = Registry->FindUnitSpec(It->GetUnitHandle());
+						if (Spec && Spec->TeamId == Team)
+						{
+							FGameplayEventData TeamPayload;
+							TeamPayload.EventTag = GeneralTag;
+							TeamPayload.Target = *It;
+							UAbilitySystemBlueprintLibrary::SendGameplayEventToActor(*It, GeneralTag, TeamPayload);
+						}
+					}
 				}
 			}
 			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT DeathSignal Entity=%u:%u Unit=%u:%u RosterIndex=%d GAS=%d"),

@@ -84,6 +84,63 @@ bool FBattleRowStats::FromEdu(const FEduUnit& Row, FBattleRowStats& OutStats, FS
 	OutStats.bBow = (OutStats.Kind != EBattleProjectileKind::None);
 	OutStats.bSkirmishDefault = (Class->GetValue() == TEXT("missile"));
 
+	// Phase 4a morale branch (spec morale-and-gas section 3.3): the
+	// stat_mental discipline/training tokens + the repeatable officer count.
+	// Unknown tokens fail loudly -- a "berserker" discipline row must not
+	// silently become Normal (the B-3 posture; the missile-branch precedent).
+	if (Mental->Values.Num() > 1)
+	{
+		const FString& DisciplineToken = Mental->Values[1];
+		if (DisciplineToken == TEXT("low"))
+		{
+			OutStats.Discipline = EBattleDiscipline::Low;
+		}
+		else if (DisciplineToken == TEXT("normal"))
+		{
+			OutStats.Discipline = EBattleDiscipline::Normal;
+		}
+		else if (DisciplineToken == TEXT("disciplined"))
+		{
+			OutStats.Discipline = EBattleDiscipline::Disciplined;
+		}
+		else if (DisciplineToken == TEXT("impetuous"))
+		{
+			OutStats.Discipline = EBattleDiscipline::Impetuous;
+		}
+		else
+		{
+			OutError = FString::Printf(TEXT("EDU row '%s': unknown discipline '%s' (low|normal|disciplined|impetuous)"),
+				*OutStats.TypeName, *DisciplineToken);
+			return false;
+		}
+	}
+	if (Mental->Values.Num() > 2)
+	{
+		const FString& TrainingToken = Mental->Values[2];
+		if (TrainingToken == TEXT("untrained"))
+		{
+			OutStats.Training = EBattleTraining::Untrained;
+		}
+		else if (TrainingToken == TEXT("trained"))
+		{
+			OutStats.Training = EBattleTraining::Trained;
+		}
+		else if (TrainingToken == TEXT("highly_trained"))
+		{
+			OutStats.Training = EBattleTraining::HighlyTrained;
+		}
+		else
+		{
+			OutError = FString::Printf(TEXT("EDU row '%s': unknown training '%s' (untrained|trained|highly_trained)"),
+				*OutStats.TypeName, *TrainingToken);
+			return false;
+		}
+	}
+	for (const FEduField& Field : Row.Fields)
+	{
+		OutStats.OfficerCount += (Field.Key == TEXT("officer")) ? 1 : 0;
+	}
+
 	if (OutStats.bBow)
 	{
 		// Missile row: stat_pri carries the ranged weapon, stat_sec the
@@ -179,6 +236,17 @@ FBattleSpawnResult UBattleSpawnLibrary::SpawnUnit(UWorld* World, const FUnitSpaw
 	StatsPayload.MoraleBonus = 0.f;
 	const FSharedStruct SharedStats = FSharedStruct::Make(StatsPayload);
 
+	// Phase 4a (spec morale-and-gas section 3.3/ADR-35): officers are EXTRA
+	// roster entities (SoldierCount + OfficerCount; the spec's OfficerCount
+	// overrides the row's own, clamped to the schema cap of 3). They take
+	// normal formation slots this patch -- the front-center-forward placement
+	// is a layout-seam change that rides PR-12 with the pipeline (disclosed).
+	const int32 EffectiveOfficers = Spec.OfficerCount > 0
+		? FMath::Min(3, Spec.OfficerCount)
+		: FMath::Min(3, Row.OfficerCount);
+	const int32 TotalEntities = Spec.SoldierCount + EffectiveOfficers;
+
+
 	// 2b. ADR-14 anchored formation fragment (phase-1 data spine): layout
 	// params from the spec; meters->centimeters conversion happens here at the
 	// fragment boundary (ground rule 2). Path stays empty until the planner
@@ -196,8 +264,8 @@ FBattleSpawnResult UBattleSpawnLibrary::SpawnUnit(UWorld* World, const FUnitSpaw
 	// across a battle reset, and every two-run transform hash diverged on
 	// the swapped slots (measured 2026-10-29, RC8).
 	FormationPayload.AssignedGeneration = FormationPayload.Generation;
-	FormationPayload.NumFiles = FMath::Max(1, FMath::CeilToInt(static_cast<float>(Spec.SoldierCount) / FMath::Max(1, Spec.NumRanks)));
-	FormationPayload.NumSlots = Spec.SoldierCount;
+	FormationPayload.NumFiles = FMath::Max(1, FMath::CeilToInt(static_cast<float>(TotalEntities) / FMath::Max(1, Spec.NumRanks)));
+	FormationPayload.NumSlots = TotalEntities;
 	FormationPayload.RankSpacing = Spec.FormationSpacing * 100.f;
 	FormationPayload.FileSpacing = Spec.FormationSpacing * 100.f;
 	const FSharedStruct SharedFormation = FSharedStruct::Make(FormationPayload);
@@ -269,10 +337,10 @@ FBattleSpawnResult UBattleSpawnLibrary::SpawnUnit(UWorld* World, const FUnitSpaw
 	SharedValues.Sort();
 
 	TArray<FMassEntityHandle> Entities;
-	Entities.Reserve(Spec.SoldierCount);
+	Entities.Reserve(TotalEntities);
 	TSharedRef<FMassEntityManager::FEntityCreationContext> CreationContext =
-		EntityManager.BatchCreateEntities(Archetype, SharedValues, Spec.SoldierCount, Entities);
-	checkf(Entities.Num() == Spec.SoldierCount, TEXT("SpawnUnit: batch created %d of %d"), Entities.Num(), Spec.SoldierCount);
+		EntityManager.BatchCreateEntities(Archetype, SharedValues, TotalEntities, Entities);
+	checkf(Entities.Num() == TotalEntities, TEXT("SpawnUnit: batch created %d of %d"), Entities.Num(), TotalEntities);
 
 	// 5. Fixup pass: owner link, loadout, immutable base stats, initial HP.
 	for (int32 i = 0; i < Entities.Num(); ++i)
@@ -296,6 +364,10 @@ FBattleSpawnResult UBattleSpawnLibrary::SpawnUnit(UWorld* World, const FUnitSpaw
 		Base.Armor = Row.Armor;
 		Base.MoraleBase = Row.MoraleBase;
 		Base.ChargeDistance = Row.ChargeDistance;
+		// Phase 4a (spec morale-and-gas section 3.3/ADR-35): the officers are
+		// the LAST EffectiveOfficers entities of the batch (spawn order IS
+		// roster order); the registry's OfficerRosterBase mirrors the split.
+		Base.bOfficer = (i >= Spec.SoldierCount) ? 1 : 0;
 
 		FHealthFragment& Health = View.GetFragmentData<FHealthFragment>();
 		Health.CurrentHP = Row.BaseHealth;
@@ -374,11 +446,17 @@ FBattleSpawnResult UBattleSpawnLibrary::SpawnUnit(UWorld* World, const FUnitSpaw
 	// 6. Publish the roster + initial attribute cache.
 	Registry->SetRoster(Unit, MoveTemp(Entities));
 
-	// Phase 3 (spec ranged-stack §3.2, A8): class-missile rows default the
+	// Phase 3 (spec ranged-stack section 3.2, A8): class-missile rows default the
 	// skirmish toggle on at spawn; the registry owns the toggle state. The
 	// same stamp carries the fraction denominator's ammo half (melee rows
 	// pass AmmoPerMan 0 -> the fraction reads -1 there).
 	Registry->SetUnitRangedSpawnState(Unit, Row.bSkirmishDefault, Row.AmmoPerMan);
+
+	// Phase 4a (spec morale-and-gas section 3.1): the morale spawn stamp --
+	// discipline + the officer bookkeeping + the general record (the spec's
+	// TeamId is the record key; a bIsGeneral unit's officer slot 0 is the
+	// general entity). Called after SetRoster so the roster resolves.
+	Registry->SetUnitMoraleSpawnState(Unit, Row.Discipline, Spec.SoldierCount, EffectiveOfficers, Spec.bIsGeneral);
 
 	FBattleAttributeSnapshot Snapshot;
 	Snapshot.Morale = Row.MoraleBase;
@@ -386,7 +464,7 @@ FBattleSpawnResult UBattleSpawnLibrary::SpawnUnit(UWorld* World, const FUnitSpaw
 
 	FBattleSpawnResult Result;
 	Result.Unit = Unit;
-	Result.NumEntities = Spec.SoldierCount;
+	Result.NumEntities = TotalEntities;
 	Result.ElapsedUs = (FPlatformTime::Seconds() - StartTime) * 1e6;
 
 	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SpawnRoster Unit=%u:%u Entities=%d Row=%d Name=%s"),
@@ -407,6 +485,8 @@ bool UBattleSpawnLibrary::SpawnUnitFromEduRow(UWorld* World, const FUnitSpawnSpe
 	if (Spec.SoldierCount <= 0)
 	{
 		// Honor the row's own soldier count when the spec leaves it at 0.
+		// Officers stay EXTRA on top (spec morale-and-gas section 3.3): the
+		// row's SoldierCount is the soldier line's count, never the total.
 		FUnitSpawnSpec Patched = Spec;
 		Patched.SoldierCount = Stats.SoldierCount;
 		OutResult = SpawnUnit(World, Patched, Stats);

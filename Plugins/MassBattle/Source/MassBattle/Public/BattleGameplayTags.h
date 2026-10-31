@@ -13,3 +13,13 @@
  *  dies (death up-path completion, arch §5.2). Consumed via
  *  AddGameplayEventTagContainerDelegate / generic GAS event listeners. */
 MASSBATTLE_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Battle_Unit_Died)
+
+/** "Battle.Unit.OfficerDied" -- Phase 4a (spec morale-and-gas §4.7, MC8):
+ *  raised on the OWNING unit actor's ASC when the dying entity was one of its
+ *  officers (the amplified fresh-casualty spike rides the same branch). */
+MASSBATTLE_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Battle_Unit_OfficerDied)
+
+/** "Battle.Team.GeneralDied" -- Phase 4a (spec morale-and-gas §4.7, MC8):
+ *  raised on EVERY same-team unit actor's ASC when a team's general entity
+ *  dies (team shock term + aura removal ride the registry side). */
+MASSBATTLE_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(TAG_Battle_Team_GeneralDied)

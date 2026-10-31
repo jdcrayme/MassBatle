@@ -4,6 +4,10 @@
 // (15 keys); two ranged rows added (Peasant Archers: arced arrow profile; Mercenary
 // Crossbowmen: flat bolt profile); the two melee rows carry stat_sec mirroring their
 // stat_pri. Values remain A6 placeholders pending the Phase 6 T6.1 audit.
+// Phase 4a re-sign (2026-10-31, spec morale-and-gas section 3.3): the officer key joins
+// the schema (16 keys; optional + repeatable up to 3, the per-key occurrence cap).
+// Officer counts: Peasant Levy 0, Sergeant Spearmen 2, Peasant Archers 1, Mercenary
+// Crossbowmen 1. The model names are inert (no modelsdb); FromEdu consumes the count.
 
 type Peasant Levy
 dictionary Peasant_Levy
@@ -26,6 +30,8 @@ dictionary Sergeant_Spearmen
 category infantry
 class spear
 soldier Armoured_Sergeant, 40, 0, 1
+officer Sergeant_Standard
+officer Sergeant_Captain
 attributes sea_faring, hide_forest, hardy, can_withdraw, spear_wall
 formation 1.2, 1.2, 2.4, 2.4, 3, square
 stat_health 1, 1
@@ -42,6 +48,7 @@ dictionary Peasant_Archers
 category infantry
 class missile
 soldier Peasant_Archer, 40, 0, 1
+officer Peasant_Horn
 attributes sea_faring, hide_forest, hardy, can_withdraw, can_skirmish
 formation 1.2, 1.2, 2.4, 2.4, 3, square
 stat_health 1, 1
@@ -58,6 +65,7 @@ dictionary Mercenary_Crossbowmen
 category infantry
 class missile
 soldier Mercenary_Crossbow, 40, 0, 1
+officer Mercenary_Captain
 attributes sea_faring, hide_forest, hardy, can_withdraw
 formation 1.2, 1.2, 2.4, 2.4, 3, square
 stat_health 1, 1

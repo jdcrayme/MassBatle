@@ -58,7 +58,7 @@ bool FEdu_RoundTripGolden::RunTest(const FString& Parameters)
 		AddError(FString::Printf(TEXT("parse error line %d: %s"), Err.LineNumber, *Err.Message));
 		return false;
 	}
-	TestEqual(TEXT("schema field count is 15 (phase 3 re-sign: +stat_sec)"), FBattleEduParser::SchemaFieldCount(), 15);
+	TestEqual(TEXT("schema field count is 16 (phase 4a re-sign: +officer, optional + repeatable)"), FBattleEduParser::SchemaFieldCount(), 16);
 	TestEqual(TEXT("fixture unit count"), Units.Num(), 4);
 
 	// Spot-check the tables against the fixture content.
@@ -80,6 +80,23 @@ bool FEdu_RoundTripGolden::RunTest(const FString& Parameters)
 	{
 		// Token lowercasing is semantically load-bearing: compare case-sensitively.
 		TestEqualSensitive(TEXT("unit1 class (token lowercased)"), Class1->GetValue(), FString(TEXT("spear")));
+	}
+	// Phase 4a officer key (spec morale-and-gas section 3.3): the repeatable
+	// key parses as consecutive fields; FindField returns the first; the
+	// count is the FromEdu input. Unit 0 carries none (the optional-absent
+	// row), unit 1 carries two (the cap is 3).
+	TestNull(TEXT("unit0 has no officer field (optional key absent)"), Units[0].FindField(TEXT("officer")));
+	int32 Unit1Officers = 0;
+	for (const FEduField& Field : Units[1].Fields)
+	{
+		Unit1Officers += (Field.Key == TEXT("officer")) ? 1 : 0;
+	}
+	TestEqual(TEXT("unit1 officer lines"), Unit1Officers, 2);
+	const FEduField* Officer1 = Units[1].FindField(TEXT("officer"));
+	if (TestNotNull(TEXT("unit1 first officer"), Officer1))
+	{
+		// 'officer' is EduName (verbatim, like 'type'): case preserved.
+		TestEqualSensitive(TEXT("unit1 officer model name"), Officer1->GetValue(), FString(TEXT("Sergeant_Standard")));
 	}
 	const FEduField* Pri1 = Units[1].FindField(TEXT("stat_pri"));
 	if (Pri1)
@@ -156,6 +173,8 @@ bool FEdu_RoundTripGolden::RunTest(const FString& Parameters)
 		"category infantry\n"
 		"class spear\n"
 		"soldier Armoured_Sergeant, 40, 0, 1\n"
+		"officer Sergeant_Standard\n"
+		"officer Sergeant_Captain\n"
 		"attributes sea_faring, hide_forest, hardy, can_withdraw, spear_wall\n"
 		"formation 1.2, 1.2, 2.4, 2.4, 3, square\n"
 		"stat_health 1, 1\n"
@@ -172,6 +191,7 @@ bool FEdu_RoundTripGolden::RunTest(const FString& Parameters)
 		"category infantry\n"
 		"class missile\n"
 		"soldier Peasant_Archer, 40, 0, 1\n"
+		"officer Peasant_Horn\n"
 		"attributes sea_faring, hide_forest, hardy, can_withdraw, can_skirmish\n"
 		"formation 1.2, 1.2, 2.4, 2.4, 3, square\n"
 		"stat_health 1, 1\n"
@@ -188,6 +208,7 @@ bool FEdu_RoundTripGolden::RunTest(const FString& Parameters)
 		"category infantry\n"
 		"class missile\n"
 		"soldier Mercenary_Crossbow, 40, 0, 1\n"
+		"officer Mercenary_Captain\n"
 		"attributes sea_faring, hide_forest, hardy, can_withdraw\n"
 		"formation 1.2, 1.2, 2.4, 2.4, 3, square\n"
 		"stat_health 1, 1\n"

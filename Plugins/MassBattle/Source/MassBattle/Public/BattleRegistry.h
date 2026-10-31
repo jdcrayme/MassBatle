@@ -65,6 +65,16 @@ inline uint32 GetTypeHash(const FEngagementKey& Key)
 	return HashCombine(::GetTypeHash(Key.Attacker), ::GetTypeHash(Key.Defender));
 }
 
+/** Phase 4a (spec morale-and-gas §3.1): a team's living general anchor --
+ *  the unit + its officer-slot-0 entity. Stamped at the morale spawn stamp;
+ *  invalidated (entity cleared) when the general entity dies (the aura input
+ *  reads 0 thereafter, MC8). Plain struct, game thread only. */
+struct FTeamGeneralRecord
+{
+	FUnitHandle Unit;
+	FMassEntityHandle OfficerEntity;
+};
+
 /**
  * Open-address tally table keyed by defender entity handle (spec §3.2 scratch;
  * EC9: preallocated per battle, Reset() zeroes without deallocating, counts
@@ -336,6 +346,47 @@ public:
 	void ApplyUnitSkirmishDecision(FUnitHandle Handle, int32 Decision,
 		const FVector2D& RetreatAnchorCm, float FacingYawDeg);
 
+	// -- Phase 4a morale surface (spec morale-and-gas §3.1/§4.7; game thread) --
+
+	/** Morale spawn stamp (A3/A5/A6): discipline + the officer bookkeeping
+	 *  (roster base + count) +, for bIsGeneral units, the team general
+	 *  record (officer slot 0 is the general entity). Called from
+	 *  UBattleSpawnLibrary::SpawnUnit after SetRoster. OfficerRosterBase
+	 *  INDEX_NONE when the unit carries no officers. */
+	void SetUnitMoraleSpawnState(FUnitHandle Handle, EBattleDiscipline Discipline,
+		int32 OfficerRosterBase, int32 OfficerCount, bool bIsGeneral);
+
+	/** The toggle family's guard member (MC9; the A11 pattern, reject +
+	 *  EXEC_RESULT line on bad handles). */
+	bool SetUnitGuardToggle(FUnitHandle Handle, bool bGuard);
+
+	/** Per-death fresh-casualty spike accumulation (spec §4.2, MC8): every
+	 *  death adds SpikePerCasualty; an officer death adds it x the officer
+	 *  multiplier. The DECAY lives in the morale pass (PR-12); at kickoff
+	 *  the spike accumulates inertly (disclosed). */
+	void NotifyMoraleCasualty(FUnitHandle Handle, bool bOfficer);
+
+	/** General-entity death resolution (spec §4.7): true iff Entity was a
+	 *  team's recorded general officer -- the record invalidates (aura input
+	 *  reads 0) and the team shock term stamps at the cvar base. OutTeam
+	 *  carries the team id for the event fan-out. */
+	bool NotifyGeneralEntityDeath(const FMassEntityHandle& Entity, uint8& OutTeam);
+
+	/** The team's general record (nullptr when the team has none or the
+	 *  general entity died -- the aura input reads absence as 0). */
+	const FTeamGeneralRecord* FindTeamGeneral(uint8 TeamId) const;
+
+	/** The team-wide general-death shock term (the decaying read the morale
+	 *  input block consumes; the decay runs in the morale pass, PR-12). */
+	float GetTeamGeneralDeathShock(uint8 TeamId) const;
+	void SetTeamGeneralDeathShock(uint8 TeamId, float Value);
+
+	/** Restore helper (spec §3.5): rebuilds the per-team general records
+	 *  from the restored specs + rosters (the records are transient by
+	 *  design; the shock resets to 0 -- disclosed). Called at the end of
+	 *  RestoreBattleState. */
+	void RebuildMoraleAuxState();
+
 	/** Idempotent: marking twice in one frame leaves one dirty entry. */
 	void MarkStatsDirty(FUnitHandle Handle);
 	void ClearStatsDirty(FUnitHandle Handle);
@@ -499,4 +550,11 @@ private:
 
 	/** 4 Hz cluster-pass cadence accumulator (game thread only). */
 	float CombatClusterCooldown = 0.f;
+
+	// -- Phase 4a morale state (spec morale-and-gas §3.1; game thread only) --
+
+	/** Per-team general records + shock terms, keyed by TeamId. Transient
+	 *  (rebuilt from specs at restore, RebuildMoraleAuxState). */
+	TMap<uint8, FTeamGeneralRecord> TeamGenerals;
+	TMap<uint8, float> TeamGeneralDeathShock;
 };

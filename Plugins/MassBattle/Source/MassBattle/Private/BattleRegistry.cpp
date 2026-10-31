@@ -1,4 +1,5 @@
 #include "BattleRegistry.h"
+#include "BattleMorale.h"
 #include "BattleExternalSubsystemTraits.h"
 #include "BattleFragments.h"
 #include "BattleGarrisonSubsystem.h"
@@ -213,6 +214,150 @@ void UUnitRegistrySubsystem::SetUnitRangedSpawnState(FUnitHandle Handle, bool bI
 	{
 		State->bSkirmish = bInSkirmish;
 		State->RangedInitialAmmo = FMath::Max(0, InitialAmmo);
+	}
+}
+
+// -- Phase 4a morale surface (spec morale-and-gas §3.1/§4.7; game thread) --
+
+void UUnitRegistrySubsystem::SetUnitMoraleSpawnState(FUnitHandle Handle, EBattleDiscipline Discipline,
+	int32 OfficerRosterBase, int32 OfficerCount, bool bIsGeneral)
+{
+	// The morale spawn stamp (A3/A5/A6): discipline + officer bookkeeping +
+	// the team general record. The record's officer entity is slot 0 of the
+	// officer range (the general himself); a unit with officers == 0 cannot
+	// be a general (bIsGeneral stamps nothing -- disclosed no-op).
+	UE_MT_SCOPED_WRITE_ACCESS(AccessDetector);
+	FUnitRuntimeState* State = Units.Find(Handle);
+	if (!State)
+	{
+		return;
+	}
+	State->Discipline = Discipline;
+	State->OfficerRosterBase = OfficerCount > 0 ? OfficerRosterBase : INDEX_NONE;
+	State->OfficerCount = FMath::Clamp(OfficerCount, 0, 3);
+	if (bIsGeneral && OfficerCount > 0)
+	{
+		const FUnitSpawnSpec* Spec = SpecsByIndex.Find(Handle.Index);
+		if (Spec && OfficerRosterBase >= 0 && OfficerRosterBase < State->Roster.Num())
+		{
+			FTeamGeneralRecord& Record = TeamGenerals.FindOrAdd(Spec->TeamId);
+			Record.Unit = Handle;
+			Record.OfficerEntity = State->Roster[OfficerRosterBase];
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT GeneralRegistered Unit=%u:%u Team=%d OfficerEntity=%u:%u"),
+				Handle.Index, Handle.Serial, Spec->TeamId,
+				Record.OfficerEntity.Index, Record.OfficerEntity.SerialNumber);
+		}
+	}
+}
+
+bool UUnitRegistrySubsystem::SetUnitGuardToggle(FUnitHandle Handle, bool bGuard)
+{
+	// The A11 rejection pattern: a bad handle logs an EXEC_RESULT line and
+	// returns false; one write scope for the validate-and-write half.
+	if (!Handle.IsValid())
+	{
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT MoraleToggle FAIL BadHandle Handle=%u:%u"),
+			Handle.Index, Handle.Serial);
+		return false;
+	}
+	UE_MT_SCOPED_WRITE_ACCESS(AccessDetector);
+	FUnitRuntimeState* State = Units.Find(Handle);
+	if (!State)
+	{
+		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT MoraleToggle FAIL StaleHandle Handle=%u:%u"),
+			Handle.Index, Handle.Serial);
+		return false;
+	}
+	State->bGuardMode = bGuard;
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT MoraleToggle Unit=%u:%u Guard=%d"),
+		Handle.Index, Handle.Serial, bGuard ? 1 : 0);
+	return true;
+}
+
+void UUnitRegistrySubsystem::NotifyMoraleCasualty(FUnitHandle Handle, bool bOfficer)
+{
+	// Spec §4.2 (MC8): the fresh-casualty spike is a sim-tracked decay term
+	// -- accumulate here, decay in the morale pass (PR-12; at kickoff the
+	// spike accumulates inertly, disclosed). The officer multiplier reads
+	// the cvar at event time.
+	UE_MT_SCOPED_WRITE_ACCESS(AccessDetector);
+	if (FUnitRuntimeState* State = Units.Find(Handle))
+	{
+		const float Amplitude = FMoraleCVars::SpikePerCasualty()
+			* (bOfficer ? FMoraleCVars::OfficerSpikeMultiplier() : 1.f);
+		State->FreshCasualtySpike += Amplitude;
+		UE_LOG(LogMassBattle, Verbose, TEXT("MoraleCasualty Unit=%u:%u Officer=%d Spike=%+.2f"),
+			Handle.Index, Handle.Serial, bOfficer ? 1 : 0, State->FreshCasualtySpike);
+	}
+}
+
+bool UUnitRegistrySubsystem::NotifyGeneralEntityDeath(const FMassEntityHandle& Entity, uint8& OutTeam)
+{
+	// Spec §4.7 (MC8): true iff Entity was a team's recorded general
+	// officer. The record invalidates (the aura input reads absence as 0)
+	// and the team shock stamps at the cvar base (the decay runs in the
+	// morale pass, PR-12).
+	OutTeam = 0;
+	UE_MT_SCOPED_WRITE_ACCESS(AccessDetector);
+	for (TPair<uint8, FTeamGeneralRecord>& Pair : TeamGenerals)
+	{
+		if (Pair.Value.OfficerEntity == Entity && Pair.Value.OfficerEntity.IsValid())
+		{
+			OutTeam = Pair.Key;
+			Pair.Value.OfficerEntity = FMassEntityHandle();
+			TeamGeneralDeathShock.FindOrAdd(Pair.Key) = FMoraleCVars::GeneralShockBase();
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT GeneralDeath Team=%d Shock=%+.2f"),
+				Pair.Key, FMoraleCVars::GeneralShockBase());
+			return true;
+		}
+	}
+	return false;
+}
+
+const FTeamGeneralRecord* UUnitRegistrySubsystem::FindTeamGeneral(uint8 TeamId) const
+{
+	UE_MT_SCOPED_READ_ACCESS(AccessDetector);
+	const FTeamGeneralRecord* Record = TeamGenerals.Find(TeamId);
+	// A cleared officer entity means the general died: absent, not present.
+	return (Record && Record->OfficerEntity.IsValid()) ? Record : nullptr;
+}
+
+float UUnitRegistrySubsystem::GetTeamGeneralDeathShock(uint8 TeamId) const
+{
+	UE_MT_SCOPED_READ_ACCESS(AccessDetector);
+	const float* Shock = TeamGeneralDeathShock.Find(TeamId);
+	return Shock ? *Shock : 0.f;
+}
+
+void UUnitRegistrySubsystem::SetTeamGeneralDeathShock(uint8 TeamId, float Value)
+{
+	UE_MT_SCOPED_WRITE_ACCESS(AccessDetector);
+	TeamGeneralDeathShock.FindOrAdd(TeamId) = Value;
+}
+
+void UUnitRegistrySubsystem::RebuildMoraleAuxState()
+{
+	// Spec §3.5: the per-team records are transient -- rebuild from the
+	// restored specs + rosters. The shock resets to 0 (a restored battle
+	// starts un-shocked; disclosed). Called at the end of RestoreBattleState.
+	UE_MT_SCOPED_WRITE_ACCESS(AccessDetector);
+	TeamGenerals.Reset();
+	TeamGeneralDeathShock.Reset();
+	for (TPair<FUnitHandle, FUnitRuntimeState>& Pair : Units)
+	{
+		const FUnitSpawnSpec* Spec = SpecsByIndex.Find(Pair.Key.Index);
+		if (!Spec || !Spec->bIsGeneral)
+		{
+			continue;
+		}
+		FUnitRuntimeState& State = Pair.Value;
+		if (State.OfficerRosterBase != INDEX_NONE
+			&& State.OfficerRosterBase >= 0 && State.OfficerRosterBase < State.Roster.Num())
+		{
+			FTeamGeneralRecord& Record = TeamGenerals.FindOrAdd(Spec->TeamId);
+			Record.Unit = Pair.Key;
+			Record.OfficerEntity = State.Roster[State.OfficerRosterBase];
+		}
 	}
 }
 
@@ -973,6 +1118,10 @@ void UUnitRegistrySubsystem::ResetBattleState()
 	}
 	TallyScratch.Reset();
 	CoverageScratch.Reset();
+	// Phase 4a (spec morale-and-gas §3.1): the per-team morale state is
+	// battle-scoped with the rest of the registry.
+	TeamGenerals.Reset();
+	TeamGeneralDeathShock.Reset();
 	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT ResetBattleState ok"));
 }
 
@@ -1211,6 +1360,10 @@ bool UUnitRegistrySubsystem::RestoreBattleState(const FBattleSaveData& InData)
 		}
 		Rng->GetMutableRegistry().RestoreStreams(InData.RngRootSeed, StreamStates);
 	}
+
+	// Phase 4a (spec morale-and-gas §3.5): the transient per-team records
+	// rebuild from the restored specs + rosters.
+	RebuildMoraleAuxState();
 
 	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT SaveProbe Restore Units=%d Engagements=%d RngStreams=%d Schema=%u"),
 	       Units.Num(), Engagements.Num(), InData.RngStreams.Num(), InData.SchemaVersion);

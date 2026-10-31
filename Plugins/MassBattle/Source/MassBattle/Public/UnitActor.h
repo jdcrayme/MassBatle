@@ -117,6 +117,17 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Battle", meta = (ClampMin = "0", ClampMax = "7"))
 	uint8 TeamId = 0;
 
+	/** Officer count (Phase 4a, spec morale-and-gas section 3.3/ADR-35):
+	 *  0 = the EDU row's own officer lines; >0 overrides (clamped to 3).
+	 *  Officers are extra roster entities stamped bOfficer at fixup. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Battle", meta = (ClampMin = "0", ClampMax = "3"))
+	int32 OfficerCount = 0;
+
+	/** Army general flag (Phase 4a, spec section 3.3/A6): officer slot 0
+	 *  of this unit is the general entity (aura anchor + death shock). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Battle")
+	bool bIsGeneral = false;
+
 	UPROPERTY(VisibleAnywhere, Category = "Battle") TObjectPtr<UAbilitySystemComponent> AbilitySystem;
 	UPROPERTY(VisibleAnywhere, Category = "Battle") TObjectPtr<UUnitAttributeSet> AttributeSet;
 

@@ -1,13 +1,16 @@
 // BattleEduParser.h -- pure EDU-format parser/serializer (roadmap R11/B.0
 // pure-math seam: free functions + plain structs, no UObject, fully unit-testable).
 //
-// Schema source of truth: Content/Data/EDU/golden_edu_v1.txt -- 15 field keys per unit
+// Schema source of truth: Content/Data/EDU/golden_edu_v1.txt -- 16 field keys per unit
 // (14 through Phase 2; Phase 3 adds stat_sec, the ranged-stack brief F3 /
-// spec ranged-stack section 6 touch-point table; golden re-signed per the
-// T0.2 disclosed-re-sign policy):
-//   type, dictionary, category, class, soldier, attributes, formation,
-//   stat_health, stat_pri, stat_sec, stat_pri_armour, stat_mental,
-//   stat_charge_dist, stat_cost, ownership
+// spec ranged-stack section 6 touch-point table; Phase 4a adds officer, the
+// morale-and-gas spec section 3.3 -- golden re-signed per the T0.2
+// disclosed-re-sign policy):
+//   type, dictionary, category, class, soldier, officer, attributes,
+//   formation, stat_health, stat_pri, stat_sec, stat_pri_armour,
+//   stat_mental, stat_charge_dist, stat_cost, ownership
+// officer is the schema's first OPTIONAL key (rows may carry zero) and the
+// first REPEATABLE one (up to 3 lines; the per-key occurrence cap).
 //
 // STRICTNESS (T0.2): unknown fields are rejected loudly (error carries the key
 // and the line number); wrong arity, duplicate fields, and malformed numbers
@@ -26,7 +29,9 @@
 //   5. Integers: no leading zeros ('07' -> '7'); '-' preserved.
 //   6. Floats: at most 2 decimals, trailing zeros trimmed, bare integer form
 //      kept bare ('1.20' -> '1.2', '3.0' -> '3', '.5' -> '0.5').
-//   7. Duplicate keys rejected (not deduplicated).
+//   7. Duplicate keys rejected (not deduplicated) EXCEPT the repeatable
+//      'officer' key (up to 3 lines, the per-key occurrence cap; 4+ rejects
+//      loudly). Phase 4a, spec morale-and-gas section 3.3.
 #pragma once
 
 #include "CoreMinimal.h"

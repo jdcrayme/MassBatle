@@ -19,6 +19,11 @@ namespace
 		int32 MaxValues;             // -1 = unbounded lists (attributes/ownership)
 		TArray<EEduValueKind> Kinds; // for fixed arity: one kind per value; cycle for lists
 		bool bLowercaseAll;          // lowercase every value (lists)
+		// Phase 4a (spec morale-and-gas section 3.3): the officer key is the
+		// schema's first repeatable + optional key -- up to MaxOccurrences
+		// lines per unit (4+ rejects loudly), zero allowed.
+		int32 MaxOccurrences = 1;
+		bool bOptional = false;
 	};
 
 	// Arity/kind table read straight off Data/EDU/golden_edu_v1.txt.
@@ -30,6 +35,10 @@ namespace
 			{TEXT("category"),         1,  1, {EduToken},                                                       false},
 			{TEXT("class"),            1,  1, {EduToken},                                                       false},
 			{TEXT("soldier"),          4,  4, {EduName, EduInt, EduInt, EduInt},                                false},
+			// Phase 4a (spec morale-and-gas section 3.3, ADR-35): the model name
+			// is inert here (no modelsdb); FromEdu consumes the COUNT. Optional
+			// (rows may carry zero) + repeatable up to 3 (the occurrence cap).
+			{TEXT("officer"),           1,  1, {EduName},                                                        false, 3, true},
 			{TEXT("attributes"),       0, -1, {EduToken},                                                       true},
 			{TEXT("formation"),        6,  6, {EduFloat, EduFloat, EduFloat, EduFloat, EduFloat, EduToken},     false},
 			{TEXT("stat_health"),      2,  2, {EduInt, EduInt},                                                 false},
@@ -244,17 +253,34 @@ bool FBattleEduParser::Parse(const FString& EduText, TArray<FEduUnit>& OutUnits,
 		if (bSawAnyField)
 		{
 			// Enforce schema order + completeness on the finished unit.
+			// Phase 4a amendment (spec morale-and-gas section 3.3): each spec
+			// consumes its run of consecutive same-key fields (the repeatable
+			// officer key, capped at MaxOccurrences); optional keys may be
+			// absent entirely. Every other property of the check is unchanged.
 			int32 Cursor = 0;
 			for (const FEduFieldSpec& Spec : GetSchema())
 			{
-				if (Cursor >= Current.Fields.Num() || Current.Fields[Cursor].Key != Spec.Key)
+				if (Cursor < Current.Fields.Num() && Current.Fields[Cursor].Key == Spec.Key)
+				{
+					int32 Occurrences = 0;
+					while (Cursor < Current.Fields.Num() && Current.Fields[Cursor].Key == Spec.Key)
+					{
+						++Occurrences;
+						++Cursor;
+					}
+					if (Occurrences > Spec.MaxOccurrences)
+					{
+						Fail(OutError, CurrentUnitStartLine, FString::Printf(TEXT("unit has %d '%s' lines (cap %d)"), Occurrences, *Spec.Key, Spec.MaxOccurrences));
+						return false;
+					}
+				}
+				else if (!Spec.bOptional)
 				{
 					Fail(OutError, CurrentUnitStartLine, FString::Printf(TEXT("unit missing or misordered field '%s' (canonical order required)"), *Spec.Key));
 					return false;
 				}
-				++Cursor;
 			}
-			if (Current.Fields.Num() != GetSchema().Num())
+			if (Cursor != Current.Fields.Num())
 			{
 				Fail(OutError, CurrentUnitStartLine, TEXT("unit has fields beyond the schema"));
 				return false;
@@ -310,15 +336,36 @@ bool FBattleEduParser::Parse(const FString& EduText, TArray<FEduUnit>& OutUnits,
 		}
 
 		// Canonical order check: fields must arrive in schema order within a unit.
+		// Phase 4a amendment (spec morale-and-gas section 3.3): the repeatable
+		// 'officer' key may follow ITSELF (consecutive lines) up to its
+		// MaxOccurrences; every other duplicate stays the hard error it always
+		// was (rule 7's one sanctioned exception).
 		if (Current.Fields.Num() > 0)
 		{
 			const FString& PrevKey = Current.Fields.Last().Key;
 			const int32 PrevIdx = SchemaKeys().Find(PrevKey);
 			const int32 CurrIdx = SchemaKeys().Find(Key);
-			if (PrevIdx != INDEX_NONE && CurrIdx != INDEX_NONE && CurrIdx <= PrevIdx)
+			if (PrevIdx != INDEX_NONE && CurrIdx != INDEX_NONE && CurrIdx < PrevIdx)
 			{
-				Fail(OutError, LineNumber, FString::Printf(TEXT("field '%s' out of canonical order (after '%s') or duplicate"), *Key, *PrevKey));
+				Fail(OutError, LineNumber, FString::Printf(TEXT("field '%s' out of canonical order (after '%s')"), *Key, *PrevKey));
 				return false;
+			}
+			if (PrevIdx != INDEX_NONE && CurrIdx != INDEX_NONE && CurrIdx == PrevIdx)
+			{
+				const int32 OccurrencesSoFar = [&Key, &Current]()
+				{
+					int32 Count = 0;
+					for (const FEduField& Field : Current.Fields)
+					{
+						Count += (Field.Key == Key) ? 1 : 0;
+					}
+					return Count;
+				}();
+				if (OccurrencesSoFar >= Spec->MaxOccurrences)
+				{
+					Fail(OutError, LineNumber, FString::Printf(TEXT("field '%s' exceeds its occurrence cap (%d lines)"), *Key, Spec->MaxOccurrences));
+					return false;
+				}
 			}
 		}
 

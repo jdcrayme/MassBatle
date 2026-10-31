@@ -54,6 +54,16 @@ struct FBattleRowStats
 	int32 AmmoPerMan = 0;       // stat_pri ammo value
 	bool bSkirmishDefault = false; // class "missile" rows default the toggle on (A8)
 
+	// Phase 4a morale mapping (spec morale-and-gas section 3.3): the
+	// stat_mental tokens consumed at last -- discipline scales break
+	// resistance + rally (never the weights, MC2); training rides inert
+	// (the formation-neatness consumer is future movement polish). The
+	// officer count is the repeatable-key line count (cap 3, parser-
+	// enforced). Unknown tokens fail loudly (the missile-branch posture).
+	EBattleDiscipline Discipline = EBattleDiscipline::Normal;
+	EBattleTraining Training = EBattleTraining::Trained;
+	int32 OfficerCount = 0;     // parsed officer lines (0 = none)
+
 	/** Map one parsed FEduUnit row onto typed stats. Fails loudly on missing fields. */
 	static MASSBATTLE_API bool FromEdu(const FEduUnit& Row, FBattleRowStats& OutStats, FString& OutError);
 };
