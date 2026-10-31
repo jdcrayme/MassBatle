@@ -116,6 +116,8 @@ Standing rule from Phase 0 onward: pure-math seam audit at every code review (B.
 
 ### Phase 4 — Morale & full GAS
 
+> **Run split (owner decision 2026-10-31, spec `Docs/spec/morale-and-gas.md` §9):** Phase 4a ships the gated morale core (the contribution stack + MoraleTick GE, the fatigue model + effect catalog, the rout FSM + rally + cascade, officer/general death events, GeneralAura, guard/impetuous toggles; T4.1-T4.8). Phase 4b (`OrderLatency`, TerrorAura, climate fatigue) lands as its own brief against the 4a report -- the phase-2 two-run precedent. This section is the parent scope of both runs.
+
 **Goal:** the soul of the battle (§10.5).
 
 - Morale contribution stack behind an **explicit tick mechanism** [E3, review 2026-10-23]: periodic infinite-duration `MoraleTick` GE (period 0.25–0.5 s, §12 tunable) whose period execution runs the exec-calc over sim-fed SetByCaller inputs, or a sim-owned accumulator applying an instant evaluation GE; the fresh-casualty spike is a sim-tracked decay term — GAS exec-calcs fire on aggregation events, never on their own timer. Fatigue tick from exertion; effect catalog (§10.5).
