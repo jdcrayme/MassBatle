@@ -19,6 +19,8 @@ The demo currently ships as two half-demos. The authored map path (`ADemoGameMod
 
 One authored battle, west (player, Team 0) vs east (enemy, Team 1). Every unit is a map-placed `ADemoUnitActor`, **dictionary-keyed** (`UnitDictionary`, the PR-11 rule -- `EduRowIndex` stays the CI fallback), with `NumRanks` / `SoldierCount` / `Team` authored per unit. Structures are `ADemoGarrisonProp`s. Positions below are targets in meters (x west->east, y south->north); the editor pass finalizes them against the placement previews (`ADemoUnitActor` footprint lines, `ADemoGarrisonProp::DrawPlacementPreview`) and re-saves the map (the PR-11 posture: a .umap cannot be authored statically).
 
+> **Map pass status (2026-10-31, the live-editor session):** the table below is AUTHORED in `L_MassBattle_Demo01` as-placed -- 12 `MB_*`-labeled `ADemoUnitActor`s + 4 `ADemoGarrisonProp`s at these coordinates, dictionary-keyed, generals stamped (`OfficerCount 2` + `bIsGeneral`), map saved. Boot evidence `Tools/CI/m7_map_boot.log`: `DemoSpawn spawned=12 of 12`, `DemoClickProbe summary probes=4 ok=4`, `GeneralRegistered` x2, full pipeline session-on. The remaining sequencer binding to these level units (role -> handle) is the PR-4 carve-out.
+
 ### 2.1 Order of battle (~384 entities)
 
 | ID | Dictionary | Count | Ranks | Pos (m) | Yaw | Notes |
