@@ -1131,7 +1131,8 @@ void UUnitRegistrySubsystem::CaptureBattleState(FBattleSaveData& OutData) const
 {
 	UE_MT_SCOPED_READ_ACCESS(AccessDetector);
 	OutData = FBattleSaveData();
-	OutData.SchemaVersion = 2;
+	// Phase 4a (spec morale-and-gas section 3.5): v3.
+	OutData.SchemaVersion = 3;
 
 	// Units in sorted-handle order (the pass the hash folds).
 	TArray<FUnitHandle> Handles;
@@ -1200,6 +1201,16 @@ void UUnitRegistrySubsystem::CaptureBattleState(FBattleSaveData& OutData) const
 		Entry.RangedInitialAmmo = State->RangedInitialAmmo;
 		Entry.InitialRosterSize = State->InitialRosterSize;
 		Entry.TeamId = Spec ? Spec->TeamId : 0;
+		// v3 (spec morale-and-gas section 3.5): the morale block.
+		Entry.RoutState = static_cast<uint8>(State->RoutState);
+		Entry.RoutCount = State->RoutCount;
+		Entry.ExertionIntegral = State->ExertionIntegral;
+		Entry.LastMoraleValue = State->LastMoraleValue;
+		Entry.LastFatigueValue = State->LastFatigueValue;
+		Entry.FreshCasualtySpike = State->FreshCasualtySpike;
+		Entry.bGuardMode = State->bGuardMode ? 1 : 0;
+		Entry.bIsGeneral = Spec && Spec->bIsGeneral ? 1 : 0;
+		Entry.OfficerCount = Spec ? Spec->OfficerCount : 0;
 	}
 
 	// Slot bookkeeping the round-trip must reproduce (free-list depth folds
@@ -1252,12 +1263,13 @@ bool UUnitRegistrySubsystem::RestoreBattleState(const FBattleSaveData& InData)
 {
 	// v2 (spec ranged-stack §3.5) restores the ranged toggles + denominators;
 	// v1 (legacy) restores to the defaults. Anything else rejects.
-	if (InData.SchemaVersion != 1 && InData.SchemaVersion != 2)
+	if (InData.SchemaVersion != 2 && InData.SchemaVersion != 3)
 	{
-		UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT SaveProbe FAIL schema mismatch (have %u, want 1 or 2)"), InData.SchemaVersion);
+		UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT SaveProbe FAIL schema mismatch (have %u, want 2 or 3; v1 aged out with the phase-4a re-sign)"), InData.SchemaVersion);
 		return false;
 	}
 	const bool bV2 = InData.SchemaVersion >= 2;
+	const bool bV3 = InData.SchemaVersion >= 3;
 	UE_MT_SCOPED_WRITE_ACCESS(AccessDetector);
 	Units.Reset();
 	SpecsByIndex.Reset();
@@ -1312,6 +1324,27 @@ bool UUnitRegistrySubsystem::RestoreBattleState(const FBattleSaveData& InData)
 		State.bOutOfAmmo = bV2 && Entry.bOutOfAmmo != 0;
 		State.RangedInitialAmmo = bV2 ? Entry.RangedInitialAmmo : 0;
 		State.InitialRosterSize = bV2 ? Entry.InitialRosterSize : 0;
+		// v3 (spec morale-and-gas section 3.5): the morale block. v2 payloads
+		// restore the defaults (rout Steady, count 0, values 0, guard off);
+		// the transient bookkeeping (tick stamp, flee/rally counters) resets
+		// by design -- a restored battle re-evaluates from idle.
+		State.RoutState = bV3 ? static_cast<EBattleRoutState>(Entry.RoutState) : EBattleRoutState::Steady;
+		State.RoutCount = bV3 ? Entry.RoutCount : 0;
+		State.ExertionIntegral = bV3 ? Entry.ExertionIntegral : 0.f;
+		State.LastMoraleValue = bV3 ? Entry.LastMoraleValue : 0.f;
+		State.LastFatigueValue = bV3 ? Entry.LastFatigueValue : 0.f;
+		State.FreshCasualtySpike = bV3 ? Entry.FreshCasualtySpike : 0.f;
+		State.bGuardMode = bV3 && Entry.bGuardMode != 0;
+		// The officer bookkeeping rebuilds from the spec's soldier count (the
+		// officers are the LAST OfficerCount roster entities -- spec section
+		// 3.1); discipline defaults Normal on the registry-only restore (the
+		// T6.3 entity-rebuild path re-stamps it from the row, disclosed).
+		State.OfficerCount = bV3 ? FMath::Clamp(Entry.OfficerCount, 0, 3) : 0;
+		State.OfficerRosterBase = (bV3 && State.OfficerCount > 0) ? Entry.SoldierCount : INDEX_NONE;
+		State.bRoutFleeing = false;
+		State.RoutFleeSerial = 0;
+		State.RallyAttempts = 0;
+		State.LastMoraleTickSimTime = -1.f;
 
 		FUnitSpawnSpec& Spec = SpecsByIndex.Add(Handle.Index);
 		Spec.EduRowIndex = Entry.EduRowIndex;

@@ -416,6 +416,19 @@ bool FCombat_SaveRoundTrip::RunTest(const FString& Parameters)
 	// out-of-ammo flip must survive the round trip.
 	TestTrue(TEXT("fire toggles set"), Registry->SetUnitFireToggles(UnitA.Unit, false, true));
 	TestTrue(TEXT("out-of-ammo flip"), Registry->FlipUnitOutOfAmmo(UnitA.Unit));
+	// v3 (spec morale-and-gas section 3.5): the morale block round-trips --
+	// rout state/count, the integral, the mirrors, the spike, the guard
+	// toggle. Mutated through the public mutable accessor (PR-4's surface).
+	if (FUnitRuntimeState* MutableA = Registry->FindMutableUnitState(UnitA.Unit))
+	{
+		MutableA->RoutState = EBattleRoutState::Wavering;
+		MutableA->RoutCount = 1;
+		MutableA->ExertionIntegral = 12.5f;
+		MutableA->LastMoraleValue = 3.25f;
+		MutableA->LastFatigueValue = 10.f;
+		MutableA->FreshCasualtySpike = 2.75f;
+	}
+	TestTrue(TEXT("guard toggle set"), Registry->SetUnitGuardToggle(UnitA.Unit, true));
 	if (FEngagementRecord* Rec = Registry->CreateOrRefreshEngagement(UnitA.Unit, UnitB.Unit))
 	{
 		Rec->Mode = EEngagementMode::Mob;
@@ -427,7 +440,7 @@ bool FCombat_SaveRoundTrip::RunTest(const FString& Parameters)
 	const uint32 HashBefore = Registry->ComputeBookkeepingHash();
 	FBattleSaveData Save;
 	Registry->CaptureBattleState(Save);
-	TestEqual(TEXT("schema version"), Save.SchemaVersion, 2u);
+	TestEqual(TEXT("schema version"), Save.SchemaVersion, 3u);
 	TestEqual(TEXT("units captured"), Save.Units.Num(), 2);
 	TestEqual(TEXT("engagement captured"), Save.Engagements.Num(), 1);
 	TestTrue(TEXT("rng streams captured"), Save.RngStreams.Num() >= 2);
@@ -440,6 +453,12 @@ bool FCombat_SaveRoundTrip::RunTest(const FString& Parameters)
 			TestEqual(TEXT("captured FireAtWill"), EntryA->bFireAtWill, 0);
 			TestEqual(TEXT("captured Skirmish"), EntryA->bSkirmish, 1);
 			TestEqual(TEXT("captured OutOfAmmo"), EntryA->bOutOfAmmo, 1);
+			TestEqual(TEXT("captured RoutState"), EntryA->RoutState, static_cast<uint8>(EBattleRoutState::Wavering));
+			TestEqual(TEXT("captured RoutCount"), EntryA->RoutCount, 1);
+			TestEqual(TEXT("captured ExertionIntegral"), EntryA->ExertionIntegral, 12.5f);
+			TestEqual(TEXT("captured LastMoraleValue"), EntryA->LastMoraleValue, 3.25f);
+			TestEqual(TEXT("captured FreshCasualtySpike"), EntryA->FreshCasualtySpike, 2.75f);
+			TestEqual(TEXT("captured bGuardMode"), EntryA->bGuardMode, 1);
 		}
 	}
 
@@ -468,6 +487,17 @@ bool FCombat_SaveRoundTrip::RunTest(const FString& Parameters)
 		TestFalse(TEXT("FireAtWill back"), RestoredA->bFireAtWill);
 		TestTrue(TEXT("Skirmish back"), RestoredA->bSkirmish);
 		TestTrue(TEXT("OutOfAmmo back"), RestoredA->bOutOfAmmo);
+		// v3: the morale block survives (spec morale-and-gas §3.5); the
+		// transient flee/rally counters reset by design.
+		TestEqual(TEXT("RoutState back"), static_cast<int32>(RestoredA->RoutState), static_cast<int32>(EBattleRoutState::Wavering));
+		TestEqual(TEXT("RoutCount back"), RestoredA->RoutCount, 1);
+		TestEqual(TEXT("ExertionIntegral back"), RestoredA->ExertionIntegral, 12.5f);
+		TestEqual(TEXT("LastMoraleValue back"), RestoredA->LastMoraleValue, 3.25f);
+		TestEqual(TEXT("LastFatigueValue back"), RestoredA->LastFatigueValue, 10.f);
+		TestEqual(TEXT("FreshCasualtySpike back"), RestoredA->FreshCasualtySpike, 2.75f);
+		TestTrue(TEXT("GuardMode back"), RestoredA->bGuardMode);
+		TestFalse(TEXT("flee bookkeeping resets"), RestoredA->bRoutFleeing);
+		TestEqual(TEXT("rally attempts reset"), RestoredA->RallyAttempts, 0u);
 	}
 	const FEngagementRecord* RestoredRec = Registry->FindEngagement(UnitA.Unit, UnitB.Unit);
 	TestNotNull(TEXT("engagement back"), RestoredRec);
@@ -493,18 +523,21 @@ bool FCombat_SaveRoundTrip::RunTest(const FString& Parameters)
 	}
 	TestEqual(TEXT("every stream restored at its captured position"), Identical, Save.RngStreams.Num());
 
-	// Legacy v1 payload: the toggles are absent -> restore takes the defaults
-	// (FireAtWill on, Skirmish/OutOfAmmo off, denominators 0; spec §3.5).
-	Save.SchemaVersion = 1;
+	// Legacy v2 payload: the morale block is absent -> restore takes the
+	// defaults (rout Steady, count 0, values 0, guard off; spec
+	// morale-and-gas §3.5). v1 aged out with the phase-4a re-sign (the
+	// restore rejects it loudly -- one legacy version back, the v2 precedent).
+	Save.SchemaVersion = 2;
 	TestTrue(TEXT("legacy restore ok"), Registry->RestoreBattleState(Save));
 	{
 		const FUnitRuntimeState* LegacyA = Registry->FindUnitState(UnitA.Unit);
 		if (TestNotNull(TEXT("unit A state back (legacy)"), LegacyA))
 		{
-			TestTrue(TEXT("legacy FireAtWill defaults on"), LegacyA->bFireAtWill);
-			TestFalse(TEXT("legacy Skirmish defaults off"), LegacyA->bSkirmish);
-			TestFalse(TEXT("legacy OutOfAmmo defaults off"), LegacyA->bOutOfAmmo);
-			TestEqual(TEXT("legacy denominators default 0"), LegacyA->RangedInitialAmmo + LegacyA->InitialRosterSize, 0);
+			TestEqual(TEXT("legacy RoutState defaults steady"),
+				static_cast<int32>(LegacyA->RoutState), static_cast<int32>(EBattleRoutState::Steady));
+			TestEqual(TEXT("legacy RoutCount defaults 0"), LegacyA->RoutCount, 0);
+			TestEqual(TEXT("legacy exertion defaults 0"), LegacyA->ExertionIntegral, 0.f);
+			TestFalse(TEXT("legacy GuardMode defaults off"), LegacyA->bGuardMode);
 		}
 	}
 	TestEqual(TEXT("bookkeeping hash independent of toggles"),
@@ -785,6 +818,45 @@ bool FCombat_HashTerms::RunTest(const FString& Parameters)
 				TestEqual(TEXT("pool release restores hash"), FBattleStateHash::Compute(World), HashR);
 			}
 		}
+	}
+
+	// Block 10 (spec morale-and-gas section 3.4): the unit-level morale
+	// terms -- mutation sensitivity per field, revert restores. The public
+	// mutable accessor is the write surface (PR-4's). Fresh baseline: the
+	// ranged section above left the archer unit + its fragments in the
+	// world (HashR-class state), so this block anchors on its own.
+	const uint64 HashM = FBattleStateHash::Compute(World);
+	if (FUnitRuntimeState* Mutable = Registry->FindMutableUnitState(UnitA.Unit))
+	{
+		const EBattleRoutState OldRout = Mutable->RoutState;
+		Mutable->RoutState = EBattleRoutState::Routing;
+		TestNotEqual(TEXT("rout state mutation changes hash"), FBattleStateHash::Compute(World), HashM);
+		Mutable->RoutState = OldRout;
+		TestEqual(TEXT("rout state revert restores hash"), FBattleStateHash::Compute(World), HashM);
+
+		const float OldExertion = Mutable->ExertionIntegral;
+		Mutable->ExertionIntegral = OldExertion + 0.5f; // above the 1e-2 quantization
+		TestNotEqual(TEXT("exertion mutation changes hash"), FBattleStateHash::Compute(World), HashM);
+		Mutable->ExertionIntegral = OldExertion;
+		TestEqual(TEXT("exertion revert restores hash"), FBattleStateHash::Compute(World), HashM);
+
+		const float OldMorale = Mutable->LastMoraleValue;
+		Mutable->LastMoraleValue = OldMorale - 0.25f;
+		TestNotEqual(TEXT("morale mirror mutation changes hash"), FBattleStateHash::Compute(World), HashM);
+		Mutable->LastMoraleValue = OldMorale;
+		TestEqual(TEXT("morale mirror revert restores hash"), FBattleStateHash::Compute(World), HashM);
+
+		const float OldSpike = Mutable->FreshCasualtySpike;
+		Mutable->FreshCasualtySpike = OldSpike + 1.f;
+		TestNotEqual(TEXT("spike mutation changes hash"), FBattleStateHash::Compute(World), HashM);
+		Mutable->FreshCasualtySpike = OldSpike;
+		TestEqual(TEXT("spike revert restores hash"), FBattleStateHash::Compute(World), HashM);
+
+		const bool bOldGuard = Mutable->bGuardMode;
+		Mutable->bGuardMode = !bOldGuard;
+		TestNotEqual(TEXT("guard toggle mutation changes hash"), FBattleStateHash::Compute(World), HashM);
+		Mutable->bGuardMode = bOldGuard;
+		TestEqual(TEXT("guard toggle revert restores hash"), FBattleStateHash::Compute(World), HashM);
 	}
 
 	World->DestroyWorld(false);

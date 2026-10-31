@@ -253,6 +253,30 @@ uint64 FBattleStateHash::Compute(UWorld* World, TArray<uint64>* OutSectionHashes
 		AppendU64(static_cast<uint64>(Quantize2(Pool.TTL[Slot])));
 	}
 
+	// 10. Unit-level morale block (spec morale-and-gas section 3.4): appended
+	//     AFTER the pool block (existing section indices stay stable), per
+	//     sorted handle, fixed term count. RoutState/RoutCount as uint8,
+	//     ExertionIntegral/LastMoraleValue/LastFatigueValue/FreshCasualtySpike
+	//     at 1e-2, bGuardMode as uint8. The tick stamp is pipeline state
+	//     (excluded, the dirty-flag precedent); discipline/officer identity
+	//     are spawn-immutable (excluded, the base-stats precedent).
+	EndSection();
+	for (const FUnitHandle& Handle : Registry->GetSortedHandles())
+	{
+		const FUnitRuntimeState* State = Registry->FindUnitState(Handle);
+		if (!State)
+		{
+			continue;
+		}
+		AppendU64(static_cast<uint64>(State->RoutState));
+		AppendU64(static_cast<uint64>(State->RoutCount));
+		AppendU64(static_cast<uint64>(Quantize2(State->ExertionIntegral)));
+		AppendU64(static_cast<uint64>(Quantize2(State->LastMoraleValue)));
+		AppendU64(static_cast<uint64>(Quantize2(State->LastFatigueValue)));
+		AppendU64(static_cast<uint64>(Quantize2(State->FreshCasualtySpike)));
+		AppendU64(State->bGuardMode ? 1u : 0u);
+	}
+
 	EndSection();
 	return CityHash64(reinterpret_cast<const char*>(Bytes.GetData()), static_cast<uint32>(Bytes.Num()));
 }

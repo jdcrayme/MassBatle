@@ -79,6 +79,44 @@ struct FUnitSaveEntry
 	UPROPERTY() int32 RangedInitialAmmo = 0;
 	UPROPERTY() int32 InitialRosterSize = 0;
 	UPROPERTY() uint8 TeamId = 0;
+
+	// Phase 4a (spec morale-and-gas section 3.5, v3): the morale block --
+	// rout state/count, the fatigue integral, the sim mirrors of the
+	// GE-written values, the fresh-casualty spike, the guard toggle, and
+	// the officer/general authoring the restore's aux rebuild consumes.
+	// TRANSIENT by design (NOT saved): the tick stamp (pipeline state),
+	// the flee/rally bookkeeping (a restored battle re-evaluates from
+	// idle, the RC7 restore posture), and the per-team records + shock
+	// (RebuildMoraleAuxState rebuilds/resets them). v2 payloads restore
+	// these to the defaults (rout Steady, values 0, guard off).
+	UPROPERTY() uint8 RoutState = 0;      // EBattleRoutState
+	UPROPERTY() uint8 RoutCount = 0;
+	UPROPERTY() float ExertionIntegral = 0.f;
+	UPROPERTY() float LastMoraleValue = 0.f;
+	UPROPERTY() float LastFatigueValue = 0.f;
+	UPROPERTY() float FreshCasualtySpike = 0.f;
+	UPROPERTY() uint8 bGuardMode = 0;
+	UPROPERTY() uint8 bIsGeneral = 0;
+	UPROPERTY() int32 OfficerCount = 0;
+
+	// Phase 4a (spec morale-and-gas section 3.5, v3): the morale block --
+	// rout state/count, the fatigue integral, the sim mirrors of the
+	// GE-written values, the fresh-casualty spike, the guard toggle, and
+	// the officer/general authoring the restore's aux rebuild consumes.
+	// TRANSIENT by design (NOT saved): the tick stamp (pipeline state),
+	// the flee/rally bookkeeping (a restored battle re-evaluates from
+	// idle, the RC7 restore posture), and the per-team records + shock
+	// (RebuildMoraleAuxState rebuilds/resets them). v2 payloads restore
+	// these to the defaults (rout Steady, values 0, guard off).
+	UPROPERTY() uint8 RoutState = 0;      // EBattleRoutState
+	UPROPERTY() uint8 RoutCount = 0;
+	UPROPERTY() float ExertionIntegral = 0.f;
+	UPROPERTY() float LastMoraleValue = 0.f;
+	UPROPERTY() float LastFatigueValue = 0.f;
+	UPROPERTY() float FreshCasualtySpike = 0.f;
+	UPROPERTY() uint8 bGuardMode = 0;
+	UPROPERTY() uint8 bIsGeneral = 0;
+	UPROPERTY() int32 OfficerCount = 0;
 };
 
 /** One engagement-record snapshot (spec §3.5). AssignedAttackers is excluded:
@@ -112,14 +150,16 @@ struct FRngStreamSaveEntry
 
 /** Schema-versioned save container (v1: registry runtime snapshot + RNG
  *  stream states; v2 adds the ranged fire-control toggles + fraction
- *  denominators per spec ranged-stack §3.5; shared-fragment payloads join
- *  the schema as entities do at T6.3). Plain data only. */
+ *  denominators per spec ranged-stack §3.5; v3 adds the morale block per
+ *  spec morale-and-gas section 3.5 -- restore accepts 2 and 3, v1 aged out
+ *  with the phase-4a re-sign, disclosed; shared-fragment payloads join the
+ *  schema as entities do at T6.3). Plain data only. */
 USTRUCT()
 struct FBattleSaveData
 {
 	GENERATED_BODY()
 
-	UPROPERTY() uint32 SchemaVersion = 2;
+	UPROPERTY() uint32 SchemaVersion = 3;
 
 	UPROPERTY() TArray<FUnitSaveEntry> Units;
 	/** Free-slot reuse state (LIFO order preserved) + per-slot generation
