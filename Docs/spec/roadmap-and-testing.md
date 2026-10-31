@@ -189,6 +189,35 @@ Standing rule from Phase 0 onward: pure-math seam audit at every code review (B.
 | M4 | Arrow volleys | ranged stack |
 | M5 | Rout cascade | morale stack |
 | M6 | Zoom-to-ground duel | representation sync |
+| M7 | The demo shell (`L_MassBattle_Demo01`: the scripted battle arc + the player interface, incl. the cavalry charge) | the composed battle -- movement, engagement, ranged, morale, garrison, command shell -- accepted by the D-gates below |
+
+### Demo acceptance gates (D.1-D.19) -- the M7 main demo shell
+
+The demo shell composes M2 + M4 + M5 and the garrison story into one authored field; the design (field, order of battle, beat sequencer, player interface, build order, constraints) lives in `Docs/spec/demo-shell.md`. The D-gates are **owner-run, manual PIE gates** on `L_MassBattle_Demo01`: a gate passes when every Verify item is observed in one session; evidence = screenshot + the cited log/overlay lines. Gate IDs are append-only.
+
+**Triage rule (D-gates vs the automated tiers):** every gate names the automated suites that assert the same layer headlessly. A failed gate triages as: (1) backing suites green -> a demo-shell wiring defect (input/HUD/sequencer); fix the shell, no sim change. (2) A backing suite red -> a sim defect; fix under the existing suite, re-run the gate. (3) No backing suite -> a test-profile gap: add the `Battle.Func.*` / `Battle.Unit.*` test first (B.8 rules 1-2), then re-triage. Gates marked "none (pure shell)" touch demo-module code only, by construction.
+
+| ID | Actions | Verify | Backed by (automated) |
+|----|---------|--------|----------------------|
+| D.1 | PIE the demo map, hands off the mouse | both armies stand deployed at beat 0 with a banner over every unit and the beat label in the HUD; WASD/edge pans, Q/E rotates, wheel zooms; F3 toggles the overlay | headless boot (the `m5_boot` precedent) + `Battle.Smoke` |
+| D.2 | Select a friendly unit, click on terrain | the unit moves to the clicked location while maintaining formation, faces the point on arrival; selection ring sized to frontage; the banner follows the body | `Battle.Func.S1_MarchWheel`; `Battle.Unit.Slots`, `MovementSpine` |
+| D.3 | Drag a marquee over 2 friendly units; shift+click a third | both select (card row shows both); shift+click toggles the third in and out | none (pure shell) |
+| D.4 | Select 2 friendly units, RMB-drag across terrain | the drag preview shows the front in the drag orientation, divided between the two units (per-unit footprints + files-x-ranks labels); on release both units move into their indicated positions under the shared front | `Battle.Func.S4_WidthOverride`, `S7_FallIn`; `Battle.Unit.Slots` |
+| D.5 | Select a friendly unit, RMB an enemy banner | the attack issues; the unit closes, contacts, fights; fresh contact logs the charge bonus (F3 charge lines) | `Battle.Func.S4_ShieldWall`, `PairLifecycle`; `Battle.Unit.Combat` |
+| D.6 | Select a friendly unit, double-RMB an enemy | D.5 plus the guard toggle clears (badge / hover card reads it back); after winning the contact the unit pursues routers | `Battle.Func.ChargeMechanics`, `ToggleBehaviors` |
+| D.7 | With guard ON (G), attack an enemy | the unit engages and holds ground at contact; does not pursue when the enemy routs | `Battle.Func.ToggleBehaviors`; `Battle.Unit.Morale` |
+| D.8 | Ctrl+RMB ground beyond the enemy line | the unit marches, engages an enemy met en route, resumes the march after the fight | `Battle.Unit.Combat`; `Battle.Func.S1_MarchWheel` |
+| D.9 | Let beat 2 run (or order the archers onto the enemy line) | arrows arc from banner to target (gray-box feed); ammo pips deplete (banner + F3 bars); fire-at-will OFF holds fire (F3 hold-reason circles), ON resumes; no friendly hits on the front line under the arcs | `Battle.Func.S6_Volley`; `Battle.Unit.Ranged` (AmmoAccounting, VolleySelection, FirePass) |
+| D.10 | Order an enemy melee unit at the archers | the archers auto-retreat at break distance, fire while clear, resume position when the threat withdraws; with fire-at-will OFF they retreat but never fire | `Battle.Func.SkirmishBehavior`; `Battle.Unit.Ranged.SkirmishMath` |
+| D.11 | Play beat 4 out (or grind a target unit in melee) | the target's chip walks steady -> wavering -> breaking -> routing; flee arrows (F3); adjacent friendly chips degrade in the same window (cascade); F3 morale bars agree | `Battle.Func.S7_RoutCascade`; `Battle.Unit.Morale` |
+| D.12 | Beat 5: move the (mounted) general beside a routing friendly | the aura ring renders at the general; the rally succeeds and the chip returns to steady; with the general parked away, the same rally fails | `Battle.Func.S7_RoutCascade` (the rally half) |
+| D.13 | Beat 4 kills the enemy general | the star leaves its banner; the enemy line's chips drop sharply in the next tick window; the morale dump shows the shock contribution | `Battle.Func.OfficerDeath` |
+| D.14 | Select a unit, RMB the village building; then X with it selected | the unit files in through the entrance (F3 garrison markers / slot posts), the structure shows it garrisoned, then it egresses and forms up outside; approaches route to the entrance both times | `Battle.Func.S8_BuildingGarrison`, `S8b_MultiUnitGarrison`; `Battle.Unit.Garrison` |
+| D.15 | Select the archers; toggle fire-at-will (F) and skirmish (R) via keys and panel buttons | buttons + hover card reflect the registry read-back; behavior matches D.9/D.10; at zero ammo the fire control reads out-of-ammo and grays | `Battle.Func.ToggleBehaviors`; `Battle.Unit.Ranged.AmmoAccounting` |
+| D.16 | Hover, click, double-click, and enemy-click banners | hover expands to the stats card (row stats + live morale/fatigue/ammo + current order + toggles); click selects; double-click selects all of that type; enemy-click attacks with the selection | none (pure shell) |
+| D.17 | Fresh PIE, hands off | the beats advance by themselves (Deploy, Advance, Volley, Clash, Break, Rally, Garrison, Resolution) with the HUD label tracking; the field resolves to the verdict line; a player order mid-beat overrides that unit's scripted orders without stalling the arc | composes the above; no dedicated suite |
+| D.18 | Play the whole arc | no hitch at the spawn beat; frame rate holds through the clash at ~384 entities; overlay toggling changes no sim behavior | `Battle.Smoke` + the nightly soak tier (not a demo assertion) |
+| D.19 | Select a wing knight unit, double-RMB a flank enemy | the mounted charge lands with knockback (F3 charge/knockback lines); the target's casualty spike walks its chip down; the knights settle into melee at contact (waiters at the ring, no carousel) | `Battle.Func.ChargeMechanics`, `S2_PassThrough`; the EDU row via `Battle.Data.EduRoundTrip` (the golden re-sign) |
 
 ---
 

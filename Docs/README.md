@@ -42,6 +42,7 @@
 | `Docs/spec/engagement-and-melee.md` | Engagement solver & melee design spec: §0 EC-table acceptance contract, §3 data model, §4 mechanics, §6 touch points, ADR-22…26 proposals | **Living spec** (owner-authored; implementing agents read cited sections only) |
 | `Docs/spec/ranged-stack.md` | Ranged stack design spec (Phase 3): §0 RC-table acceptance contract, §3 data model (fragment + pool), §4 mechanics (ballistics, LOS, volleys, impacts), §6 touch points, ADR-27…31 proposals | **Living spec** (owner-authored; implementing agents read cited sections only) |
 | `Docs/spec/morale-and-gas.md` | Morale & GAS design spec (Phase 4): §0 MC-table acceptance contract, §3 data model (registry state + GAS surface + EDU mapping), §4 mechanics (stack, fatigue, rout FSM, MoraleTick GE, effect catalog), §6 touch points, ADR-32..37 proposals; the 4a/4b split rationale §9 | **Living spec** (owner-authored; implementing agents read cited sections only) |
+| `Docs/spec/demo-shell.md` | Demo shell design spec (M7): the main-demo field + order of battle (incl. the cavalry EDU row), the beat sequencer, the player interface (input grammar, banners, command bar), build order + constraints; acceptance = the roadmap D-gates | **Living spec** (owner-authored; implementing agents read cited sections only) |
 | `Docs/spec/roadmap-and-testing.md` | Build order (Phase 0–6), test gates T0–T6, scenarios S1–S7, automation strategy | **Living spec** |
 | `Docs/spec/reference-machine.md` | Perf-baseline hardware record (R10) | **Living** |
 | `Docs/reference/engine-api-5.8.md` | Pinned UE 5.8.4 API reference: Part A audit (C1–C12 verdicts), Part B operational digest (§4.0–§4.13), Part C sources | **Living reference** |
@@ -78,6 +79,8 @@ Repo files outside `Docs/` you will be pointed at: `Tools/CI/README.md`, `Tools/
 **MCP / editor automation work:** `Docs/reference/mcp-playbook.md` — check the §8 correction ledger before rediscovering anything.
 
 **CI, baselines, perf gates:** `Docs/spec/roadmap-and-testing.md` Part B → `Tools/CI/JENKINS.md` + `Baselines/perf/README.md` → `Docs/phases/phase-0/report.md` §1 (what was built) + §3 (ADR-16 deviations).
+
+**Working the demo shell (M7):** `Docs/spec/demo-shell.md` (the design: field, beats, interface, build order) → `Docs/spec/roadmap-and-testing.md` Part A (the D-gate table + the gate-to-test triage rule) → `Docs/AGENTS.md` §3 (the demo-module code convention).
 
 **"Why is it built this way?"** `Docs/spec/architecture.md` §0 ADR log → `Docs/reviews/plan-review-findings.md` (evidence per E/R/I id) → `Docs/phases/phase-0/audit.md` §4 (verified-correct items — do not re-litigate).
 
