@@ -284,6 +284,29 @@
   `Tools/CI/pr13_evidence.log` (20 lines) + the full log in
   `Tools/CI/last_run/func.log`.
 
+## PR-14 -- the M5 demo gray-box (code side; the PIE eyeball is owner-scoped)
+
+- [pr14.1] The morale overlay rows (B.2, PR-12's deferred item):
+  `MoraleTickProcessor::DrawMoraleOverlay` -- per-unit morale bars colored
+  by rout state (green/yellow/red/dark-red, length ~ the morale value), the
+  flee arrow toward the flee anchor (orange), the general's aura ring (blue,
+  the radius cvar). Gated by `Battle.Debug.ShowOverlay` (the M9 cached-cvar
+  posture); enqueued through the existing `EnqueueOverlayLine` framework.
+- [pr14.2] The demo hookup: `ADemoGameMode::RegisterM3Sample` boots
+  `BattleExec::MoraleSpawnRout` after the M4 sample (the fixture chain is
+  sequential by construction -- each fixture resets the battle, so the M5
+  field is the demo's live sample). The morale session flags ride
+  SpawnRout's EnableMoralePipeline.
+- [pr14.3] Headless boot evidence (`Tools/CI/m5_boot.log`, the m4_boot
+  posture): the demo map loads in `-game -nullrhi`, the five re-authored
+  level units spawn through the dictionary path (`DemoSpawn spawned=5 of 5`,
+  the PR-11 line), the combat pipeline session-on, no crash across the
+  window. The m4-era boot log (demo_ux_boot.log) has the IDENTICAL shape
+  (zero sample-registration lines -- the samples register on the
+  interactive path), so the M5 SpawnRout line + the screenshot ride the
+  owner's PIE session (the writeup's editor-session item; no Unreal MCP
+  session was available -- the PR-11 posture).
+
 ## Deferred to the implementing run (the brief's Tasks 1-9)
 
 - **Task 1** -- blocker 1 hunt (mixed clash+volley two-run mm-scale

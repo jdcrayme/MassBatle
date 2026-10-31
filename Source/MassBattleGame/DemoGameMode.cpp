@@ -134,6 +134,16 @@ void ADemoGameMode::RegisterM3Sample()
 	// analytic view on top.
 	BattleExec::RangedSpawnVolley({TEXT("skirmish")}, World);
 	UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoGameMode M4 sample registered (SpawnVolley skirmish, gray-box arrow feed)"));
+	// Phase 4a (PR-14, M5): the morale rout-cycle sample -- the SpawnRout
+	// fixture (a general + adjacent infantry + the enemy line, dictionary-
+	// keyed rows) boots the morale pipeline session-on; the M4 fixture's
+	// units give way to the M5 field (each fixture resets the battle, so the
+	// M3/M4/M5 chain is sequential by construction). The gray-box morale
+	// rows (bars by rout state, the aura ring, flee arrows) ride
+	// Battle.Debug.ShowOverlay + the morale pass's overlay
+	// (MoraleTickProcessor::DrawMoraleOverlay).
+	BattleExec::MoraleSpawnRout({}, World);
+	UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoGameMode M5 sample registered (SpawnRout, morale session-on)"));
 }
 
 void ADemoGameMode::SpawnScenarioAsset()

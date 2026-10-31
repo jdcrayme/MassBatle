@@ -67,6 +67,10 @@ private:
 		UUnitRegistrySubsystem* Registry, float TickDt);
 	void FoldUnitInputs(FMassEntityManager& EntityManager, UUnitRegistrySubsystem* Registry,
 		const FUnitBody& Body, const TArray<FEngagementKey>& SortedRecords);
+	/** The B.2 gray-box morale rows (PR-14): bars by rout state, the aura
+	 *  ring, flee arrows -- gated by Battle.Debug.ShowOverlay. */
+	void DrawMoraleOverlay(FMassExecutionContext& Context, UUnitRegistrySubsystem* Registry,
+		const TArray<FUnitBody>& Bodies, class UBattleDebugSubsystem* Debug);
 
 	TArray<FUnitBody> TickBodies;
 	TMap<FUnitHandle, int32> BodyIndexScratch;

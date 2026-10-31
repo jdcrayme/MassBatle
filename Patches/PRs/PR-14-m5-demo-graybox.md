@@ -30,3 +30,20 @@ The M2TW feel signature of morale is visible: units waver, break, and stream off
 ## Rollback
 
 Demo-module only; the sim is untouched. The M5 sample is additive behind the existing demo boot paths.
+
+## Status (2026-10-31, the PR-chain session: CODE SIDE EXECUTED; the eyeball owner-scoped)
+
+- The B.2 morale overlay rows landed in the morale pass (bars by rout
+  state, flee arrows, the general's aura ring; `Battle.Debug.ShowOverlay`
+  gated) -- PR-12's deferred item, closed here.
+- The demo hookup landed: the M5 sample boots `Battle.Morale.SpawnRout`
+  after the M4 sample (the sequential-fixture chain; morale session-on).
+- Headless boot evidence: `Tools/CI/m5_boot.log` -- the demo map loads in
+  `-game -nullrhi`, `DemoSpawn spawned=5 of 5` through the dictionary path,
+  the combat pipeline session-on, no crash. The m4-era boot log has the
+  identical shape (the samples register on the interactive path), so the
+  `SpawnRout` registration line + the morale-cycle screenshot remain the
+  owner's PIE session (no Unreal MCP session available -- the PR-11
+  posture, exactly as this writeup's Blocks-on row anticipated).
+- The map re-save was NOT needed: the M5 sample spawns through the
+  ExecBridge fixture (no new level-authored placements).

@@ -384,6 +384,70 @@ void UMoraleTickProcessor::TickMorale(FMassEntityManager& EM, FMassExecutionCont
 	{
 		Debug->RecordMoraleTickAge(TickAgeMax);
 		Debug->SetAuraActiveCount(AuraActiveCount);
+		DrawMoraleOverlay(Context, Registry, TickBodies, Debug);
+	}
+}
+
+// -- Phase 4a (PR-14, B.2's morale rows): the gray-box overlay -- morale
+// bars colored by rout state, the general's aura ring, flee arrows. The
+// M9 pattern: the overlay cvar read once per tick; enqueue cost only
+// when shown. --
+void UMoraleTickProcessor::DrawMoraleOverlay(FMassExecutionContext& Context, UUnitRegistrySubsystem* Registry,
+	const TArray<FUnitBody>& Bodies, UBattleDebugSubsystem* Debug)
+{
+	if (!Debug->IsOverlayShown())
+	{
+		return;
+	}
+	for (const FUnitBody& Body : Bodies)
+	{
+		const FUnitRuntimeState* State = Registry->FindUnitState(Body.Unit);
+		if (!State || State->Roster.Num() == 0)
+		{
+			continue;
+		}
+		const FVector Anchor(Body.AnchorM.X * 100.f, Body.AnchorM.Y * 100.f, 60.f);
+
+		// The morale bar: length 3 m x the morale fraction of the stack's
+		// base span (the placeholder band 0..10); color by rout state.
+		static const FColor StateColors[4] = {
+			FColor(80, 220, 80),   // Steady: green
+			FColor(240, 220, 60),  // Wavering: yellow
+			FColor(240, 70, 50),   // Routing: red
+			FColor(120, 20, 20)    // Shattered: dark red
+		};
+		const int32 StateIdx = FMath::Clamp(static_cast<int32>(State->RoutState), 0, 3);
+		FBattleOverlayLine Bar;
+		Bar.Shape = EBattleOverlayShape::Segment;
+		Bar.From = Anchor;
+		Bar.To = Anchor + FVector(FMath::Clamp(State->LastMoraleValue * 30.f, 0.f, 300.f), 0.f, 0.f);
+		Bar.Color = StateColors[StateIdx];
+		Debug->EnqueueOverlayLine(Bar);
+
+		// The flee arrow: toward the flee order's anchor.
+		if (State->bRoutFleeing)
+		{
+			FBattleOverlayLine Arrow;
+			Arrow.Shape = EBattleOverlayShape::Segment;
+			Arrow.From = Anchor;
+			const FUnitOrder* Order = Registry->FindOrder(Body.Unit);
+			const FVector2D Target = Order ? Order->AnchorPos : FVector2D(State->LastThreatAnchorCm);
+			Arrow.To = FVector(Target.X, Target.Y, 60.f);
+			Arrow.Color = FColor(255, 160, 40); // orange: the flee direction
+			Debug->EnqueueOverlayLine(Arrow);
+		}
+
+		// The aura ring: at the general's unit only (the living anchor).
+		if (const FTeamGeneralRecord* General = Registry->FindTeamGeneral(Body.TeamId);
+			General && General->Unit == Body.Unit)
+		{
+			FBattleOverlayLine Ring;
+			Ring.Shape = EBattleOverlayShape::Circle;
+			Ring.From = Anchor;
+			Ring.Radius = FMoraleCVars::GeneralAuraRadiusM() * 100.f;
+			Ring.Color = FColor(90, 160, 255); // blue: the aura radius
+			Debug->EnqueueOverlayLine(Ring);
+		}
 	}
 }
 
