@@ -54,6 +54,15 @@ struct FBaseStatsFragment : public FMassFragment
 	 *  multiplies the hit chance; AP halves the defender's armor. */
 	UPROPERTY() float Lethality = 1.f;
 	UPROPERTY() uint8 bArmorPiercing = 0;
+		/** Officer marker (Phase 4a, spec morale-and-gas §3.3/ADR-35): 1 on
+		 *  the last OfficerCount roster entities of officer-bearing units
+		 *  (stamped at fixup; spawn-truth like the rest of this fragment). A
+		 *  fragment VALUE, never a tag -- officer-ness is per-entity within a
+		 *  composition, the EBattleProjectileKind ruling; also avoids the
+		 *  per-entity archetype flip a tag would cost at fixup (ADR-15
+		 *  class). */
+		UPROPERTY() uint8 bOfficer = 0;
+
 };
 
 /** Per-entity HP pool + pending damage (written by combat resolution, Phase 2+;
@@ -109,7 +118,12 @@ USTRUCT() struct FInfantryTag : public FMassTag { GENERATED_BODY() };
 USTRUCT() struct FCavalryTag : public FMassTag { GENERATED_BODY() };
 USTRUCT() struct FMeleeTag : public FMassTag { GENERATED_BODY() };
 USTRUCT() struct FBowTag : public FMassTag { GENERATED_BODY() };
-USTRUCT() struct FOfficerTag : public FMassTag { GENERATED_BODY() };
+// FOfficerTag: deleted in Phase 4a (spec morale-and-gas §3.3,
+// ADR-35). It was declared in Phase 0 speculatively and never stamped
+// (zero usages at HEAD 4357321, verified by grep); officer-ness is the
+// FBaseStatsFragment.bOfficer fragment VALUE instead -- a tag would
+// flip archetypes per officer entity at fixup and officers share their
+// unit's composition anyway.
 
 /**
  * Death marker. ADR-15 final state (Phase 0 Task 9 on-machine probe --

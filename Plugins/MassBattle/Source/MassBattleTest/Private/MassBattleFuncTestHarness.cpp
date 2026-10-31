@@ -294,6 +294,23 @@ namespace
 				else if (ASkirmishBehaviorTest* Skirm = Cast<ASkirmishBehaviorTest>(TestActor))
 				{
 					Skirm->BeginTest();
+				else if (AS7RoutCascadeTest* Rout = Cast<AS7RoutCascadeTest>(TestActor))
+				{
+					Rout->BeginTest();
+				}
+				else if (AOfficerDeathTest* Officer = Cast<AOfficerDeathTest>(TestActor))
+				{
+					Officer->BeginTest();
+				}
+				else if (AEffectEndToEndTest* Effect = Cast<AEffectEndToEndTest>(TestActor))
+				{
+					Effect->BeginTest();
+				}
+				else if (AToggleBehaviorsTest* Toggle = Cast<AToggleBehaviorsTest>(TestActor))
+				{
+					Toggle->BeginTest();
+				}
+
 				}
 				// T0.9: apply + assert the test-mode contract at scenario start
 				// (roadmap B.0: assert ACTIVE engine settings, not CVars being
@@ -777,6 +794,80 @@ bool FSkirmishBehavior::RunTest(const FString& Parameters)
 	IFunctionalTestingModule::Get().MarkPendingActivation();
 	ADD_LATENT_AUTOMATION_COMMAND(FOpenBattleFuncMap(this));
 	ADD_LATENT_AUTOMATION_COMMAND(FRunBattleFuncTest(this, TEXT("SkirmishBehavior"), TEXT("ASkirmishBehaviorTest")));
+	return true;
+}
+
+
+// ---------------------------------------------------------------------------
+// Phase 4a task 0: T4.3-T4.6 gate skeletons (fail-by-design until the morale
+// pipeline tasks land; counted + listed in the phase-4a progress log).
+// ---------------------------------------------------------------------------
+
+IMPLEMENT_CUSTOM_COMPLEX_AUTOMATION_TEST(FS7RoutCascade, FBattleFuncTestBase,
+	"Battle.Func.S7_RoutCascade", (EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter))
+
+void FS7RoutCascade::GetTests(TArray<FString>& OutBeautifiedNames, TArray<FString>& OutTestCommands) const
+{
+	OutBeautifiedNames.Add(TEXT("S7_RoutCascade"));
+	OutTestCommands.Add(TEXT(""));
+}
+
+bool FS7RoutCascade::RunTest(const FString& Parameters)
+{
+	IFunctionalTestingModule::Get().MarkPendingActivation();
+	ADD_LATENT_AUTOMATION_COMMAND(FOpenBattleFuncMap(this));
+	ADD_LATENT_AUTOMATION_COMMAND(FRunBattleFuncTest(this, TEXT("S7_RoutCascade"), TEXT("AS7RoutCascadeTest")));
+	return true;
+}
+
+IMPLEMENT_CUSTOM_COMPLEX_AUTOMATION_TEST(FOfficerDeath, FBattleFuncTestBase,
+	"Battle.Func.OfficerDeath", (EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter))
+
+void FOfficerDeath::GetTests(TArray<FString>& OutBeautifiedNames, TArray<FString>& OutTestCommands) const
+{
+	OutBeautifiedNames.Add(TEXT("OfficerDeath"));
+	OutTestCommands.Add(TEXT(""));
+}
+
+bool FOfficerDeath::RunTest(const FString& Parameters)
+{
+	IFunctionalTestingModule::Get().MarkPendingActivation();
+	ADD_LATENT_AUTOMATION_COMMAND(FOpenBattleFuncMap(this));
+	ADD_LATENT_AUTOMATION_COMMAND(FRunBattleFuncTest(this, TEXT("OfficerDeath"), TEXT("AOfficerDeathTest")));
+	return true;
+}
+
+IMPLEMENT_CUSTOM_COMPLEX_AUTOMATION_TEST(FEffectEndToEnd, FBattleFuncTestBase,
+	"Battle.Func.EffectEndToEnd", (EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter))
+
+void FEffectEndToEnd::GetTests(TArray<FString>& OutBeautifiedNames, TArray<FString>& OutTestCommands) const
+{
+	OutBeautifiedNames.Add(TEXT("EffectEndToEnd"));
+	OutTestCommands.Add(TEXT(""));
+}
+
+bool FEffectEndToEnd::RunTest(const FString& Parameters)
+{
+	IFunctionalTestingModule::Get().MarkPendingActivation();
+	ADD_LATENT_AUTOMATION_COMMAND(FOpenBattleFuncMap(this));
+	ADD_LATENT_AUTOMATION_COMMAND(FRunBattleFuncTest(this, TEXT("EffectEndToEnd"), TEXT("AEffectEndToEndTest")));
+	return true;
+}
+
+IMPLEMENT_CUSTOM_COMPLEX_AUTOMATION_TEST(FToggleBehaviors, FBattleFuncTestBase,
+	"Battle.Func.ToggleBehaviors", (EAutomationTestFlags::ClientContext | EAutomationTestFlags::ProductFilter))
+
+void FToggleBehaviors::GetTests(TArray<FString>& OutBeautifiedNames, TArray<FString>& OutTestCommands) const
+{
+	OutBeautifiedNames.Add(TEXT("ToggleBehaviors"));
+	OutTestCommands.Add(TEXT(""));
+}
+
+bool FToggleBehaviors::RunTest(const FString& Parameters)
+{
+	IFunctionalTestingModule::Get().MarkPendingActivation();
+	ADD_LATENT_AUTOMATION_COMMAND(FOpenBattleFuncMap(this));
+	ADD_LATENT_AUTOMATION_COMMAND(FRunBattleFuncTest(this, TEXT("ToggleBehaviors"), TEXT("AToggleBehaviorsTest")));
 	return true;
 }
 

@@ -113,6 +113,44 @@ enum class EBattleProjectileKind : uint8
 	Arrow = 1,   // arced: indirect-capable, fires over a friendly frontage
 	Bolt = 2     // flat: high-speed solution, lane-gated (spec §4.2)
 };
+/**
+ * Unit discipline (spec morale-and-gas §3.3; EDU stat_mental[1]): scales
+ *  BREAK RESISTANCE and the RALLY factor, never the contribution weights
+ *  (MC2) -- an impetuous unit breaks as easily, rallies worse, and
+ *  auto-charges (MC9); a disciplined unit absorbs more before breaking.
+ *  Parsed loud on unknown tokens (the B-3 posture). */
+enum class EBattleDiscipline : uint8
+{
+	Low = 0,
+	Normal = 1,
+	Disciplined = 2,
+	Impetuous = 3
+};
+
+/** Unit training (EDU stat_mental[2]): formation neatness -- the movement
+ *  polish consumer is future work; rides row stats inert this phase (the
+ *  F4 slot pattern). */
+enum class EBattleTraining : uint8
+{
+	Untrained = 0,
+	Trained = 1,
+	HighlyTrained = 2
+};
+
+/** Rout FSM state (spec morale-and-gas §3.1/§4.4, MC5): Steady above the
+ *  wavering threshold; Wavering between the thresholds (combat continues,
+ *  the save/UI-visible warning state); Routing once broken (flee order +
+ *  pair mass-release); Shattered at the rally-exhaustion limit (flees
+ *  forever, never rallies). Persisted (save v3); the flee bookkeeping
+ *  around it is transient (the RC7 restore posture). */
+enum class EBattleRoutState : uint8
+{
+	Steady = 0,
+	Wavering = 1,
+	Routing = 2,
+	Shattered = 3
+};
+
 
 /** Plain-struct mirror of the closed GAS attribute set (arch §10.1). Cached in
  *  the registry; UnitSync derives the shared-fragment multipliers from it. */
@@ -233,6 +271,42 @@ struct FUnitRuntimeState
 	// StragglerThrottle event-edge latch (one log line per engagement/recovery).
 	int32 ContactProbeTicks = 0;
 	bool bPaceThrottled = false;
+
+	// Phase 4a (spec morale-and-gas §3.1): the morale/fatigue/rout block.
+	// UNIT-LEVEL by design (ADR-32: no per-entity morale fragment); the
+	// registry owns the FSM + the sim mirror, the GAS Morale/Fatigue
+	// attributes are written only by the exec calc (A14) and read back
+	// through the snapshot path. LastMoraleTickSimTime is pipeline state
+	// (excluded from the hash, the dirty-flag precedent) and drives the T4.8
+	// staleness bound; -1 = never ticked. ExertionIntegral is monotone this
+	// phase (no rest model -- spec §4.3). RoutCount drives the rally decay
+	// + the Shattered lockout (MC6). The flee order bookkeeping below is
+	// TRANSIENT like the skirmish retreat's -- a restored battle re-evaluates
+	// from idle (spec §3.5).
+	EBattleRoutState RoutState = EBattleRoutState::Steady;
+	uint8 RoutCount = 0;
+	float ExertionIntegral = 0.f;
+	float FreshCasualtySpike = 0.f;
+	float LastMoraleValue = 0.f;
+	float LastFatigueValue = 0.f;
+	float LastMoraleTickSimTime = -1.f;
+	bool bGuardMode = false;
+	EBattleDiscipline Discipline = EBattleDiscipline::Normal;
+	/** First officer roster index (officers are the LAST OfficerCount
+	 *  entities of the roster, spec §3.1/ADR-35); INDEX_NONE = none. The
+	 *  death path resolves officer-ness from the dying entity's roster
+	 *  index against this base in O(1). */
+	int32 OfficerRosterBase = INDEX_NONE;
+	int32 OfficerCount = 0;
+	/** True while the unit's current order is OUR rout flee (the RC7
+	 *  bRetreating pattern generalized); a player order-serial bump cancels
+	 *  it (re-evaluates next tick). */
+	bool bRoutFleeing = false;
+	uint32 RoutFleeSerial = 0;
+	/** Rally attempts so far in the current rout (the roll's count input,
+	 *  A13; resets on rally or on a new break). */
+	uint32 RallyAttempts = 0;
+
 };
 
 /** Spawn request: one parsed EDU row + roster size. Formation params seed the
@@ -269,4 +343,18 @@ struct FUnitSpawnSpec
 	 *  never defined -- this field is the minimal honest addition, disclosed
 	 *  in the phase progress log (AGENTS 2.1). Default 0. */
 	uint8 TeamId = 0;
+
+	/** Officer count (Phase 4a, spec morale-and-gas §3.3/ADR-35): 0 = the
+	 *  EDU row's own officer line count; >0 overrides (clamped to 3, the
+	 *  schema's MaxOccurrences). Officers are EXTRA roster entities
+	 *  (SoldierCount + OfficerCount) stamped bOfficer at fixup; their
+	 *  front-center placement rides the layout seam (PR-12). */
+	int32 OfficerCount = 0;
+
+	/** Army general flag (Phase 4a, spec §3.3/A6): the unit's officer slot
+	 *  0 is the general ENTITY -- its death raises
+	 *  Battle.Team.GeneralDied, stamps the team shock term, and removes the
+	 *  aura contribution (MC8). Default false. */
+	bool bIsGeneral = false;
+
 };

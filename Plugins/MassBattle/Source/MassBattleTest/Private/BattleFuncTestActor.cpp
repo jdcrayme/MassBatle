@@ -6813,3 +6813,240 @@ namespace
 	}
 	const FBattleFuncTestRegistry::FRegistrar GRegSkirmishBehavior(TEXT("ASkirmishBehaviorTest"), &MakeSkirmishBehaviorTest);
 }
+
+// ---------------------------------------------------------------------------
+// Phase 4a task 0: T4.3-T4.6 gate skeletons (fail-by-design until the morale
+// pipeline tasks land). The implementing task replaces these bodies with the
+// real scenario machines (spec morale-and-gas section 5).
+// ---------------------------------------------------------------------------
+
+AS7RoutCascadeTest::AS7RoutCascadeTest()
+{
+	TimeLimit = 300.f;
+	TimesUpResult = EFunctionalTestResult::Error;
+}
+
+void AS7RoutCascadeTest::BeginTest()
+{
+	SetActorTickEnabled(true);
+	PrimaryActorTick.bCanEverTick = true;
+	bIsRunning = true;
+	Result = EFunctionalTestResult::Running;
+}
+
+void AS7RoutCascadeTest::CompleteTest(EFunctionalTestResult TestResult, const FString& Message)
+{
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT S7_RoutCascade %s %s"),
+		TestResult == EFunctionalTestResult::Succeeded ? TEXT("PASS") : TEXT("FAIL"), *Message);
+	Result = TestResult;
+	bIsRunning = false;
+	SetActorTickEnabled(false);
+}
+
+void AS7RoutCascadeTest::StartTest()
+{
+	// SKELETON: the rout-cascade scenario (threshold order, flee evidence,
+	// cascade isolation, rally with/without the general, rear-arc chase)
+	// lands with the Phase 4a scenario task.
+	CompleteTest(EFunctionalTestResult::Error,
+		TEXT("skeleton: S7_RoutCascade lands with the phase-4a scenario task (T4.3)"));
+}
+
+void AS7RoutCascadeTest::Tick(float DeltaSeconds)
+{
+	// Nothing to step while the skeleton stands.
+}
+
+void AS7RoutCascadeTest::SetCvars()
+{
+}
+
+void AS7RoutCascadeTest::RestoreCvars()
+{
+}
+
+void AS7RoutCascadeTest::Destroyed()
+{
+	RestoreCvars();
+	Super::Destroyed();
+}
+
+AOfficerDeathTest::AOfficerDeathTest()
+{
+	TimeLimit = 180.f;
+	TimesUpResult = EFunctionalTestResult::Error;
+}
+
+void AOfficerDeathTest::BeginTest()
+{
+	SetActorTickEnabled(true);
+	PrimaryActorTick.bCanEverTick = true;
+	bIsRunning = true;
+	Result = EFunctionalTestResult::Running;
+}
+
+void AOfficerDeathTest::CompleteTest(EFunctionalTestResult TestResult, const FString& Message)
+{
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT OfficerDeath %s %s"),
+		TestResult == EFunctionalTestResult::Succeeded ? TEXT("PASS") : TEXT("FAIL"), *Message);
+	Result = TestResult;
+	bIsRunning = false;
+	SetActorTickEnabled(false);
+}
+
+void AOfficerDeathTest::StartTest()
+{
+	// SKELETON: the officer-death scenario (event counts, the amplified spike
+	// vs a baseline kill, the general variant's team shock) lands with the
+	// Phase 4a scenario task.
+	CompleteTest(EFunctionalTestResult::Error,
+		TEXT("skeleton: OfficerDeath lands with the phase-4a scenario task (T4.4)"));
+}
+
+void AOfficerDeathTest::Tick(float DeltaSeconds)
+{
+	// Nothing to step while the skeleton stands.
+}
+
+void AOfficerDeathTest::SetCvars()
+{
+}
+
+void AOfficerDeathTest::RestoreCvars()
+{
+}
+
+void AOfficerDeathTest::Destroyed()
+{
+	RestoreCvars();
+	Super::Destroyed();
+}
+
+AEffectEndToEndTest::AEffectEndToEndTest()
+{
+	TimeLimit = 180.f;
+	TimesUpResult = EFunctionalTestResult::Error;
+}
+
+void AEffectEndToEndTest::BeginTest()
+{
+	SetActorTickEnabled(true);
+	PrimaryActorTick.bCanEverTick = true;
+	bIsRunning = true;
+	Result = EFunctionalTestResult::Running;
+}
+
+void AEffectEndToEndTest::CompleteTest(EFunctionalTestResult TestResult, const FString& Message)
+{
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT EffectEndToEnd %s %s"),
+		TestResult == EFunctionalTestResult::Succeeded ? TEXT("PASS") : TEXT("FAIL"), *Message);
+	Result = TestResult;
+	bIsRunning = false;
+	SetActorTickEnabled(false);
+}
+
+void AEffectEndToEndTest::StartTest()
+{
+	// SKELETON: the effect loop scenario (GE -> attribute -> snapshot ->
+	// UnitSync -> fragment within one frame; the multiplier goldens; the
+	// stacking order) lands with the Phase 4a scenario task.
+	CompleteTest(EFunctionalTestResult::Error,
+		TEXT("skeleton: EffectEndToEnd lands with the phase-4a scenario task (T4.5)"));
+}
+
+void AEffectEndToEndTest::Tick(float DeltaSeconds)
+{
+	// Nothing to step while the skeleton stands.
+}
+
+void AEffectEndToEndTest::SetCvars()
+{
+}
+
+void AEffectEndToEndTest::RestoreCvars()
+{
+}
+
+void AEffectEndToEndTest::Destroyed()
+{
+	RestoreCvars();
+	Super::Destroyed();
+}
+
+AToggleBehaviorsTest::AToggleBehaviorsTest()
+{
+	TimeLimit = 180.f;
+	TimesUpResult = EFunctionalTestResult::Error;
+}
+
+void AToggleBehaviorsTest::BeginTest()
+{
+	SetActorTickEnabled(true);
+	PrimaryActorTick.bCanEverTick = true;
+	bIsRunning = true;
+	Result = EFunctionalTestResult::Running;
+}
+
+void AToggleBehaviorsTest::CompleteTest(EFunctionalTestResult TestResult, const FString& Message)
+{
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT ToggleBehaviors %s %s"),
+		TestResult == EFunctionalTestResult::Succeeded ? TEXT("PASS") : TEXT("FAIL"), *Message);
+	Result = TestResult;
+	bIsRunning = false;
+	SetActorTickEnabled(false);
+}
+
+void AToggleBehaviorsTest::StartTest()
+{
+	// SKELETON: the toggle scenario (guard suppression, the impetuous charge
+	// window, the phase-3 toggle rows, the player override) lands with the
+	// Phase 4a scenario task.
+	CompleteTest(EFunctionalTestResult::Error,
+		TEXT("skeleton: ToggleBehaviors lands with the phase-4a scenario task (T4.6)"));
+}
+
+void AToggleBehaviorsTest::Tick(float DeltaSeconds)
+{
+	// Nothing to step while the skeleton stands.
+}
+
+void AToggleBehaviorsTest::SetCvars()
+{
+}
+
+void AToggleBehaviorsTest::RestoreCvars()
+{
+}
+
+void AToggleBehaviorsTest::Destroyed()
+{
+	RestoreCvars();
+	Super::Destroyed();
+}
+
+namespace
+{
+	AFunctionalTest* MakeS7RoutCascadeTest(UWorld* World)
+	{
+		return World->SpawnActor<AS7RoutCascadeTest>();
+	}
+	const FBattleFuncTestRegistry::FRegistrar GRegS7RoutCascade(TEXT("AS7RoutCascadeTest"), &MakeS7RoutCascadeTest);
+
+	AFunctionalTest* MakeOfficerDeathTest(UWorld* World)
+	{
+		return World->SpawnActor<AOfficerDeathTest>();
+	}
+	const FBattleFuncTestRegistry::FRegistrar GRegOfficerDeath(TEXT("AOfficerDeathTest"), &MakeOfficerDeathTest);
+
+	AFunctionalTest* MakeEffectEndToEndTest(UWorld* World)
+	{
+		return World->SpawnActor<AEffectEndToEndTest>();
+	}
+	const FBattleFuncTestRegistry::FRegistrar GRegEffectEndToEnd(TEXT("AEffectEndToEndTest"), &MakeEffectEndToEndTest);
+
+	AFunctionalTest* MakeToggleBehaviorsTest(UWorld* World)
+	{
+		return World->SpawnActor<AToggleBehaviorsTest>();
+	}
+	const FBattleFuncTestRegistry::FRegistrar GRegToggleBehaviors(TEXT("AToggleBehaviorsTest"), &MakeToggleBehaviorsTest);
+}

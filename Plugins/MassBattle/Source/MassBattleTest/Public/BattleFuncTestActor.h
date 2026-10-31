@@ -735,6 +735,151 @@ private:
 };
 
 // ---------------------------------------------------------------------------
+// Phase 4a task 0: T4.3-T4.6 gate SKELETONS (fail-by-design until the morale
+// pipeline tasks land; counted + listed in the phase-4a progress log -- the
+// Phase 3 task-0 pattern, C-6 lesson applied). The implementing tasks replace
+// these actors with the real scenario machines (spec morale-and-gas section 5).
+// ---------------------------------------------------------------------------
+/** S7_RoutCascade (T4.3): three adjacent friendly units engaged frontally,
+ *  scripted attrition onto the center unit; wavering->break order, the flee
+ *  (pairs released, movement away, Flee state), the cascade isolation
+ *  sub-run, rally with/without the general, the rear-arc chase. */
+UCLASS()
+class MASSBATTLETEST_API AS7RoutCascadeTest : public AFunctionalTest
+{
+	GENERATED_BODY()
+
+public:
+	AS7RoutCascadeTest();
+
+	void BeginTest();
+	void CompleteTest(EFunctionalTestResult TestResult, const FString& Message);
+	virtual void StartTest() override;
+	virtual void Tick(float DeltaSeconds) override;
+	virtual bool IsReady_Implementation() override { return true; }
+	virtual void Destroyed() override;
+
+private:
+	enum class EPhase : int32 { Spawn, Attrition, Break, Cascade, Rally, Chase, Done };
+	EPhase Phase = EPhase::Spawn;
+	int32 TicksInPhase = 0;
+	int32 PhaseBudget = 0;
+	UPROPERTY() TObjectPtr<AUnitActor> Left;
+	UPROPERTY() TObjectPtr<AUnitActor> Center;
+	UPROPERTY() TObjectPtr<AUnitActor> Right;
+	UPROPERTY() TObjectPtr<AUnitActor> Enemy;
+	UPROPERTY() TObjectPtr<AUnitActor> General;
+	int32 SavedCombat[5] = {};
+	int32 SavedRanged[4] = {};
+	int32 SavedMorale[3] = {};
+	bool bCascadeIsolationRun = false;
+	bool bRallyGeneralRun = false;
+	void SetCvars();
+	void RestoreCvars();
+};
+
+/** OfficerDeath (T4.4): an officer entity's scripted death -- the
+ *  Battle.Unit.OfficerDied event, the amplified spike vs a baseline kill,
+ *  and the general variant's Battle.Team.GeneralDied + decaying team
+ *  shock. */
+UCLASS()
+class MASSBATTLETEST_API AOfficerDeathTest : public AFunctionalTest
+{
+	GENERATED_BODY()
+
+public:
+	AOfficerDeathTest();
+
+	void BeginTest();
+	void CompleteTest(EFunctionalTestResult TestResult, const FString& Message);
+	virtual void StartTest() override;
+	virtual void Tick(float DeltaSeconds) override;
+	virtual bool IsReady_Implementation() override { return true; }
+	virtual void Destroyed() override;
+
+private:
+	enum class EPhase : int32 { Spawn, Baseline, Officer, General, Decay, Done };
+	EPhase Phase = EPhase::Spawn;
+	int32 TicksInPhase = 0;
+	int32 PhaseBudget = 0;
+	UPROPERTY() TObjectPtr<AUnitActor> Unit;
+	UPROPERTY() TObjectPtr<AUnitActor> Enemy;
+	UPROPERTY() TObjectPtr<AUnitActor> GeneralUnit;
+	UPROPERTY() TObjectPtr<AUnitActor> TeamWatch;
+	int32 SavedCombat[5] = {};
+	int32 SavedMorale[3] = {};
+	float MoraleMark = 0.f;
+	void SetCvars();
+	void RestoreCvars();
+};
+
+/** EffectEndToEnd (T4.5): the FatigueState catalog's loop -- GE ->
+ *  attribute -> snapshot -> UnitSync -> shared fragment within one frame,
+ *  the multiplier goldens per band, and the stacking order with an
+ *  overlapping effect. */
+UCLASS()
+class MASSBATTLETEST_API AEffectEndToEndTest : public AFunctionalTest
+{
+	GENERATED_BODY()
+
+public:
+	AEffectEndToEndTest();
+
+	void BeginTest();
+	void CompleteTest(EFunctionalTestResult TestResult, const FString& Message);
+	virtual void StartTest() override;
+	virtual void Tick(float DeltaSeconds) override;
+	virtual bool IsReady_Implementation() override { return true; }
+	virtual void Destroyed() override;
+
+private:
+	enum class EPhase : int32 { Spawn, Drive, Assert, Overlap, Done };
+	EPhase Phase = EPhase::Spawn;
+	int32 TicksInPhase = 0;
+	int32 PhaseBudget = 0;
+	UPROPERTY() TObjectPtr<AUnitActor> Unit;
+	int32 SavedCombat[5] = {};
+	int32 SavedMorale[3] = {};
+	void SetCvars();
+	void RestoreCvars();
+};
+
+/** ToggleBehaviors (T4.6): GuardMode suppresses the impetuous auto-charge;
+ *  the charge fires in its window when unguarded; the phase-3 toggle rows
+ *  re-asserted; the player order overrides the auto-charge. */
+UCLASS()
+class MASSBATTLETEST_API AToggleBehaviorsTest : public AFunctionalTest
+{
+	GENERATED_BODY()
+
+public:
+	AToggleBehaviorsTest();
+
+	void BeginTest();
+	void CompleteTest(EFunctionalTestResult TestResult, const FString& Message);
+	virtual void StartTest() override;
+	virtual void Tick(float DeltaSeconds) override;
+	virtual bool IsReady_Implementation() override { return true; }
+	virtual void Destroyed() override;
+
+private:
+	enum class EPhase : int32 { Spawn, Guarded, Unguarded, Phase3, Override, Done };
+	EPhase Phase = EPhase::Spawn;
+	int32 TicksInPhase = 0;
+	int32 PhaseBudget = 0;
+	UPROPERTY() TObjectPtr<AUnitActor> Impetuous;
+	UPROPERTY() TObjectPtr<AUnitActor> Enemy;
+	UPROPERTY() TObjectPtr<AUnitActor> Archers;
+	UPROPERTY() TObjectPtr<AUnitActor> Threat;
+	int32 SavedCombat[5] = {};
+	int32 SavedRanged[4] = {};
+	int32 SavedMorale[3] = {};
+	void SetCvars();
+	void RestoreCvars();
+};
+
+
+// ---------------------------------------------------------------------------
 // S-scenario actor factory registry -- deterministic, reflection-free class
 // lookup for the automation harness (FindObject with /Script/ paths and
 // TObjectIterator both failed to resolve fresh C++ classes in -game processes
