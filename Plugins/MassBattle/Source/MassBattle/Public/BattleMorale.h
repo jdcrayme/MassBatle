@@ -6,10 +6,10 @@
 // GFrameCounter; rally rolls arrive here as plain Roll01 values the caller
 // draws through BattleCanonicalEntityKey/Count).
 //
-// Task 0 ships this header + the CVAR block with STUB bodies (the Phase 2
-// task-0 pattern; the Phase 3 0011 precedent); the seam task replaces them,
-// T4.1/T4.2-locked by the Battle.Unit.Morale.* suites. The processors and the
-// exec calc stay thin shims over these functions (B.0).
+// The seam task ships the bodies (T4.1/T4.2-locked by the
+// Battle.Unit.Morale.* suites; the task-0 stubs they replaced are in the
+// patch history). The processors and the exec calc stay thin shims over
+// these functions (B.0).
 //
 // A16 posture (ADR-37): FMoraleWeights / FFatigueConstants below are
 // golden-locked placeholders honoring the community model's STRUCTURE; the
@@ -106,13 +106,18 @@ namespace FFatigueConstants
 	constexpr float BandExhausted = 100.f;
 }
 
-/** Discipline scaling tables (ONE home; spec sections 4.4-4.5): break
- *  resistance multiplies the BREAK threshold (higher = breaks later); the
- *  rally factor multiplies the rally chance. Discipline NEVER scales the
- *  weights (MC2). Indexed by EBattleDiscipline. */
+/** Discipline scaling tables (ONE home; spec sections 4.4-4.5). BreakOffset
+ *  ADDS to the break threshold: a unit breaks when morale drops below
+ *  BreakThreshold + BreakOffset -- Low breaks 2 points earlier, Disciplined
+ *  holds 2 points longer, Impetuous fights like Normal (it is brave in the
+ *  charge, not in the rout -- MC9). The additive form survives the 0-anchored
+ *  default threshold (a multiplicative resistance would be degenerate there;
+ *  corrected at seam review, disclosed). RallyFactor multiplies the rally
+ *  chance. Discipline NEVER scales the weights (MC2). Indexed by
+ *  EBattleDiscipline. */
 namespace FMoraleDiscipline
 {
-	constexpr float BreakResistance[4] = { 0.85f, 1.f, 1.2f, 1.f };
+	constexpr float BreakOffset[4] = { 2.f, 0.f, -2.f, 0.f };
 	constexpr float RallyFactor[4] = { 0.7f, 1.f, 1.3f, 0.8f };
 }
 
@@ -147,43 +152,41 @@ struct FFatigueMultipliers
 };
 
 /** The stack (spec section 4.1, MC2): weighted sum of the ten terms over
- *  BaseMorale. STUB until the seam task: returns 0, reads nothing. */
+ *  BaseMorale. */
 MASSBATTLE_API float EvaluateMorale(const FMoraleTickInputs& Inputs);
 
 /** The shared decay form (spec section 4.2): exponential half-life decay,
  *  closed-form, golden-locked (T4.1). Both the fresh-casualty spike and the
- *  general-death shock consume it. STUB until the seam task: returns Value. */
+ *  general-death shock consume it. */
 MASSBATTLE_API float EvaluateDecay(float Value, float Dt, float HalfLifeS);
 
 /** Exertion accumulation (spec section 4.3): running/fighting add their rates
- *  x Dt; walking/idle adds nothing v1. STUB until the seam task: no-op. */
+ *  x Dt; walking/idle adds nothing v1. */
 MASSBATTLE_API void AccumulateExertion(float& InOutExertion, float Dt, bool bRunning, bool bFighting,
 	float FatigueRateScale = 1.f);
 
-/** Integral -> state (spec section 4.3): the FFatigueConstants bands.
- *  STUB until the seam task: Fresh. */
+/** Integral -> state (spec section 4.3): the FFatigueConstants bands. */
 MASSBATTLE_API EBattleFatigueState EvaluateFatigueState(float ExertionIntegral);
 
-/** The multiplier table (T4.2 golden). STUB until the seam task: all 1. */
+/** The multiplier table (T4.2 golden). */
 MASSBATTLE_API FFatigueMultipliers GetFatigueMultipliers(EBattleFatigueState State);
 
 /** Rout transition (spec section 4.4, MC5): thresholds are absolute morale;
  *  the break threshold scales by discipline break resistance; wavering
- *  recovers only above threshold + hysteresis; Shattered locks at MaxRallies.
- *  STUB until the seam task: returns Current. */
+ *  recovers only above threshold + hysteresis; Shattered locks at MaxRallies. */
 MASSBATTLE_API EBattleRoutState EvaluateRoutTransition(EBattleRoutState Current, float Morale,
 	float WaveringThreshold, float BreakThreshold, float WaveringHysteresis,
 	uint8 RoutCount, int32 MaxRallies, EBattleDiscipline Discipline);
 
 /** Rally chance (spec section 4.5): requires morale >= threshold AND a living
- *  general aura; decays per break; scales by discipline. STUB until the seam
- *  task: returns 0. */
-MASSBATTLE_API float EvaluateRallyChance(float Morale, float RallyThreshold, EBattleDiscipline Discipline,
-	uint8 RoutCount, bool bGeneralAuraActive);
+ *  general aura; decays per break (RallyDecay^RoutCount); scales by
+ *  discipline. The base/decay arrive as parameters (the EvaluateSkirmish
+ *  precedent: callers read cvars, the seam stays pure and unit-locked). */
+MASSBATTLE_API float EvaluateRallyChance(float Morale, float RallyThreshold, float RallyBase, float RallyDecay,
+	EBattleDiscipline Discipline, uint8 RoutCount, bool bGeneralAuraActive);
 
 /** The rally decision: the chance vs the caller-drawn Roll01 (the caller
  *  draws CombatRoll01 over the canonical unit key with RallyAttempts as the
- *  count input -- A13; the seam stays pure). STUB until the seam task:
- *  returns false. */
-MASSBATTLE_API bool EvaluateRally(float Morale, float RallyThreshold, EBattleDiscipline Discipline,
-	uint8 RoutCount, bool bGeneralAuraActive, float Roll01);
+ *  count input -- A13; the seam stays pure). */
+MASSBATTLE_API bool EvaluateRally(float Morale, float RallyThreshold, float RallyBase, float RallyDecay,
+	EBattleDiscipline Discipline, uint8 RoutCount, bool bGeneralAuraActive, float Roll01);

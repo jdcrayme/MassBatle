@@ -1,7 +1,6 @@
 // BattleMorale.cpp -- the Battle.Morale.* CVAR block (spec morale-and-gas
-// section 4.12) + the morale seam bodies. Task 0 ships the CVAR block with
-// STUB seam bodies (the Phase 3 0011 pattern); the seam task replaces them,
-// T4.1/T4.2-locked. Defaults are A6 placeholders (ADR-37).
+// section 4.12) + the morale seam bodies (T4.1/T4.2-locked by the
+// Battle.Unit.Morale.* suites). Defaults are A6 placeholders (ADR-37).
 #include "BattleMorale.h"
 #include "HAL/IConsoleManager.h"
 
@@ -165,86 +164,170 @@ namespace FMoraleCVars
 	bool SoakRout() { return GCMoraleSoakRout.GetValueOnAnyThread() != 0; }
 }
 
-// -- Seam bodies: task-0 STUBS (the 0011 pattern). The seam task replaces
-// every one of these with the T4.1/T4.2-locked implementations; the stubs are
-// deliberately inert so flags-off behavior is byte-identical by construction.
+// -- Seam bodies (the seam task; T4.1/T4.2-locked by the Battle.Unit.Morale.*
+// suites). Pure functions over plain inputs: no world, no fragments, no
+// wall-clock, no streams. Constants are the A16 golden-locked placeholders.
 
 float EvaluateMorale(const FMoraleTickInputs& Inputs)
 {
-	// STUB: returns 0, reads nothing (the stack lands with the seam task).
-	(void)Inputs;
-	return 0.f;
+	// Spec section 4.1 (MC2): the weighted sum. Signs live in the weights
+	// (FMoraleWeights); discipline never scales them (it scales the
+	// thresholds + the rally factor). ArcExposureMask contributes per SET
+	// BIT (the engaged-sector count), not per mask value.
+	const int32 ExposedSectors = FMath::CountBits(static_cast<uint32>(Inputs.ArcExposureMask));
+	return Inputs.BaseMorale
+		+ FMoraleWeights::CasualtyFraction * Inputs.CasualtyFraction
+		+ FMoraleWeights::FreshCasualtySpike * Inputs.FreshCasualtySpike
+		+ FMoraleWeights::LocalOdds * Inputs.LocalOdds
+		+ FMoraleWeights::ArcExposurePerSector * static_cast<float>(ExposedSectors)
+		+ FMoraleWeights::RoutingFriend * static_cast<float>(Inputs.RoutingFriendsNearby)
+		+ FMoraleWeights::GeneralAura * Inputs.GeneralAuraBonus
+		+ FMoraleWeights::GeneralDeathShock * Inputs.GeneralDeathShock
+		+ FMoraleWeights::HeightAdvantage * Inputs.HeightAdvantage
+		+ FMoraleWeights::WinningLocally * Inputs.WinningLocally;
 }
 
 float EvaluateDecay(float Value, float Dt, float HalfLifeS)
 {
-	// STUB: identity (the closed-form half-life lands with the seam task).
-	(void)Dt;
-	(void)HalfLifeS;
-	return Value;
+	// Spec section 4.2: the shared closed form for BOTH decay terms (the
+	// fresh-casualty spike + the general-death shock) -- exponential
+	// half-life, evaluated as 2^(-Dt/HalfLife) so the half-life property is
+	// exact at Dt == HalfLife (the T4.1 golden anchors on it). HalfLife <=
+	// 0 is a no-op decay (the caller's parameter contract).
+	if (HalfLifeS <= 0.f || Dt <= 0.f)
+	{
+		return Value;
+	}
+	return Value * FMath::Pow(0.5f, Dt / HalfLifeS);
 }
 
 void AccumulateExertion(float& InOutExertion, float Dt, bool bRunning, bool bFighting, float FatigueRateScale)
 {
-	// STUB: no accumulation until the seam task.
-	(void)Dt;
-	(void)bRunning;
-	(void)bFighting;
-	(void)FatigueRateScale;
-	(void)InOutExertion;
+	// Spec section 4.3: the rates sum when both activities hold (running
+	// while fighting is the cavalry-charge posture); walking/idle adds
+	// nothing v1. MONOTONE by construction (rates + scale are non-negative;
+	// there is no rest model this phase -- spec section 10 records the seam).
+	const float Scale = FMath::Max(0.f, FatigueRateScale);
+	const float Rate = (bRunning ? FFatigueConstants::RunRate : 0.f)
+		+ (bFighting ? FFatigueConstants::FightRate : 0.f);
+	InOutExertion += Rate * Scale * FMath::Max(0.f, Dt);
 }
 
 EBattleFatigueState EvaluateFatigueState(float ExertionIntegral)
 {
-	// STUB: Fresh regardless of the integral.
-	(void)ExertionIntegral;
-	return EBattleFatigueState::Fresh;
+	// Spec section 4.3: the six-band ladder on the integral (FFatigueConstants).
+	if (ExertionIntegral < FFatigueConstants::BandActive)
+	{
+		return EBattleFatigueState::Fresh;
+	}
+	if (ExertionIntegral < FFatigueConstants::BandQuiteTired)
+	{
+		return EBattleFatigueState::Active;
+	}
+	if (ExertionIntegral < FFatigueConstants::BandTired)
+	{
+		return EBattleFatigueState::QuiteTired;
+	}
+	if (ExertionIntegral < FFatigueConstants::BandVeryTired)
+	{
+		return EBattleFatigueState::Tired;
+	}
+	if (ExertionIntegral < FFatigueConstants::BandExhausted)
+	{
+		return EBattleFatigueState::VeryTired;
+	}
+	return EBattleFatigueState::Exhausted;
 }
 
 FFatigueMultipliers GetFatigueMultipliers(EBattleFatigueState State)
 {
-	// STUB: identity row for every state (the golden table lands with the
-	// seam task, T4.2).
-	(void)State;
-	return FFatigueMultipliers();
+	// Spec section 4.3 (T4.2 golden): the community model's shape -- the
+	// first step off Fresh costs only RELOAD (the M2TW observation: 'a unit
+	// falling from fresh to active only reduces the reload speed of any
+	// ranged attacks it has by 5% and nothing else'), melee stats degrade
+	// from QuiteTired, speed from QuiteTired. A16 placeholders; the catalog
+	// writes these minus 1 into the *Mod attributes (ADR-36).
+	switch (State)
+	{
+	case EBattleFatigueState::Fresh:
+	default:
+		return FFatigueMultipliers{ 1.f, 1.f, 1.f, 1.f };
+	case EBattleFatigueState::Active:
+		return FFatigueMultipliers{ 1.f, 1.f, 1.f, 0.95f };
+	case EBattleFatigueState::QuiteTired:
+		return FFatigueMultipliers{ 0.9f, 0.92f, 0.95f, 0.85f };
+	case EBattleFatigueState::Tired:
+		return FFatigueMultipliers{ 0.8f, 0.85f, 0.9f, 0.75f };
+	case EBattleFatigueState::VeryTired:
+		return FFatigueMultipliers{ 0.7f, 0.75f, 0.85f, 0.65f };
+	case EBattleFatigueState::Exhausted:
+		return FFatigueMultipliers{ 0.55f, 0.65f, 0.75f, 0.55f };
+	}
 }
 
 EBattleRoutState EvaluateRoutTransition(EBattleRoutState Current, float Morale,
 	float WaveringThreshold, float BreakThreshold, float WaveringHysteresis,
 	uint8 RoutCount, int32 MaxRallies, EBattleDiscipline Discipline)
 {
-	// STUB: no transitions (the FSM lands with the seam task, T4.1).
-	(void)Morale;
-	(void)WaveringThreshold;
-	(void)BreakThreshold;
-	(void)WaveringHysteresis;
-	(void)RoutCount;
-	(void)MaxRallies;
-	(void)Discipline;
-	return Current;
+	// Spec section 4.4 (MC5). The break threshold shifts by the discipline's
+	// break offset (an impetuous unit breaks as easily as a normal one; a
+	// disciplined one holds longer -- MC2's rule that discipline never
+	// touches the weights). Shattered is TERMINAL and latches from Routing
+	// at the rally-exhaustion limit; the caller owns RoutCount++ on the
+	// Wavering->Routing edge (the pass applies the break).
+	if (Current == EBattleRoutState::Shattered)
+	{
+		return EBattleRoutState::Shattered;
+	}
+	if (Current == EBattleRoutState::Routing)
+	{
+		return (static_cast<int32>(RoutCount) >= MaxRallies)
+			? EBattleRoutState::Shattered
+			: EBattleRoutState::Routing;
+	}
+	const int32 DisciplineIndex = static_cast<int32>(Discipline);
+	const float EffectiveBreak = BreakThreshold + FMoraleDiscipline::BreakOffset[
+		FMath::Clamp(DisciplineIndex, 0, 3)];
+	if (Morale < EffectiveBreak)
+	{
+		return EBattleRoutState::Routing;
+	}
+	if (Morale < WaveringThreshold)
+	{
+		return EBattleRoutState::Wavering;
+	}
+	// Recovery needs the hysteresis margin above the wavering threshold
+	// (R-M5: no break->recover->break thrash at the boundary).
+	if (Current == EBattleRoutState::Wavering && Morale < WaveringThreshold + WaveringHysteresis)
+	{
+		return EBattleRoutState::Wavering;
+	}
+	return EBattleRoutState::Steady;
 }
 
-float EvaluateRallyChance(float Morale, float RallyThreshold, EBattleDiscipline Discipline,
-	uint8 RoutCount, bool bGeneralAuraActive)
+float EvaluateRallyChance(float Morale, float RallyThreshold, float RallyBase, float RallyDecay,
+	EBattleDiscipline Discipline, uint8 RoutCount, bool bGeneralAuraActive)
 {
-	// STUB: zero chance (the rally curve lands with the seam task).
-	(void)Morale;
-	(void)RallyThreshold;
-	(void)Discipline;
-	(void)RoutCount;
-	(void)bGeneralAuraActive;
-	return 0.f;
+	// Spec section 4.5 (MC6): the roll requires BOTH the morale recovery AND
+	// a living friendly general in aura range (T4.3's with/without sub-runs);
+	// the chance decays per break and scales by the discipline's rally
+	// factor (impetuous rallies worst, disciplined best).
+	if (!bGeneralAuraActive || Morale < RallyThreshold)
+	{
+		return 0.f;
+	}
+	const int32 DisciplineIndex = static_cast<int32>(Discipline);
+	const float DisciplineFactor = FMoraleDiscipline::RallyFactor[FMath::Clamp(DisciplineIndex, 0, 3)];
+	return RallyBase * FMath::Pow(RallyDecay, static_cast<float>(RoutCount)) * DisciplineFactor;
 }
 
-bool EvaluateRally(float Morale, float RallyThreshold, EBattleDiscipline Discipline,
-	uint8 RoutCount, bool bGeneralAuraActive, float Roll01)
+bool EvaluateRally(float Morale, float RallyThreshold, float RallyBase, float RallyDecay,
+	EBattleDiscipline Discipline, uint8 RoutCount, bool bGeneralAuraActive, float Roll01)
 {
-	// STUB: never rallies (the decision lands with the seam task).
-	(void)Morale;
-	(void)RallyThreshold;
-	(void)Discipline;
-	(void)RoutCount;
-	(void)bGeneralAuraActive;
-	(void)Roll01;
-	return false;
+	// Spec section 4.5: the decision is the chance vs the caller-drawn
+	// Roll01 (strictly below -- a 0 chance never rallies, a 1 chance fails
+	// only on Roll01 == chance exactly, measure-zero).
+	const float Chance = EvaluateRallyChance(Morale, RallyThreshold, RallyBase, RallyDecay,
+		Discipline, RoutCount, bGeneralAuraActive);
+	return Roll01 < Chance;
 }
