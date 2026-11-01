@@ -88,17 +88,26 @@ bool ADemoPlayerController::TryLoadAssetInput(FDemoActionSet& OutActions)
 
 	OutActions = FDemoActionSet{
 		Resolve(TEXT("IA_Demo_Select")),  Resolve(TEXT("IA_Demo_Order")),
-		Resolve(TEXT("IA_Demo_Halt")),    Resolve(TEXT("IA_Demo_ZoomIn")),
+		Resolve(TEXT("IA_Demo_Halt")),    Resolve(TEXT("IA_Demo_Guard")),
+		Resolve(TEXT("IA_Demo_Fire")),    Resolve(TEXT("IA_Demo_Skirmish")),
+		Resolve(TEXT("IA_Demo_ExitGarrison")),
+		Resolve(TEXT("IA_Demo_ZoomIn")),
 		Resolve(TEXT("IA_Demo_ZoomOut")), Resolve(TEXT("IA_Demo_PanFwd")),
 		Resolve(TEXT("IA_Demo_PanBack")), Resolve(TEXT("IA_Demo_PanLeft")),
 		Resolve(TEXT("IA_Demo_PanRight")), Resolve(TEXT("IA_Demo_RotLeft")),
 		Resolve(TEXT("IA_Demo_RotRight")),
 	};
 
-	const UInputAction* Missing[] = { OutActions.Select, OutActions.Order, OutActions.Halt,
+	// The 11 PR-2 actions stay all-or-nothing (PR-2's rule: a partially bound
+	// controller is worse than the fallback table). The 4 PR-3 stance actions
+	// are LENIENT: until their IA assets are authored (an editor session --
+	// none was available this run), the missing ones are constructed at
+	// runtime and mapped onto the LOADED IMC copy, so the authored 11 keep
+	// their asset-driven retunability and the stances still bind.
+	const UInputAction* Core[] = { OutActions.Select, OutActions.Order, OutActions.Halt,
 		OutActions.ZoomIn, OutActions.ZoomOut, OutActions.PanFwd, OutActions.PanBack,
 		OutActions.PanLeft, OutActions.PanRight, OutActions.RotLeft, OutActions.RotRight };
-	for (const UInputAction* A : Missing)
+	for (const UInputAction* A : Core)
 	{
 		if (!A)
 		{
@@ -107,7 +116,36 @@ bool ADemoPlayerController::TryLoadAssetInput(FDemoActionSet& OutActions)
 			return false;
 		}
 	}
-	UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoInput IMC_Demo loaded actions=11"));
+	int32 Filled = 0;
+	// Constructs the stance action at runtime when the asset lacks it; the
+	// runtime mapping lands on the LOADED IMC copy (the saved asset is
+	// untouched -- the authoring session adds the real IA_Demo_* assets).
+	const auto FillStance = [this, &Filled](const UInputAction*& Slot, const TCHAR* FallbackName,
+		const TCHAR* Display, FKey Key) -> void
+	{
+		if (Slot)
+		{
+			return; // authored in the IMC asset
+		}
+		UInputAction* IA = NewObject<UInputAction>(this, FName(FallbackName));
+		IA->ValueType = EInputActionValueType::Boolean;
+		IA->ActionDescription = FText::FromString(Display);
+		OwnedActions.Add(IA);
+		DemoIMC->MapKey(IA, Key);
+		Slot = IA;
+		++Filled;
+	};
+	FillStance(OutActions.Guard, TEXT("IA_DemoGuard"),
+		TEXT("Guard mode toggle"), EKeys::G);
+	FillStance(OutActions.Fire, TEXT("IA_DemoFire"),
+		TEXT("Fire-at-will toggle"), EKeys::F);
+	FillStance(OutActions.Skirmish, TEXT("IA_DemoSkirmish"),
+		TEXT("Skirmish toggle"), EKeys::R);
+	FillStance(OutActions.ExitGarrison, TEXT("IA_DemoExitGarrison"),
+		TEXT("Exit garrison"), EKeys::X);
+	UE_LOG(LogDemoBattle, Display,
+		TEXT("EXEC_RESULT DemoInput IMC_Demo loaded actions=15 stance-assets-pending=%d"),
+		Filled);
 	return true;
 }
 
@@ -136,6 +174,10 @@ void ADemoPlayerController::BuildProgrammaticInput(FDemoActionSet& OutActions)
 	OutActions.Select = Bool(TEXT("IA_DemoSelect"), TEXT("Select / marquee"));
 	OutActions.Order = Bool(TEXT("IA_DemoOrder"), TEXT("Move / formation drag"));
 	OutActions.Halt = Bool(TEXT("IA_DemoHalt"), TEXT("Halt selection"));
+	OutActions.Guard = Bool(TEXT("IA_DemoGuard"), TEXT("Guard mode toggle"));
+	OutActions.Fire = Bool(TEXT("IA_DemoFire"), TEXT("Fire-at-will toggle"));
+	OutActions.Skirmish = Bool(TEXT("IA_DemoSkirmish"), TEXT("Skirmish toggle"));
+	OutActions.ExitGarrison = Bool(TEXT("IA_DemoExitGarrison"), TEXT("Exit garrison"));
 	OutActions.ZoomIn = Bool(TEXT("IA_DemoZoomIn"), TEXT("Zoom in"));
 	OutActions.ZoomOut = Bool(TEXT("IA_DemoZoomOut"), TEXT("Zoom out"));
 	OutActions.PanFwd = Bool(TEXT("IA_DemoPanFwd"), TEXT("Pan forward"));
@@ -149,6 +191,10 @@ void ADemoPlayerController::BuildProgrammaticInput(FDemoActionSet& OutActions)
 	AddMapping(DemoIMC, OutActions.Select, EKeys::LeftMouseButton);
 	AddMapping(DemoIMC, OutActions.Order, EKeys::RightMouseButton);
 	AddMapping(DemoIMC, OutActions.Halt, EKeys::H);
+	AddMapping(DemoIMC, OutActions.Guard, EKeys::G);
+	AddMapping(DemoIMC, OutActions.Fire, EKeys::F);
+	AddMapping(DemoIMC, OutActions.Skirmish, EKeys::R);
+	AddMapping(DemoIMC, OutActions.ExitGarrison, EKeys::X);
 	AddMapping(DemoIMC, OutActions.ZoomIn, EKeys::MouseScrollUp);
 	AddMapping(DemoIMC, OutActions.ZoomOut, EKeys::MouseScrollDown);
 	AddMapping(DemoIMC, OutActions.PanFwd, EKeys::W);
@@ -171,6 +217,10 @@ void ADemoPlayerController::BindDemoInput(const FDemoActionSet& A)
 	IC->BindAction(A.Order, ETriggerEvent::Started, this, &ADemoPlayerController::OnRMBPressed);
 	IC->BindAction(A.Order, ETriggerEvent::Completed, this, &ADemoPlayerController::OnRMBReleased);
 	IC->BindAction(A.Halt, ETriggerEvent::Started, this, &ADemoPlayerController::OnHalt);
+	IC->BindAction(A.Guard, ETriggerEvent::Started, this, &ADemoPlayerController::OnGuardToggle);
+	IC->BindAction(A.Fire, ETriggerEvent::Started, this, &ADemoPlayerController::OnFireToggle);
+	IC->BindAction(A.Skirmish, ETriggerEvent::Started, this, &ADemoPlayerController::OnSkirmishToggle);
+	IC->BindAction(A.ExitGarrison, ETriggerEvent::Started, this, &ADemoPlayerController::OnExitGarrison);
 	IC->BindAction(A.ZoomIn, ETriggerEvent::Started, this, &ADemoPlayerController::OnZoomIn);
 	IC->BindAction(A.ZoomOut, ETriggerEvent::Started, this, &ADemoPlayerController::OnZoomOut);
 	IC->BindActionValueLambda(A.PanFwd, ETriggerEvent::Started, [this](const FInputActionValue&) { SetPanDir(FVector2D(1.f, 0.f), true); });
@@ -466,12 +516,36 @@ void ADemoPlayerController::OnLMBPressed()
 	{
 		return;
 	}
+	// PR-3: the command bar consumes first -- the army card row and the
+	// selected panel sit above the world; a press there never starts a
+	// world marquee (and the release is short-circuited via bCommandBarPress).
+	int32 CardIdx = INDEX_NONE;
+	DemoCommandBar::EAction BarAction;
+	if (HitCommandBar(FVector2D(MouseX, MouseY), CardIdx, BarAction))
+	{
+		bCommandBarPress = true;
+		if (CardIdx != INDEX_NONE)
+		{
+			OnCardClicked(CardIdx);
+		}
+		else
+		{
+			ApplyStance(BarAction, SelectedUnits);
+		}
+		return;
+	}
+	bCommandBarPress = false;
 	bMarqueeActive = true;
 	MarqueeStartScreen = FVector2D(MouseX, MouseY);
 }
 
 void ADemoPlayerController::OnLMBReleased()
 {
+	if (bCommandBarPress)
+	{
+		bCommandBarPress = false; // consumed by the command bar press
+		return;
+	}
 	if (!bMarqueeActive)
 	{
 		return;
@@ -510,30 +584,20 @@ void ADemoPlayerController::OnLMBReleased()
 			if (BannerTeam == EDemoTeam::Player)
 			{
 				const double Now = FPlatformTime::Seconds();
-				const bool bDoubleClick = LastBannerClick == BannerUnit
-					&& (Now - LastBannerClickTime) < 0.35;
-				LastBannerClickTime = Now;
-				LastBannerClick = BannerUnit;
+					const bool bDoubleClick = LastBannerClick == BannerUnit
+						&& (Now - LastBannerClickTime) < 0.35;
+					LastBannerClickTime = Now;
+					LastBannerClick = BannerUnit;
 
-				TArray<FUnitHandle> TypeGroup;
-				if (bDoubleClick)
-				{
-					// Select all friendly units of the same EDU type (the spec's
-					// D.16 double-click; grouped by the spawn spec's row).
-					const FUnitSpawnSpec* ClickedSpec = Registry->FindUnitSpec(BannerUnit);
-					TArray<FUnitHandle> PlayerUnits;
-					Visuals->GetUnitsOfTeam(EDemoTeam::Player, PlayerUnits);
-					for (const FUnitHandle& H : PlayerUnits)
+					TArray<FUnitHandle> TypeGroup;
+					if (bDoubleClick)
 					{
-						const FUnitSpawnSpec* Spec = Registry->FindUnitSpec(H);
-						if (ClickedSpec && Spec && Spec->EduRowIndex == ClickedSpec->EduRowIndex)
-						{
-							TypeGroup.Add(H);
-						}
+						// Select all friendly units of the same EDU type (the spec's
+						// D.16 double-click; grouped by the spawn spec's row).
+						CollectSameTypeUnits(BannerUnit, TypeGroup);
+						UE_LOG(LogDemoBattle, Display,
+							TEXT("EXEC_RESULT DemoOrder BannerSelectType Units=%d"), TypeGroup.Num());
 					}
-					UE_LOG(LogDemoBattle, Display,
-						TEXT("EXEC_RESULT DemoOrder BannerSelectType Units=%d"), TypeGroup.Num());
-				}
 				if (IsInputKeyDown(EKeys::LeftShift))
 				{
 					if (NewSelection.Find(BannerUnit) != INDEX_NONE)
@@ -969,6 +1033,254 @@ void ADemoPlayerController::OnHalt()
 	}
 }
 
+// -- PR-3 command bar (demo-shell spec section 4.3) -----------------------------
+
+int32 ADemoPlayerController::ApplyStance(DemoCommandBar::EAction Action, const TArray<FUnitHandle>& Targets)
+{
+	UUnitRegistrySubsystem* Registry = GetWorld() ? GetWorld()->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	UDemoUnitVisualSubsystem* Visuals = VisualSubsystem();
+	if (!Registry || Targets.Num() == 0)
+	{
+		UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoStance FAIL no-targets"));
+		return 0;
+	}
+
+	int32 Issued = 0;
+	switch (Action)
+	{
+	case DemoCommandBar::EAction::Guard:
+	{
+		// The flip target reads off the FIRST target; the whole selection is
+		// set to the same value (uniform stance, the TW panel semantics).
+		const FUnitRuntimeState* First = Registry->FindUnitState(Targets[0]);
+		const bool bTarget = !(First && First->bGuardMode);
+		for (const FUnitHandle& H : Targets)
+		{
+			if (Registry->SetUnitGuardToggle(H, bTarget))
+			{
+				++Issued;
+			}
+		}
+		const FUnitRuntimeState* ReadBack = Registry->FindUnitState(Targets[0]);
+		UE_LOG(LogDemoBattle, Display,
+			TEXT("EXEC_RESULT DemoStance Guard Target=%d Issued=%d of %d ReadBack=%d"),
+			bTarget ? 1 : 0, Issued, Targets.Num(),
+			(ReadBack && ReadBack->bGuardMode) ? 1 : 0);
+		break;
+	}
+	case DemoCommandBar::EAction::FireAtWill:
+	case DemoCommandBar::EAction::Skirmish:
+	{
+		// Per-unit flip: each unit keeps its own other toggle (GetUnitFireToggles
+		// read-back drives the write -- the spec's "read-back state from the
+		// getters"). Out-of-ammo units still flip (the fire pass simply never
+		// fires); the panel grays instead (D.15).
+		const bool bFire = Action == DemoCommandBar::EAction::FireAtWill;
+		for (const FUnitHandle& H : Targets)
+		{
+			bool bFAW = true, bSkirm = false, bOA = false;
+			Registry->GetUnitFireToggles(H, bFAW, bSkirm, bOA);
+			if (Registry->SetUnitFireToggles(H, bFire ? !bFAW : bFAW, bFire ? bSkirm : !bSkirm))
+			{
+				++Issued;
+			}
+		}
+		bool bFAW = false, bSkirm = false, bOA = false;
+		Registry->GetUnitFireToggles(Targets[0], bFAW, bSkirm, bOA);
+		UE_LOG(LogDemoBattle, Display,
+			TEXT("EXEC_RESULT DemoStance %s Issued=%d of %d ReadBack0 faw=%d skirm=%d oa=%d"),
+			bFire ? TEXT("Fire") : TEXT("Skirmish"), Issued, Targets.Num(), bFAW ? 1 : 0, bSkirm ? 1 : 0, bOA ? 1 : 0);
+		break;
+	}
+	case DemoCommandBar::EAction::ExitGarrison:
+	{
+		for (const FUnitHandle& H : Targets)
+		{
+			if (Registry->IssueExitGarrisonOrder(H))
+			{
+				++Issued;
+			}
+		}
+		UE_LOG(LogDemoBattle, Display,
+			TEXT("EXEC_RESULT DemoStance ExitGarrison Issued=%d of %d"), Issued, Targets.Num());
+		break;
+	}
+	case DemoCommandBar::EAction::Wider:
+	case DemoCommandBar::EAction::Narrower:
+	{
+		// Wider / Narrower (spec section 4.3): re-issue the move order at the
+		// unit's CURRENT anchor through the same A2 width path the formation
+		// drag uses; rank depth derives from files x roster (the TW behavior).
+		// Garrisoned units hold their structure (their order is the garrison).
+		constexpr int32 WidthStepFiles = 2;
+		for (const FUnitHandle& H : Targets)
+		{
+			const FUnitOrder* Order = Registry->FindOrder(H);
+			if (Order && (Order->Type == FUnitOrder::EType::Garrison || Order->Type == FUnitOrder::EType::ExitGarrison))
+			{
+				continue;
+			}
+			FDemoUnitBodyInfo Info;
+			if (!Visuals || !Visuals->GetUnitBodyInfo(H, Info) || Info.SoldierCount <= 0)
+			{
+				continue;
+			}
+			const int32 Files = FMath::Clamp(
+				Info.NumFiles + (Action == DemoCommandBar::EAction::Wider ? WidthStepFiles : -WidthStepFiles),
+				1, Info.SoldierCount);
+			if (Files == Info.NumFiles)
+			{
+				continue;
+			}
+			if (Registry->IssueMoveOrder(H, ClampToGridHelper(Info.BodyCenterCm), Info.FacingYawDeg, /*speed*/ 0.f, Files))
+			{
+				PlayerOrderedUnits.Add(H);
+				++Issued;
+			}
+		}
+		FDemoUnitBodyInfo ReadBack;
+		int32 NewFiles = 0, NewRanks = 0;
+		if (Visuals && Visuals->GetUnitBodyInfo(Targets[0], ReadBack))
+		{
+			NewFiles = ReadBack.NumFiles;
+			NewRanks = FMath::Max(1, FMath::CeilToInt(static_cast<float>(FMath::Max(ReadBack.SoldierCount, 1)) / FMath::Max(ReadBack.NumFiles, 1)));
+		}
+		UE_LOG(LogDemoBattle, Display,
+			TEXT("EXEC_RESULT DemoStance %s Issued=%d of %d Files0=%d Ranks0=%d"),
+			Action == DemoCommandBar::EAction::Wider ? TEXT("Wider") : TEXT("Narrower"),
+			Issued, Targets.Num(), NewFiles, NewRanks);
+		break;
+	}
+	default:
+		break;
+	}
+	return Issued;
+}
+
+bool ADemoPlayerController::HitCommandBar(const FVector2D& ScreenPos, int32& OutCardIndex,
+	DemoCommandBar::EAction& OutAction) const
+{
+	OutCardIndex = INDEX_NONE;
+	UDemoUnitVisualSubsystem* Visuals = VisualSubsystem();
+	if (!Visuals || !GEngine || !GEngine->GameViewport)
+	{
+		return false;
+	}
+	FVector2D ViewSize(FVector2D::ZeroVector);
+	GEngine->GameViewport->GetViewportSize(ViewSize);
+	if (ViewSize.X <= 0.f || ViewSize.Y <= 0.f)
+	{
+		return false;
+	}
+
+	// Panel buttons first (the panel draws on top; its hit tests only run
+	// while it is visible -- a selection exists).
+	if (SelectedUnits.Num() > 0)
+	{
+		for (uint8 A = 0; A < static_cast<uint8>(DemoCommandBar::EAction::Count); ++A)
+		{
+			const DemoCommandBar::EAction Action = static_cast<DemoCommandBar::EAction>(A);
+			if (DemoCommandBar::ActionRect(Action, ViewSize.Y).IsInside(ScreenPos))
+			{
+				OutAction = Action;
+				return true;
+			}
+		}
+	}
+	// The army card row: the SAME GetUnitsOfTeam list the HUD draws.
+	TArray<FUnitHandle> PlayerUnits;
+	Visuals->GetUnitsOfTeam(EDemoTeam::Player, PlayerUnits);
+	const int32 Cards = FMath::Min(PlayerUnits.Num(), DemoCommandBar::MaxCards);
+	for (int32 i = 0; i < Cards; ++i)
+	{
+		if (DemoCommandBar::CardRect(i, ViewSize.Y).IsInside(ScreenPos))
+		{
+			OutCardIndex = i;
+			return true;
+		}
+	}
+	return false;
+}
+
+void ADemoPlayerController::OnCardClicked(int32 CardIndex)
+{
+	UDemoUnitVisualSubsystem* Visuals = VisualSubsystem();
+	if (!Visuals)
+	{
+		return;
+	}
+	// The card list is the HUD's list (registration order, both sides read
+	// GetUnitsOfTeam) -- the index maps 1:1.
+	TArray<FUnitHandle> PlayerUnits;
+	Visuals->GetUnitsOfTeam(EDemoTeam::Player, PlayerUnits);
+	if (!PlayerUnits.IsValidIndex(CardIndex))
+	{
+		return;
+	}
+	const FUnitHandle Clicked = PlayerUnits[CardIndex];
+	const double Now = FPlatformTime::Seconds();
+	const bool bDoubleClick = LastCardClick == Clicked && (Now - LastCardClickTime) < 0.35;
+	LastCardClickTime = Now;
+	LastCardClick = Clicked;
+
+	TArray<FUnitHandle> NewSelection;
+	if (bDoubleClick)
+	{
+		CollectSameTypeUnits(Clicked, NewSelection);
+		UE_LOG(LogDemoBattle, Display,
+			TEXT("EXEC_RESULT DemoOrder CardSelectType Units=%d"), NewSelection.Num());
+	}
+	else if (IsInputKeyDown(EKeys::LeftShift))
+	{
+		NewSelection = SelectedUnits;
+		const int32 Existing = NewSelection.Find(Clicked);
+		if (Existing != INDEX_NONE)
+		{
+			NewSelection.RemoveAt(Existing);
+		}
+		else
+		{
+			NewSelection.Add(Clicked);
+		}
+	}
+	else
+	{
+		NewSelection = TArray<FUnitHandle> { Clicked };
+	}
+	SetSelection(NewSelection);
+	if (!bDoubleClick)
+	{
+		UE_LOG(LogDemoBattle, Display,
+			TEXT("EXEC_RESULT DemoOrder CardSelect Units=%d Index=%d"), NewSelection.Num(), CardIndex);
+	}
+}
+
+void ADemoPlayerController::CollectSameTypeUnits(FUnitHandle Seed, TArray<FUnitHandle>& Out) const
+{
+	Out.Reset();
+	UUnitRegistrySubsystem* Registry = GetWorld() ? GetWorld()->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	UDemoUnitVisualSubsystem* Visuals = VisualSubsystem();
+	if (!Registry || !Visuals)
+	{
+		return;
+	}
+	const FUnitSpawnSpec* SeedSpec = Registry->FindUnitSpec(Seed);
+	if (!SeedSpec)
+	{
+		return;
+	}
+	TArray<FUnitHandle> PlayerUnits;
+	Visuals->GetUnitsOfTeam(EDemoTeam::Player, PlayerUnits);
+	for (const FUnitHandle& H : PlayerUnits)
+	{
+		const FUnitSpawnSpec* Spec = Registry->FindUnitSpec(H);
+		if (Spec && Spec->EduRowIndex == SeedSpec->EduRowIndex)
+		{
+			Out.Add(H);
+		}
+	}
+}
+
 // -- zoom ----------------------------------------------------------------------
 
 void ADemoPlayerController::OnZoomIn()
@@ -986,6 +1298,216 @@ void ADemoPlayerController::OnZoomOut()
 		Cam->Zoom(-1.f);
 	}
 }
+
+// -- Demo.Stance console command (PR-3) -----------------------------------------
+// The headless/PIE evidence channel for the command bar: runs the EXACT
+// ApplyStance the G/F/R/X keys and the selected panel's buttons run, then
+// logs the getter read-back. Shape: Demo.Stance <action> [delaySec=3]
+// [unitIndex...] -- the 2nd arg is always the delay (the stance pass needs a
+// settled registry: units spawn deferred), indices are 1-based registry
+// units; no indices = all player-team units.
+static FAutoConsoleCommandWithWorldAndArgs GDemoStance(
+	TEXT("Demo.Stance"),
+	TEXT("<guard|fire|skirmish|exit|wider|narrow> [delaySec=3] [unitIndex...] -- the PR-3 stance family (keys G/F/R/X + panel buttons share ApplyStance); no indices = all player units; EXEC_RESULT DemoStance"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(
+		[](const TArray<FString>& Args, UWorld* World)
+		{
+			if (World == nullptr || Args.Num() < 1)
+			{
+				UE_LOG(LogDemoBattle, Display,
+					TEXT("EXEC_RESULT DemoStance FAIL BadArgs (need: <guard|fire|skirmish|exit|wider|narrow> [delaySec=3] [unitIndex...])"));
+				return;
+			}
+			DemoCommandBar::EAction Action;
+			if (Args[0] == TEXT("guard")) { Action = DemoCommandBar::EAction::Guard; }
+			else if (Args[0] == TEXT("fire")) { Action = DemoCommandBar::EAction::FireAtWill; }
+			else if (Args[0] == TEXT("skirmish")) { Action = DemoCommandBar::EAction::Skirmish; }
+			else if (Args[0] == TEXT("exit")) { Action = DemoCommandBar::EAction::ExitGarrison; }
+			else if (Args[0] == TEXT("wider")) { Action = DemoCommandBar::EAction::Wider; }
+			else if (Args[0] == TEXT("narrow")) { Action = DemoCommandBar::EAction::Narrower; }
+			else
+			{
+				UE_LOG(LogDemoBattle, Display,
+					TEXT("EXEC_RESULT DemoStance FAIL BadAction=%s"), *Args[0]);
+				return;
+			}
+			const float Delay = Args.Num() > 1 ? FMath::Max(0.f, FCString::Atof(*Args[1])) : 3.f;
+			TArray<int32> Indices;
+			for (int32 i = 2; i < Args.Num(); ++i)
+			{
+				Indices.Add(FCString::Atoi(*Args[i]));
+			}
+
+			TWeakObjectPtr<UWorld> WeakWorld = World;
+			FTimerHandle StanceHandle;
+			World->GetTimerManager().SetTimer(StanceHandle,
+				FTimerDelegate::CreateLambda([WeakWorld, Action, Indices]()
+				{
+					UWorld* W = WeakWorld.Get();
+					ADemoPlayerController* PC = W ? Cast<ADemoPlayerController>(W->GetFirstPlayerController()) : nullptr;
+					UUnitRegistrySubsystem* Registry = W ? W->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+					UDemoUnitVisualSubsystem* Visuals = W ? W->GetSubsystem<UDemoUnitVisualSubsystem>() : nullptr;
+					if (!PC || !Registry || !Visuals)
+					{
+						UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoStance FAIL no-subsystems"));
+						return;
+					}
+					// Target units: explicit 1-based registry indices, else the
+					// whole player team (the headless default -- no selection).
+					TArray<FUnitHandle> Targets;
+					if (Indices.Num() > 0)
+					{
+						for (const FUnitHandle& Handle : Registry->GetSortedHandles())
+						{
+							for (int32 Idx : Indices)
+							{
+								if (Handle.Index == static_cast<uint32>(Idx))
+								{
+									Targets.Add(Handle);
+								}
+							}
+						}
+					}
+					else
+					{
+						Visuals->GetUnitsOfTeam(EDemoTeam::Player, Targets);
+					}
+					if (Targets.Num() == 0)
+					{
+						UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoStance FAIL no-targets"));
+						return;
+					}
+					PC->ApplyStance(Action, Targets);
+				}),
+				FMath::Max(0.1f, Delay), false);
+			UE_LOG(LogDemoBattle, Display,
+				TEXT("EXEC_RESULT DemoStance armed action=%s delay=%.1f indices=%d"),
+				*Args[0], Delay, Indices.Num());
+		}));
+// -- Demo.CommandBarTest console command (PR-3) ---------------------------------
+// The one-command headless evidence run for the command bar: arms the whole
+// stance sequence on internal timers (the Demo.AttackTest shape -- the
+// multi-command -ExecCmds path proved unreliable in -game processes). Every
+// step runs the EXACT ApplyStance the keys/buttons run and logs the getter
+// read-back; the garrison step resolves the village building through the same
+// footprint test the RMB click uses (the spec section 2.2 building at 8,52 m).
+static FAutoConsoleCommandWithWorldAndArgs GDemoCommandBarTest(
+	TEXT("Demo.CommandBarTest"),
+	TEXT("PR-3 evidence: fire-off/on (all player units) -> skirmish P4 -> guard P2 -> wider+narrow P2 -> garrison P3 -> egress P3; EXEC_RESULT DemoStance/DemoGarrison lines"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(
+		[](const TArray<FString>& /*Args*/, UWorld* World)
+		{
+			if (World == nullptr)
+			{
+				return;
+			}
+			const TWeakObjectPtr<UWorld> WeakWorld = World;
+			// (at seconds, action, unit index or 0 = all player units).
+			// The egress step waits for P3's ingress to SETTLE: the village
+			// building stands ~50 m from P3's line (approach ~9 sim-s) and the
+			// 40-man roster files through the entrance for a while after, so
+			// the exit fires at t=120 -- the t=20 exit landed as Phase=0
+			// CANCEL (mid-approach) and the t=56 one as Ingress->Egress
+			// (measured 2026-11-01; the -benchmark window is ~wall-cheap).
+			const struct { float At; DemoCommandBar::EAction Action; int32 UnitIdx; } Steps[] =
+			{
+				{  3.f, DemoCommandBar::EAction::FireAtWill,   0 }, // off (read-back faw=0)
+				{  5.f, DemoCommandBar::EAction::FireAtWill,   0 }, // back on (faw=1)
+				{  6.f, DemoCommandBar::EAction::Skirmish,     5 }, // P4 the archers
+				{  7.f, DemoCommandBar::EAction::Guard,        2 }, // P2 guard on
+				{  8.f, DemoCommandBar::EAction::Wider,        2 },
+				{ 10.f, DemoCommandBar::EAction::Narrower,     2 },
+				{ 12.f, DemoCommandBar::EAction::ExitGarrison, 0 }, // egress no-op line (nothing garrisoned yet)
+				{ 120.f, DemoCommandBar::EAction::ExitGarrison, 3 }, // P3 egresses after settling in
+			};
+			for (const auto& Step : Steps)
+			{
+				FTimerHandle StepHandle;
+				World->GetTimerManager().SetTimer(StepHandle,
+					FTimerDelegate::CreateLambda([WeakWorld, Action = Step.Action, UnitIdx = Step.UnitIdx]()
+					{
+						UWorld* W = WeakWorld.Get();
+						ADemoPlayerController* PC = W ? Cast<ADemoPlayerController>(W->GetFirstPlayerController()) : nullptr;
+						UDemoUnitVisualSubsystem* Visuals = W ? W->GetSubsystem<UDemoUnitVisualSubsystem>() : nullptr;
+						if (!PC || !Visuals)
+						{
+							UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoStance FAIL no-subsystems"));
+							return;
+						}
+						TArray<FUnitHandle> Targets;
+						if (UnitIdx > 0)
+						{
+							for (const FUnitHandle& Handle : Visuals->GetAllUnits())
+							{
+								if (Handle.Index == static_cast<uint32>(UnitIdx))
+								{
+									Targets.Add(Handle);
+								}
+							}
+						}
+						else
+						{
+							Visuals->GetUnitsOfTeam(EDemoTeam::Player, Targets);
+						}
+						PC->ApplyStance(Action, Targets);
+					}),
+					Step.At, false);
+			}
+
+			// The garrison step (t=14, between wider/narrow and the egress):
+			// the same resolution the RMB click path runs, then the P3 order.
+			FTimerHandle GarrisonHandle;
+			World->GetTimerManager().SetTimer(GarrisonHandle,
+				FTimerDelegate::CreateLambda([WeakWorld]()
+				{
+					UWorld* W = WeakWorld.Get();
+					if (!W)
+					{
+						return;
+					}
+					// The M7 village building's authored center (spec section 2.2).
+					const FVector2D VillageCm(8.f * 100.f, 52.f * 100.f);
+					const uint32 StructureId = ADemoPlayerController::FindStructureAtWorld(W, VillageCm);
+					UUnitRegistrySubsystem* Registry = W->GetSubsystem<UUnitRegistrySubsystem>();
+					UDemoUnitVisualSubsystem* Visuals = W->GetSubsystem<UDemoUnitVisualSubsystem>();
+					if (StructureId == 0 || !Registry || !Visuals)
+					{
+						UE_LOG(LogDemoBattle, Display,
+							TEXT("EXEC_RESULT DemoCommandBarTest Garrison MISS (no structure at 8,52)"));
+						return;
+					}
+					int32 Issued = 0;
+					for (const FUnitHandle& Handle : Visuals->GetAllUnits())
+					{
+						if (Handle.Index == 3 && Registry->IssueGarrisonOrder(Handle, StructureId))
+						{
+							++Issued;
+						}
+					}
+					UE_LOG(LogDemoBattle, Display,
+						TEXT("EXEC_RESULT DemoCommandBarTest Garrison Issued=%d Structure=%u"), Issued, StructureId);
+				}),
+				14.f, false);
+			UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoCommandBarTest armed 8 steps + garrison"));
+
+			// Self-termination (the boot's ONE -ExecCmds command -- the
+			// multi-command chains are unreliable in -game processes, measured
+			// 2026-11-01): the egress settles by t~26, then quit. The
+			// t.FPSChart.DurationAndExit exit path needs its own command slot.
+			FTimerHandle QuitHandle;
+			World->GetTimerManager().SetTimer(QuitHandle,
+				FTimerDelegate::CreateLambda([WeakWorld]()
+				{
+					UWorld* W = WeakWorld.Get();
+					UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoCommandBarTest quit"));
+					if (GEngine && W)
+					{
+						GEngine->Exec(W, TEXT("Quit"));
+					}
+					FPlatformMisc::RequestExit(0);
+				}),
+				150.f, false);
+		}));
 
 // -- Demo.GarrisonAt console command -------------------------------------------
 // Resolves the garrisonable structure at a world point through the SAME

@@ -20,9 +20,17 @@ public:
 	virtual void DrawHUD() override;
 
 protected:
-	/** Phase 2 task 10: one card per selected unit (team color, spec name,
-	 *  alive roster) -- the MassRTS selection-summary UX, geometry-only. */
+	/** PR-3 (demo-shell spec section 4.3): the M2TW army card row -- one card
+	 *  per PLAYER unit (not just the selection): type glyph, alive count,
+	 *  morale chip; selected cards highlight, routing cards gray. The player
+	 *  controller hit tests the same DemoCommandBar geometry (click selects,
+	 *  double-click isolates the type). */
 	void DrawUnitCards();
+	/** PR-3: the selected panel -- the stat readout (row stats + live values)
+	 *  plus the stance buttons (Guard / Fire-at-will / Skirmish / Exit-garrison
+	 *  + Wider / Narrower) with read-back state; out-of-ammo grays the fire
+	 *  control. Same DemoCommandBar geometry as the controller's hit tests. */
+	void DrawSelectedPanel();
 
 private:
 	void DrawControlsHint();

@@ -11,7 +11,9 @@
 // across selected units and each gets a commanded file count from its segment
 // width via the A2 width API); RMB on a garrison structure = garrison the
 // selection into it (the plugin's FSM files the unit through the entrance).
-// H = halt.
+// H = halt. PR-3 stance keys: G = guard toggle, F = fire-at-will, R =
+// skirmish, X = exit garrison (the setter family, shared with the selected
+// panel's buttons and the Demo.Stance console command).
 #pragma once
 
 #include "CoreMinimal.h"
@@ -65,6 +67,11 @@ public:
 	// -- input handlers (bound to the programmatic actions) --
 	void OnLMBPressed();
 	void OnLMBReleased();
+	// PR-3 stance keys (G/F/R/X); the panel buttons share ApplyStance.
+	void OnGuardToggle() { ApplyStance(DemoCommandBar::EAction::Guard, SelectedUnits); }
+	void OnFireToggle() { ApplyStance(DemoCommandBar::EAction::FireAtWill, SelectedUnits); }
+	void OnSkirmishToggle() { ApplyStance(DemoCommandBar::EAction::Skirmish, SelectedUnits); }
+	void OnExitGarrison() { ApplyStance(DemoCommandBar::EAction::ExitGarrison, SelectedUnits); }
 
 	/** Phase 2 task 10: attack orders (A4 surface on the demo input):
 	 *  RMB on an enemy unit = AttackUnit for the whole selection;
@@ -88,6 +95,22 @@ public:
 	void OnZoomOut();
 	void OnHalt();
 
+	// -- PR-3 command bar (demo-shell spec section 4.3) --
+	/** The stance/setter family, shared by the G/F/R/X keys, the selected
+	 *  panel's buttons, and the Demo.Stance console command. Applies the
+	 *  action to Targets (the selection for keys/buttons) and logs the
+	 *  EXEC_RESULT DemoStance lines with the getter read-back. Returns the
+	 *  number of units the action landed on. */
+	int32 ApplyStance(DemoCommandBar::EAction Action, const TArray<FUnitHandle>& Targets);
+	/** True when the screen point is over the command bar (a card, or a
+	 *  panel button when the panel is visible); resolves which. The press
+	 *  is consumed -- it never starts a world marquee. */
+	bool HitCommandBar(const FVector2D& ScreenPos, int32& OutCardIndex,
+		DemoCommandBar::EAction& OutAction) const;
+	/** The card row's double-click (select all of the same EDU type); shared
+	 *  by the card row and the PR-2 banner double-click. */
+	void CollectSameTypeUnits(FUnitHandle Seed, TArray<FUnitHandle>& Out) const;
+
 private:
 	/** The input mapping table (which key fires which action) is editor data:
 	 *  IMC_Demo + the IA_Demo_* action assets (PR-2). Bindings stay in code --
@@ -99,13 +122,17 @@ private:
 	 *  BeginPlay; kept referenced so bindings stay valid. */
 	UPROPERTY(Transient) TObjectPtr<UInputMappingContext> DemoIMC;
 
-	/** The 11 actions the bindings consume, in one place regardless of whether
+	/** The 15 actions the bindings consume, in one place regardless of whether
 	 *  they came from the asset or the fallback construction. */
 	struct FDemoActionSet
 	{
 		const UInputAction* Select = nullptr;
 		const UInputAction* Order = nullptr;
 		const UInputAction* Halt = nullptr;
+		const UInputAction* Guard = nullptr;        // PR-3
+		const UInputAction* Fire = nullptr;         // PR-3
+		const UInputAction* Skirmish = nullptr;     // PR-3
+		const UInputAction* ExitGarrison = nullptr; // PR-3
 		const UInputAction* ZoomIn = nullptr;
 		const UInputAction* ZoomOut = nullptr;
 		const UInputAction* PanFwd = nullptr;
@@ -127,6 +154,9 @@ private:
 	void BindDemoInput(const FDemoActionSet& A);
 
 	void SetupEnhancedInput();
+	/** PR-3: an army-card-row press (click = select the card's unit, shift
+	 *  toggles, double-click isolates the EDU type). */
+	void OnCardClicked(int32 CardIndex);
 	void AddMapping(UInputMappingContext* IMC, const UInputAction* Action, FKey Key) const;
 	UInputAction* MakeBoolAction(const FName& Name, const FText& DisplayName);
 	void SetPanDir(FVector2D Dir, bool bHeld);
@@ -161,6 +191,13 @@ private:
 	// -- PR-2 banner clicks (double-click select-all-of-type timing) --
 	FUnitHandle LastBannerClick;
 	double LastBannerClickTime = -1.0;
+
+	// -- PR-3 command-bar clicks (the card row's own double-click timing) --
+	FUnitHandle LastCardClick;
+	double LastCardClickTime = -1.0;
+	/** A press that landed on the command bar (consumed; the release must
+	 *  not run the world click/marquee paths). */
+	bool bCommandBarPress = false;
 
 	// -- order drag state --
 	bool bDraggingOrder = false;

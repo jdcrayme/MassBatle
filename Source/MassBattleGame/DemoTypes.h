@@ -68,6 +68,58 @@ namespace DemoUi
 	constexpr float BodyLabelZCm = 100.f;
 }
 
+/** PR-3 command bar (demo-shell spec section 4.3): the screen-space geometry
+ *  home for the army card row + the selected panel -- ONE home so the HUD's
+ *  draw and the player controller's click hit tests agree by construction
+ *  (the PR-2 banner-rect posture, applied to fixed UI). All coordinates are
+ *  viewport pixels; callers pass their own viewport height. */
+namespace DemoCommandBar
+{
+	/** The army card row (bottom-left): one card per PLAYER unit, regardless
+	 *  of selection -- the M2TW convention. Selected cards highlight. */
+	constexpr float CardW = 130.f;
+	constexpr float CardH = 58.f;
+	constexpr float Gap = 6.f;
+	constexpr int32 MaxCards = 10;
+	constexpr float LeftMarginPx = 14.f;
+	constexpr float BottomMarginPx = 14.f;
+
+	inline float CardRowY(float ViewY) { return ViewY - CardH - BottomMarginPx; }
+	inline FBox2D CardRect(int32 Index, float ViewY)
+	{
+		const float X = LeftMarginPx + Index * (CardW + Gap);
+		const float Y = CardRowY(ViewY);
+		return FBox2D(FVector2D(X, Y), FVector2D(X + CardW, Y + CardH));
+	}
+
+	/** The stance buttons (spec section 4.3 selected panel): each a one-line
+	 *  call to the setter family; the keys G/F/R/X fire the first four. */
+	enum class EAction : uint8
+	{
+		Guard, FireAtWill, Skirmish, ExitGarrison, Wider, Narrower, Count
+	};
+
+	/** The selected panel (above the card row; drawn iff a selection exists --
+	 *  hit tests pass bPanelVisible to match). */
+	constexpr float PanelW = 470.f;
+	constexpr float PanelH = 96.f;
+	inline FBox2D PanelRect(float ViewY)
+	{
+		const float Y = CardRowY(ViewY) - PanelH - 8.f;
+		return FBox2D(FVector2D(LeftMarginPx, Y), FVector2D(LeftMarginPx + PanelW, Y + PanelH));
+	}
+
+	constexpr float ButtonW = 68.f;
+	constexpr float ButtonH = 18.f;
+	inline FBox2D ActionRect(EAction Action, float ViewY)
+	{
+		const FBox2D Panel = PanelRect(ViewY);
+		const float X = Panel.Min.X + 8.f + static_cast<float>(static_cast<uint8>(Action)) * (ButtonW + 6.f);
+		const float Y = Panel.Max.Y - ButtonH - 8.f;
+		return FBox2D(FVector2D(X, Y), FVector2D(X + ButtonW, Y + ButtonH));
+	}
+};
+
 /** One selected unit's piece of a formation-drag preview/commit: the drag line
  *  divided across units (Total War frontage semantics). */
 struct FDemoDragSegment

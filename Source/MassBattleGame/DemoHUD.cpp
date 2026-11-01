@@ -13,6 +13,48 @@
 #include "Kismet/GameplayStatics.h"
 #include "UObject/ConstructorHelpers.h"
 
+// -- presentation helpers (the overlay's state-color family + glyphs) ----------
+// The morale chip mirrors MoraleTickProcessor::DrawMoraleOverlay's state
+// colors; the plugin's overlay stays the analytic home, this is the copy.
+
+namespace
+{
+	FColor RoutStateColor(uint8 RoutState)
+	{
+		static const FColor StateColors[4] = {
+			FColor(80, 220, 80),   // Steady: green
+			FColor(240, 220, 60),  // Wavering: yellow
+			FColor(240, 70, 50),   // Routing: red
+			FColor(120, 20, 20)    // Shattered: dark red
+		};
+		return StateColors[FMath::Clamp(static_cast<int32>(RoutState), 0, 3)];
+	}
+
+	const TCHAR* RoutStateName(uint8 RoutState)
+	{
+		static const TCHAR* Names[4] = { TEXT("Steady"), TEXT("Wavering"), TEXT("Routing"), TEXT("Shattered") };
+		return Names[FMath::Clamp(static_cast<int32>(RoutState), 0, 3)];
+	}
+
+	/** PR-3: the selected panel's discipline read (EBattleDiscipline). */
+	const TCHAR* DisciplineName(uint8 Discipline)
+	{
+		static const TCHAR* Names[4] = { TEXT("Low"), TEXT("Normal"), TEXT("Disciplined"), TEXT("Impetuous") };
+		return Names[FMath::Clamp(static_cast<int32>(Discipline), 0, 3)];
+	}
+
+	const TCHAR* GlyphFor(const FBattleRowStats* Stats)
+	{
+		if (!Stats)
+		{
+			return TEXT("?");
+		}
+		if (Stats->bCavalry) { return TEXT("CA"); }
+		if (Stats->bBow) { return TEXT("MS"); }
+		return TEXT("IN");
+	}
+}
+
 ADemoHUD::ADemoHUD()
 {
 	PrimaryActorTick.bCanEverTick = false;
@@ -43,9 +85,92 @@ void ADemoHUD::DrawHUD()
 	DrawMarquee();
 	DrawOrderDragPreview();
 	DrawUnitCards();
+	DrawSelectedPanel();
 }
 
 void ADemoHUD::DrawUnitCards()
+{
+	UDemoUnitVisualSubsystem* Visuals = GetWorld() ? GetWorld()->GetSubsystem<UDemoUnitVisualSubsystem>() : nullptr;
+	if (!Visuals || !Canvas || !GEngine || !GEngine->GetMediumFont())
+	{
+		return;
+	}
+
+	// PR-3: the M2TW army card row -- ALL player units in registration order
+	// (the PC's hit tests iterate the SAME GetUnitsOfTeam list, so every unit
+	// gets a card even pre-spawn: alignment by construction). Selected cards
+	// highlight; routing/shattered cards gray (the TW convention).
+	TArray<FUnitHandle> PlayerUnits;
+	Visuals->GetUnitsOfTeam(EDemoTeam::Player, PlayerUnits);
+	if (PlayerUnits.Num() == 0)
+	{
+		return;
+	}
+	ADemoGameMode* GM = GetWorld() ? Cast<ADemoGameMode>(GetWorld()->GetAuthGameMode()) : nullptr;
+	const int32 Cards = FMath::Min(PlayerUnits.Num(), DemoCommandBar::MaxCards);
+	for (int32 i = 0; i < Cards; ++i)
+	{
+		const FUnitHandle& H = PlayerUnits[i];
+		const FBox2D Rect = DemoCommandBar::CardRect(i, static_cast<float>(Canvas->SizeY));
+		FDemoUnitBodyInfo Info;
+		const bool bHasBody = Visuals->GetUnitBodyInfo(H, Info);
+		const bool bSelected = Visuals->IsSelected(H);
+		const bool bRouting = bHasBody && Info.RoutState >= static_cast<uint8>(EBattleRoutState::Routing);
+		const FLinearColor TeamColor = Visuals->GetTeam(H) == EDemoTeam::Enemy
+			? FLinearColor(0.9f, 0.25f, 0.2f)
+			: FLinearColor(0.2f, 0.55f, 0.95f);
+		const float BodyAlpha = bRouting ? 0.55f : 0.82f;
+
+		// Card body + team bar (+ the selection highlight frame).
+		DrawRect(FLinearColor(0.06f, 0.06f, 0.08f, BodyAlpha), Rect.Min.X, Rect.Min.Y, Rect.GetSize().X, Rect.GetSize().Y);
+		DrawRect(TeamColor, Rect.Min.X, Rect.Min.Y, 4.f, Rect.GetSize().Y);
+		if (bSelected)
+		{
+			DrawRect(FLinearColor::White, Rect.Min.X, Rect.Min.Y, Rect.GetSize().X, 2.f);
+			DrawRect(FLinearColor::White, Rect.Min.X, Rect.Max.Y - 2.f, Rect.GetSize().X, 2.f);
+			DrawRect(FLinearColor::White, Rect.Max.X - 2.f, Rect.Min.Y, 2.f, Rect.GetSize().Y);
+		}
+		if (!bHasBody)
+		{
+			// Alignment placeholder (roster not spawned yet).
+			Canvas->SetDrawColor(120, 120, 124, 160);
+			Canvas->DrawText(GEngine->GetMediumFont(), TEXT("..."), Rect.Min.X + 10.f, Rect.Min.Y + 20.f, 0.62f, 0.62f);
+			continue;
+		}
+
+		const int32 TextAlpha = bRouting ? 120 : 242;
+		Canvas->SetDrawColor(235, 235, 235, TextAlpha);
+		Canvas->DrawText(GEngine->GetMediumFont(),
+			FString::Printf(TEXT("%s%s"),
+				GlyphFor(GM ? GM->FindRowStatsForUnit(H) : nullptr), *Info.UnitName),
+			Rect.Min.X + 10.f, Rect.Min.Y + 6.f, 0.6f, 0.6f);
+
+		// Alive count x spawn size.
+		Canvas->SetDrawColor(165, 215, 165, TextAlpha);
+		Canvas->DrawText(GEngine->GetMediumFont(),
+			FString::Printf(TEXT("%d/%d"), Info.SoldierCount, FMath::Max(Info.InitialRoster, 1)),
+			Rect.Min.X + 10.f, Rect.Min.Y + 24.f, 0.62f, 0.62f);
+
+		// Morale chip (the overlay's state color family) + general star.
+		DrawRect(FLinearColor(RoutStateColor(Info.RoutState)), Rect.Max.X - 16.f, Rect.Min.Y + 8.f, 8.f, 8.f);
+		if (Info.bGeneral)
+		{
+			Canvas->SetDrawColor(255, 210, 60, TextAlpha);
+			Canvas->DrawText(GEngine->GetMediumFont(), TEXT("*"), Rect.Max.X - 18.f, Rect.Min.Y + 24.f, 0.7f, 0.7f);
+		}
+	}
+	if (PlayerUnits.Num() > DemoCommandBar::MaxCards)
+	{
+		const FBox2D Rect = DemoCommandBar::CardRect(DemoCommandBar::MaxCards, static_cast<float>(Canvas->SizeY));
+		DrawRect(FLinearColor(0.06f, 0.06f, 0.08f, 0.82f), Rect.Min.X, Rect.Min.Y, 44.f, Rect.GetSize().Y);
+		Canvas->SetDrawColor(230, 230, 230, 230);
+		Canvas->DrawText(GEngine->GetMediumFont(),
+			FString::Printf(TEXT("+%d"), PlayerUnits.Num() - DemoCommandBar::MaxCards),
+			Rect.Min.X + 10.f, Rect.Min.Y + 20.f, 0.7f, 0.7f);
+	}
+}
+
+void ADemoHUD::DrawSelectedPanel()
 {
 	ADemoPlayerController* PC = Cast<ADemoPlayerController>(PlayerOwner);
 	UUnitRegistrySubsystem* Registry = GetWorld() ? GetWorld()->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
@@ -59,51 +184,79 @@ void ADemoHUD::DrawUnitCards()
 	{
 		return;
 	}
-
-	// Card geometry: bottom-left row, 130x58 px, 6 px gap; at most 10 cards
-	// drawn (the tail is a "+N" card). The selection IS the card set.
-	constexpr float CardW = 130.f;
-	constexpr float CardH = 58.f;
-	constexpr float Gap = 6.f;
-	constexpr int32 MaxCards = 10;
-	const float RowY = static_cast<float>(Canvas->SizeY) - CardH - 14.f;
-
-	const int32 Cards = FMath::Min(Selected.Num(), MaxCards);
-	for (int32 i = 0; i < Cards; ++i)
+	// The panel reads the FIRST selected unit (the M2TW single-unit panel);
+	// the stance actions apply to the whole selection (the PC's ApplyStance).
+	const FUnitHandle H = Selected[0];
+	FDemoUnitBodyInfo Info;
+	if (!Visuals->GetUnitBodyInfo(H, Info))
 	{
-		const FUnitHandle& H = Selected[i];
-		const float X = 14.f + i * (CardW + Gap);
-		const FLinearColor TeamColor = Visuals->GetTeam(H) == EDemoTeam::Enemy
-			? FLinearColor(0.9f, 0.25f, 0.2f)
-			: FLinearColor(0.2f, 0.55f, 0.95f);
-
-		// Card body + team bar.
-		DrawRect(FLinearColor(0.06f, 0.06f, 0.08f, 0.82f), X, RowY, CardW, CardH);
-		DrawRect(TeamColor, X, RowY, 4.f, CardH);
-		DrawRect(FLinearColor(1.f, 1.f, 1.f, 0.25f), X, RowY, CardW, 1.f);
-
-		// Spec name (the EDU type) + alive roster.
-		FString Name = TEXT("unit");
-		int32 Alive = 0;
-		if (const FUnitSpawnSpec* Spec = Registry->FindUnitSpec(H))
-		{
-			Name = Spec->UnitName;
-		}
-		Alive = Registry->GetRosterSize(H);
-		Canvas->SetDrawColor(235, 235, 235, 242);
-		Canvas->DrawText(GEngine->GetMediumFont(), Name, X + 10.f, RowY + 8.f, 0.62f, 0.62f);
-		Canvas->SetDrawColor(165, 215, 165, 230);
-		Canvas->DrawText(GEngine->GetMediumFont(),
-			FString::Printf(TEXT("alive %d"), Alive), X + 10.f, RowY + 30.f, 0.62f, 0.62f);
+		return;
 	}
-	if (Selected.Num() > MaxCards)
+	ADemoGameMode* GM = GetWorld() ? Cast<ADemoGameMode>(GetWorld()->GetAuthGameMode()) : nullptr;
+	const FBattleRowStats* Stats = GM ? GM->FindRowStatsForUnit(H) : nullptr;
+	FUnitMoraleStateView Morale;
+	Registry->GetUnitMoraleState(H, Morale);
+
+	const float ViewY = static_cast<float>(Canvas->SizeY);
+	const FBox2D Panel = DemoCommandBar::PanelRect(ViewY);
+	DrawRect(FLinearColor(0.04f, 0.04f, 0.06f, 0.88f), Panel.Min.X, Panel.Min.Y, Panel.GetSize().X, Panel.GetSize().Y);
+	DrawRect(FLinearColor(0.2f, 0.55f, 0.95f, 0.9f), Panel.Min.X, Panel.Min.Y, 3.f, Panel.GetSize().Y);
+
+	Canvas->SetDrawColor(240, 240, 240, 245);
+	Canvas->DrawText(GEngine->GetMediumFont(),
+		FString::Printf(TEXT("%s  %s  (%s%s)"), *Info.UnitName,
+			Stats ? (Stats->bCavalry ? TEXT("Cav") : (Stats->bBow ? TEXT("Missile") : TEXT("Inf"))) : TEXT("--"),
+			RoutStateName(Info.RoutState),
+			Info.bGarrisoned ? TEXT(", garrisoned") : TEXT("")),
+		Panel.Min.X + 10.f, Panel.Min.Y + 6.f, 0.62f, 0.62f);
+
+	// The stat readout: row stats + the live values (the hover card's family).
+	FString StatLine = TEXT("ATK --  DEF --  CHG --  ARM --  SHD --");
+	if (Stats)
 	{
-		const float X = 14.f + MaxCards * (CardW + Gap);
-		DrawRect(FLinearColor(0.06f, 0.06f, 0.08f, 0.82f), X, RowY, 44.f, CardH);
-		Canvas->SetDrawColor(230, 230, 230, 230);
-		Canvas->DrawText(GEngine->GetMediumFont(),
-			FString::Printf(TEXT("+%d"), Selected.Num() - MaxCards), X + 10.f, RowY + 20.f, 0.7f, 0.7f);
+		StatLine = FString::Printf(TEXT("ATK %.0f  DEF %.0f  CHG %.0f  ARM %.0f  SHD %.0f"),
+			Stats->MeleeAttack, Stats->MeleeDefense, Stats->ChargeDistance, Stats->Armor, Stats->Shield);
 	}
+	Canvas->SetDrawColor(200, 200, 205, 235);
+	Canvas->DrawText(GEngine->GetMediumFont(), StatLine, Panel.Min.X + 10.f, Panel.Min.Y + 24.f, 0.58f, 0.58f);
+
+	FString LiveLine = FString::Printf(TEXT("x%d/%d  MOR %.2f  FAT %.2f  DISC %s"),
+		Info.SoldierCount, FMath::Max(Info.InitialRoster, 1), Info.MoraleValue, Info.FatigueValue,
+		DisciplineName(static_cast<uint8>(Morale.Discipline)));
+	if (Info.AmmoFraction >= 0.f)
+	{
+		LiveLine += FString::Printf(TEXT("  AMMO %.0f%%%s"), Info.AmmoFraction * 100.f, Info.bOutOfAmmo ? TEXT(" DRY") : TEXT(""));
+	}
+	else if (Stats && Stats->RangedRangeM > 0.f)
+	{
+		LiveLine += FString::Printf(TEXT("  RNG %.0fm"), Stats->RangedRangeM);
+	}
+	Canvas->SetDrawColor(165, 215, 165, 235);
+	Canvas->DrawText(GEngine->GetMediumFont(), LiveLine, Panel.Min.X + 10.f, Panel.Min.Y + 42.f, 0.58f, 0.58f);
+
+	// The stance buttons: read-back state from the getters (the setters are the
+	// PC's ApplyStance; the keys G/F/R/X fire the first four). Out-of-ammo
+	// grays the fire control (D.15); egress lights only when garrisoned.
+	const FLinearColor On(0.35f, 0.8f, 0.35f, 0.95f);
+	const FLinearColor Off(0.14f, 0.14f, 0.17f, 0.9f);
+	const FLinearColor Warn(0.85f, 0.65f, 0.15f, 0.95f);
+	const FLinearColor Gray(0.3f, 0.3f, 0.33f, 0.9f);
+	auto Button = [this, ViewY](DemoCommandBar::EAction A, const FString& Label, const FLinearColor& StateFill)
+	{
+		const FBox2D R = DemoCommandBar::ActionRect(A, ViewY);
+		DrawRect(FLinearColor(0.03f, 0.03f, 0.05f, 0.92f), R.Min.X, R.Min.Y, R.GetSize().X, R.GetSize().Y);
+		DrawRect(StateFill, R.Min.X, R.Min.Y, R.GetSize().X, 3.f);
+		Canvas->SetDrawColor(225, 225, 228, 240);
+		Canvas->DrawText(GEngine->GetMediumFont(), Label, R.Min.X + 6.f, R.Min.Y + 5.f, 0.56f, 0.56f);
+	};
+	Button(DemoCommandBar::EAction::Guard, TEXT("Guard [G]"), Info.bGuardMode ? Warn : Off);
+	Button(DemoCommandBar::EAction::FireAtWill,
+		Info.bOutOfAmmo ? TEXT("Fire [F] OA") : (Info.bFireAtWill ? TEXT("Fire [F]") : TEXT("Hold [F]")),
+		Info.bOutOfAmmo ? Gray : (Info.bFireAtWill ? On : Off));
+	Button(DemoCommandBar::EAction::Skirmish, TEXT("Skirm [R]"), Info.bSkirmish ? On : Off);
+	Button(DemoCommandBar::EAction::ExitGarrison, TEXT("Egress [X]"), Info.bGarrisoned ? On : Off);
+	Button(DemoCommandBar::EAction::Wider, TEXT("Wider"), Off);
+	Button(DemoCommandBar::EAction::Narrower, TEXT("Narrow"), Off);
 }
 
 void ADemoHUD::DrawControlsHint()
@@ -121,6 +274,7 @@ void ADemoHUD::DrawControlsHint()
 		TEXT("Ctrl+RMB on ground       - attack-move (march, engage en route)"),
 		TEXT("RMB on structure         - garrison (units file in)"),
 		TEXT("RMB drag                 - formation: width + facing (drag line = front)"),
+		TEXT("G - guard  F - fire-at-will  R - skirmish  X - exit garrison"),
 		TEXT("H                        - halt        WASD/arrows - pan"),
 		TEXT("Q/E - rotate             - mouse wheel - zoom"),
 		TEXT("F3                       - toggle debug overlay (slots/attacks/corpses)"),
@@ -158,37 +312,6 @@ void ADemoHUD::DrawBeatLabel()
 // the game mode's EDU row-stats cache for the hover card. The morale chip
 // mirrors MoraleTickProcessor::DrawMoraleOverlay's state color family (the
 // plugin's overlay stays the analytic home; this is the presentation copy).
-
-namespace
-{
-	FColor RoutStateColor(uint8 RoutState)
-	{
-		static const FColor StateColors[4] = {
-			FColor(80, 220, 80),   // Steady: green
-			FColor(240, 220, 60),  // Wavering: yellow
-			FColor(240, 70, 50),   // Routing: red
-			FColor(120, 20, 20)    // Shattered: dark red
-		};
-		return StateColors[FMath::Clamp(static_cast<int32>(RoutState), 0, 3)];
-	}
-
-	const TCHAR* RoutStateName(uint8 RoutState)
-	{
-		static const TCHAR* Names[4] = { TEXT("Steady"), TEXT("Wavering"), TEXT("Routing"), TEXT("Shattered") };
-		return Names[FMath::Clamp(static_cast<int32>(RoutState), 0, 3)];
-	}
-
-	const TCHAR* GlyphFor(const FBattleRowStats* Stats)
-	{
-		if (!Stats)
-		{
-			return TEXT("?");
-		}
-		if (Stats->bCavalry) { return TEXT("CA"); }
-		if (Stats->bBow) { return TEXT("MS"); }
-		return TEXT("IN");
-	}
-}
 
 void ADemoHUD::DrawUnitBanners()
 {
