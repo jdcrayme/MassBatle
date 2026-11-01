@@ -76,7 +76,7 @@ A demo-module sequencer in `ADemoGameMode`: a table of beats `{AtSeconds (or sta
 | 6 | t+90 | Garrison | the least-touched surviving player unit garrisons the village building; a later half-beat orders the egress (D.14) |
 | 7 | state: one side has no steady units alive | Resolution | HUD verdict line; the arc ends |
 
-Beat-4/5 timings are placeholders pending the T6.1 morale-threshold co-audit (§7): until the threshold family is tuned, the morale beats' *shape* is asserted (wavering -> breaking -> routing -> cascade -> rally) and their *clock* is soft.
+Beat-4/5 timings were placeholders pending the T6.1 morale-threshold co-audit (§7) -- **audited + re-clocked 2026-11-01** (the audited family, `Docs/phases/phase-4/t61-morale-threshold-audit.md`): the re-clock boot shows the shape firing off the real cascade (3 organic enemy routs after the general-kill shock) with beats 0-6 landing on the scheduled clock; the verdict beat remains probe-driven (§7).
 
 ## 4. Player interface
 
@@ -149,7 +149,7 @@ Every D-gate names the automated suites that assert the same layer headlessly (t
 
 ## 7. Constraints and open dependencies
 
-- **Morale Enable flip LANDED** (2026-11-01, the T6.1 morale-threshold co-audit: `Docs/phases/phase-4/t61-morale-threshold-audit.md` -- the PR-12 block was threshold placement, not the flag; the audited family Wavering 1.0 / Rally 1.5 / break offsets +-0.5 verified unit 84/84, func 24/27 = the three known, PairLifecycle PASS). The demo's session-on Enable set is redundant but harmless; beat 4/5's placeholder timings (section 3) are now re-clockable off the real cascade -- the re-clock boot + the `Demo.ResolveProbe` retirement is the outstanding demo-side follow-up.
+- **Morale Enable flip LANDED** (2026-11-01, the T6.1 morale-threshold co-audit: `Docs/phases/phase-4/t61-morale-threshold-audit.md` -- the PR-12 block was threshold placement, not the flag; the audited family Wavering 1.0 / Rally 1.5 / break offsets +-0.5 verified unit 84/84, func 24/27 = the three known, PairLifecycle PASS). The demo's session-on Enable set is redundant but harmless. **The re-clock boot ran the same day** (`Tools/CI/m7_reclock_boot.log`/`_boot2`, no probe): the real cascade fires -- GeneralDeath Shock=+6.00 then 3 organic enemy routs (E1 levy 0.17, E2/E3 sergeants -1.18/-1.00), beats 0-6 on the scheduled clock -- and TWO owner calls remain: beat 7's verdict needs the `Demo.ResolveProbe` (the field goes static once the enemy infantry line breaks -- E4/C2 are never ordered forward; the probe stays as the arc-completion driver), and beat 5's rally demonstration found `Router=none` (the winning side doesn't route; scripting a wavering friendly is the owner's call).
 - **The .umap cannot be authored statically** (PR-11 posture): the §2 placements need an editor session; static tooling may not touch the map.
 - **One order per unit**: the registry holds a single current order, so shift-queue is a sim change, deferred. The sequencer is built to not need it.
 - **No walk/run state** in the sim (`SpeedMod` exists; a toggle would be a small sim addition) -- deferred.

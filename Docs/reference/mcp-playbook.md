@@ -90,6 +90,7 @@ Full registry: **70 toolsets** at last refresh (Niagara ×8, Sequencer ×8, PCG 
 - **Preferred:** `AutomationTestToolset` (in-editor, no restart).
 - Editor console: `Automation RunTests <Filter>`.
 - Headless CLI (editor closed): `UnrealEditor-Cmd.exe "<proj>.uproject" -ExecCmds="Automation RunTests <Filter>; Quit" -TestExit="Automation Test Queue Empty" -ReportExportPath="<dir>" -unattended -nopause -nullrhi`.
+- **Git Bash invocation (measured 2026-11-01):** MSYS path conversion mangles a leading `/Game/...` map argument into `C:/Program Files/Git/Game/...` -- the boot loads the wrong path and produces a no-op log with exit 0. Run demo/map boots from Git Bash with `MSYS2_ARG_CONV_EXCL="*" MSYS_NO_PATHCONV=1` in front of the executable (the m7_reclock_boot session).
 - Test macros need **one context flag + one filter flag** or the test is invisible: `EAutomationTestFlags::EditorContext | EAutomationTestFlags::SmokeFilter`.
 - `-ReportExportPath` writes `index.json` with UTF-8 BOM — parse `utf-8-sig` (details: `Docs/reference/engine-api-5.8.md` Part B §4.10, Part A §8).
 - Test naming per roadmap B.0: `Battle.Unit.*`, `Battle.Func.*`, `Battle.Data.*`, `Battle.Perf.*`, `Battle.Soak.*`, `Battle.Smoke.*`.

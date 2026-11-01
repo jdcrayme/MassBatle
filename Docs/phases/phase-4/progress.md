@@ -10,6 +10,27 @@
 
 ## Discrepancies (dated, newest first)
 
+- **2026-11-01 (T6.1 flip landed + the demo re-clock)** -- the owner signed
+  off the audited family; `t61-morale-threshold-audit` fast-forwarded to
+  `main` (`a0c5362`) + the spec tables rode the flip commit (`8e83f4e`:
+  morale-and-gas 4.12/4.4, demo-shell section 7). The re-clock boots ran the
+  demo arc WITHOUT the ResolveProbe (`m7_reclock_boot.log`, 300 game-s;
+  `_boot2`, 700 game-s): the real cascade fires on the demo map --
+  GeneralDeath Shock=+6.00 then 3 ORGANIC enemy routs (E1 levy 0.17, E2/E3
+  sergeants -1.18/-1.00; the PR-12-era stalemate is gone), beats 0-6 on the
+  scheduled clock (0/8/18/30/85.1/105.1/120.1) -- and the verdict does NOT
+  fire naturally: the field goes static past t~300 (zero kills 300->700;
+  E4/C2 are never ordered forward, no auto-acquisition). Disposition:
+  `Demo.ResolveProbe` STAYS (re-documented as the arc-completion driver,
+  not a threshold mask); beat 5's `Router=none` (the winning side doesn't
+  route; the field-center fallback covered it) leaves "script a wavering
+  friendly for D.12" as an owner design call. Tooling note: Git Bash mangles
+  the leading `/Game/...` map arg into `C:/Program Files/Git/Game/...`
+  (MSYS path conversion) -- run the demo boots with
+  `MSYS2_ARG_CONV_EXCL="*"`, first boot logged a wrong-map no-op
+  (m7_reclock_boot.log's first run was overwritten; the empty-EXEC evidence
+  is in the session transcript, not the repo).
+
 - **2026-11-01 (T6.1 prep, the morale threshold co-audit)** -- the morale half
   of T6.1 pulled forward on branch `t61-morale-threshold-audit` (PENDING owner
   sign-off): the PR-12 evidence block quantified (levy base 2 vs
