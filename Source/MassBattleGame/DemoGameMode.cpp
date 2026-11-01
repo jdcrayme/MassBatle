@@ -185,14 +185,20 @@ void ADemoGameMode::Tick(float DeltaSeconds)
 
 const ADemoGameMode::FDemoBeat* ADemoGameMode::GetBeatTable(int32& OutCount)
 {
-	// The spec demo-shell section 3 table, beats 0-3 in PR-1 (the morale and
-	// garrison beats 4-7 are the PR-4 carve-out; the Volley/Clash labels ride
-	// their time fallbacks until the metric polling lands with them).
+	// The spec demo-shell section 3 table, the full arc (PR-4). Beats 0-3
+	// carry ABSOLUTE seconds (the state triggers below fire them early when
+	// their metric resolves; the times are the spec's fallbacks). Beats 4-6
+	// carry CLASH-RELATIVE offsets (the table's t+55/t+75/t+90); beat 7 is
+	// state-only (one side out of steady units) and never fires by time.
 	static const FDemoBeat Beats[] = {
-		{ 0.f,  TEXT("Deploy") },
-		{ 8.f,  TEXT("Advance") },
+		{  0.f, TEXT("Deploy") },
+		{  8.f, TEXT("Advance") },
 		{ 18.f, TEXT("Volley") },
 		{ 30.f, TEXT("Clash") },
+		{ 55.f, TEXT("Break") },
+		{ 75.f, TEXT("Rally") },
+		{ 90.f, TEXT("Garrison") },
+		{  0.f, TEXT("Resolution") },
 	};
 	OutCount = UE_ARRAY_COUNT(Beats);
 	return Beats;
@@ -207,11 +213,219 @@ void ADemoGameMode::TickSequencer(float DeltaSeconds)
 	SequencerTime += DeltaSeconds;
 	int32 Count = 0;
 	const FDemoBeat* Beats = GetBeatTable(Count);
+	if (!Beats)
+	{
+		return;
+	}
 	const int32 Next = CurrentBeat + 1;
-	if (Beats && Next < Count && Next >= 0 && SequencerTime >= Beats[Next].AtSeconds)
+	if (Next >= Count)
+	{
+		return; // the arc ended at the resolution
+	}
+	// Due time: beats 0-3 absolute; 4-6 clash-relative (t = the beat-3 fire);
+	// 7 never by time. The state triggers fire beats 2/3 ahead of their
+	// fallbacks; beat 2 keeps ONLY the fallback (no public shots metric
+	// exists -- disclosed PR-4).
+	bool bDue = false;
+	if (Next <= 3)
+	{
+		bDue = SequencerTime >= Beats[Next].AtSeconds;
+		if (!bDue && Next == 3)
+		{
+			bDue = PlayerEngaged();
+		}
+	}
+	else if (Next <= 6)
+	{
+		bDue = ClashTime >= 0.f && SequencerTime >= ClashTime + Beats[Next].AtSeconds;
+	}
+	if (bDue)
 	{
 		FireBeat(Next);
 	}
+	// Beat 7's state trigger (the spec: one side has no steady units alive).
+	// Polled from the Break beat on -- before that nothing can have routed.
+	if (CurrentBeat >= 4 && CurrentBeat < 7)
+	{
+		CheckResolution();
+	}
+}
+
+bool ADemoGameMode::PlayerEngaged() const
+{
+	UUnitRegistrySubsystem* Registry = GetWorld() ? GetWorld()->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	if (!Registry)
+	{
+		return false;
+	}
+	// The player roles' live handles (P1..P5; C1 rides with the beat-4
+	// charge, it is not the clash the label acknowledges).
+	static const TCHAR* PlayerRoles[] = { TEXT("P1"), TEXT("P2"), TEXT("P3"), TEXT("P4"), TEXT("P5") };
+	for (const TCHAR* RoleName : PlayerRoles)
+	{
+		const FUnitHandle* H = FieldUnitByRole.Find(RoleName);
+		if (H && H->IsValid() && Registry->UnitHasLiveEngagement(*H))
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+void ADemoGameMode::FireGeneralKill()
+{
+	// Beat 4 + 10 s: the officer-death shock (D.13). The general entity is
+	// the enemy team record's OfficerEntity (officer slot 0); the kill rides
+	// BattleExec::KillEntity (the spec's scripted verb) with the record's
+	// roster index resolved here (the exec form takes <UnitIndex> <RosterIndex>).
+	UWorld* World = GetWorld();
+	UUnitRegistrySubsystem* Registry = World ? World->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	if (!World || !Registry)
+	{
+		return;
+	}
+	const FTeamGeneralRecord* General = Registry->FindTeamGeneral(/*enemy team*/ 1);
+	if (!General || !General->Unit.IsValid() || !General->OfficerEntity.IsValid())
+	{
+		UE_LOG(LogDemoBattle, Display,
+			TEXT("EXEC_RESULT DemoBeatOrders Beat=4 GeneralKill MISS (no enemy general record)"));
+		return;
+	}
+	int32 RosterIndex = INDEX_NONE;
+	if (const TArray<FMassEntityHandle>* Roster = Registry->FindRoster(General->Unit))
+	{
+		for (int32 i = 0; i < Roster->Num(); ++i)
+		{
+			if ((*Roster)[i] == General->OfficerEntity)
+			{
+				RosterIndex = i;
+				break;
+			}
+		}
+	}
+	if (RosterIndex == INDEX_NONE)
+	{
+		UE_LOG(LogDemoBattle, Display,
+			TEXT("EXEC_RESULT DemoBeatOrders Beat=4 GeneralKill MISS (general entity not in roster)"));
+		return;
+	}
+	TArray<FString> Args;
+	Args.Add(FString::Printf(TEXT("%u"), General->Unit.Index));
+	Args.Add(FString::FromInt(RosterIndex));
+	BattleExec::KillEntity(Args, World);
+	UE_LOG(LogDemoBattle, Display,
+		TEXT("EXEC_RESULT DemoBeatOrders Beat=4 GeneralKill Unit=%u RosterIndex=%d"), General->Unit.Index, RosterIndex);
+}
+
+void ADemoGameMode::FireBeat6Egress()
+{
+	// The beat-6 half-beat (D.14's second half): the garrisoned unit egresses.
+	UUnitRegistrySubsystem* Registry = GetWorld() ? GetWorld()->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	if (!Registry || !Beat6GarrisonHandle.IsValid())
+	{
+		UE_LOG(LogDemoBattle, Display,
+			TEXT("EXEC_RESULT DemoBeatOrders Beat=6.5 Egress MISS (nothing garrisoned by the beat)"));
+		return;
+	}
+	const bool bIssued = Registry->IssueExitGarrisonOrder(Beat6GarrisonHandle);
+	UE_LOG(LogDemoBattle, Display,
+		TEXT("EXEC_RESULT DemoBeatOrders Beat=6.5 Egress Unit=%u Issued=%d"),
+		Beat6GarrisonHandle.Index, bIssued ? 1 : 0);
+}
+
+void ADemoGameMode::CheckResolution()
+{
+	UUnitRegistrySubsystem* Registry = GetWorld() ? GetWorld()->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	if (!Registry)
+	{
+		return;
+	}
+	// "No steady units alive": per team, count the bound roles whose handle
+	// is valid, the roster still has soldiers, and the rout state is Steady.
+	int32 SteadyByTeam[2] = { 0, 0 };
+	for (const TPair<FName, FUnitHandle>& It : FieldUnitByRole)
+	{
+		if (!It.Value.IsValid())
+		{
+			continue;
+		}
+		const FUnitRuntimeState* State = Registry->FindUnitState(It.Value);
+		const FUnitSpawnSpec* Spec = Registry->FindUnitSpec(It.Value);
+		if (!State || !Spec || Registry->GetRosterSize(It.Value) <= 0)
+		{
+			continue;
+		}
+		if (State->RoutState == EBattleRoutState::Steady && Spec->TeamId < 2)
+		{
+			++SteadyByTeam[Spec->TeamId];
+		}
+	}
+	if (SteadyByTeam[0] > 0 && SteadyByTeam[1] > 0)
+	{
+		return; // both sides still hold the field
+	}
+	FString Verdict;
+	if (SteadyByTeam[0] == 0 && SteadyByTeam[1] == 0)
+	{
+		Verdict = TEXT("Mutual collapse -- no steady units remain");
+	}
+	else if (SteadyByTeam[0] == 0)
+	{
+		Verdict = TEXT("Defeat -- your line has broken");
+	}
+	else
+	{
+		Verdict = TEXT("Victory -- the enemy breaks!");
+	}
+	VerdictLine = Verdict;
+	UE_LOG(LogDemoBattle, Display,
+		TEXT("EXEC_RESULT DemoVerdict SteadyPlayer=%d SteadyEnemy=%d Verdict=%s"),
+		SteadyByTeam[0], SteadyByTeam[1], *Verdict);
+	FireBeat(7);
+}
+
+void ADemoGameMode::ResolveProbeFire(uint8 TeamId, int32 KillsPerUnit)
+{
+	// The probe's fire: up to KillsPerUnit soldier kills per surviving unit
+	// of the team (roster indices ascend from the soldiers; officers sit
+	// after them -- E5's general was RosterIndex=12 of a 14-entity roster).
+	// The morale pass owns everything after the deaths land.
+	UWorld* World = GetWorld();
+	UUnitRegistrySubsystem* Registry = World ? World->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	if (!World || !Registry)
+	{
+		return;
+	}
+	int32 Probed = 0;
+	int32 Killed = 0;
+	for (const TPair<FName, FUnitHandle>& It : FieldUnitByRole)
+	{
+		const FUnitSpawnSpec* Spec = Registry->FindUnitSpec(It.Value);
+		if (!Spec || Spec->TeamId != TeamId || !Registry->IsHandleValid(It.Value))
+		{
+			continue;
+		}
+		const int32 Roster = Registry->GetRosterSize(It.Value);
+		if (Roster <= 0)
+		{
+			continue;
+		}
+		// Keep one entity alive: a fully-dead unit trivially satisfies "no
+		// steady units" but the rout cascade (the shape D.11 asserts) needs
+		// survivors to flee.
+		const int32 KillCount = FMath::Min(KillsPerUnit, FMath::Max(0, Roster - 1));
+		for (int32 i = 0; i < KillCount; ++i)
+		{
+			TArray<FString> Args;
+			Args.Add(FString::Printf(TEXT("%u"), It.Value.Index));
+			Args.Add(FString::FromInt(i));
+			BattleExec::KillEntity(Args, World);
+			++Killed;
+		}
+		++Probed;
+	}
+	UE_LOG(LogDemoBattle, Display,
+		TEXT("EXEC_RESULT DemoResolveProbe fired team=%u units=%d kills=%d"), TeamId, Probed, Killed);
 }
 
 void ADemoGameMode::FireBeat(int32 BeatIndex)
@@ -226,6 +440,149 @@ void ADemoGameMode::FireBeat(int32 BeatIndex)
 	BeatLabel = Beats[BeatIndex].Label;
 	UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoBeat %d %s (t=%.1f)"),
 		BeatIndex, *BeatLabel.ToString(), SequencerTime);
+
+	// Beat 7: the resolution (the state trigger drove it) -- the verdict line
+	// is set; the arc ends (the label + verdict stay displayed).
+	if (BeatIndex == 7)
+	{
+		bSequencerRunning = false;
+		return;
+	}
+
+	// Beat 3 (Clash): stamp the clash time -- beats 4-6 are scheduled from it
+	// (the spec table's t+55/t+75/t+90).
+	if (BeatIndex == 3)
+	{
+		ClashTime = SequencerTime;
+		return;
+	}
+
+	// Beat 4 (Break): the scripted mounted charge (D.19) -- C1 attack-moves
+	// the enemy left rear (through E1's lane; the attack-move engages what it
+	// meets en route). Ten seconds later the sequencer kills the enemy
+	// general entity (D.13, the officer-death shock). The morale beats' CLOCK
+	// is soft (section 7: the T6.1 threshold co-audit owns the tuning); the
+	// SHAPE (wavering -> breaking -> routing -> cascade -> rally) is what is
+	// asserted.
+	if (BeatIndex == 4)
+	{
+		if (UUnitRegistrySubsystem* Registry = GetWorld() ? GetWorld()->GetSubsystem<UUnitRegistrySubsystem>() : nullptr)
+		{
+			const ADemoPlayerController* PC = Cast<ADemoPlayerController>(GetWorld()->GetFirstPlayerController());
+			const FUnitHandle* C1 = FieldUnitByRole.Find(TEXT("C1"));
+			if (C1 && C1->IsValid() && !(PC && PC->WasPlayerOrdered(*C1)))
+			{
+				// E1's lane start was (40,15); its REAR is +X (away from the
+				// player line). The attack-move rides through the flank.
+				const bool bIssued = Registry->IssueAttackMoveOrder(*C1, FVector2D(60.f, 15.f) * 100.f, 0.f);
+				UE_LOG(LogDemoBattle, Display,
+					TEXT("EXEC_RESULT DemoBeatOrders Beat=4 Charge C1=%u Issued=%d"), C1->Index, bIssued ? 1 : 0);
+			}
+			GetWorldTimerManager().SetTimer(GeneralKillTimer,
+				FTimerDelegate::CreateUObject(this, &ADemoGameMode::FireGeneralKill),
+				/*10 s after the Break label*/ 10.f, false);
+		}
+		return;
+	}
+
+	// Beat 5 (Rally): P5 (the mounted general, the player aura anchor) rides
+	// to beside a routing friendly -- the rally (D.12) is the sim's aura at
+	// the new anchor; the demo only repositions it. No routing friendly (yet)
+	// falls back to the field center.
+	if (BeatIndex == 5)
+	{
+		if (UUnitRegistrySubsystem* Registry = GetWorld() ? GetWorld()->GetSubsystem<UUnitRegistrySubsystem>() : nullptr)
+		{
+			const ADemoPlayerController* PC = Cast<ADemoPlayerController>(GetWorld()->GetFirstPlayerController());
+			UDemoUnitVisualSubsystem* Visuals = GetWorld()->GetSubsystem<UDemoUnitVisualSubsystem>();
+			const FUnitHandle* P5 = FieldUnitByRole.Find(TEXT("P5"));
+			FVector2D DestM(0.f, 0.f);
+			const FUnitHandle* Router = nullptr;
+			for (const TPair<FName, FUnitHandle>& It : FieldUnitByRole)
+			{
+				const FUnitRuntimeState* State = Registry->FindUnitState(It.Value);
+				const FUnitSpawnSpec* Spec = Registry->FindUnitSpec(It.Value);
+				if (State && Spec && Spec->TeamId == 0
+					&& State->RoutState == EBattleRoutState::Routing && It.Value.IsValid())
+				{
+					Router = &It.Value;
+					break;
+				}
+			}
+			if (Router && Visuals)
+			{
+				// The rally point: 15 m south of the router's body center.
+				FDemoUnitBodyInfo Info;
+				if (Visuals->GetUnitBodyInfo(*Router, Info))
+				{
+					DestM = (Info.BodyCenterCm + FVector2D(0.f, -1500.f)) * 0.01f;
+				}
+			}
+			UE_LOG(LogDemoBattle, Display,
+				TEXT("EXEC_RESULT DemoBeatOrders Beat=5 Rally Router=%s Dest=(%.0f,%.0f)m"),
+				Router ? TEXT("yes") : TEXT("none"), DestM.X, DestM.Y);
+			if (P5 && P5->IsValid() && !(PC && PC->WasPlayerOrdered(*P5)))
+			{
+				Registry->IssueMoveOrder(*P5, DestM * 100.f, 0.f);
+			}
+		}
+		return;
+	}
+
+	// Beat 6 (Garrison): the least-touched surviving player unit garrisons
+	// the village building (D.14's first half); the half-beat at +45 s orders
+	// the egress. "Least-touched" prefers a unit the player never ordered
+	// (the WasPlayerOrdered set); "surviving" = valid handle + soldiers left.
+	// Infantry only (the registry rejects cavalry garrisons) and never the
+	// general.
+	if (BeatIndex == 6)
+	{
+		if (UUnitRegistrySubsystem* Registry = GetWorld() ? GetWorld()->GetSubsystem<UUnitRegistrySubsystem>() : nullptr)
+		{
+			const ADemoPlayerController* PC = Cast<ADemoPlayerController>(GetWorld()->GetFirstPlayerController());
+			const uint32 VillageId = ADemoPlayerController::FindStructureAtWorld(
+				GetWorld(), FVector2D(8.f, 52.f) * 100.f);
+			static const TCHAR* GarrisonRoles[] = { TEXT("P1"), TEXT("P2"), TEXT("P3"), TEXT("P4") };
+			FUnitHandle Chosen;
+			auto Surviving = [Registry](const FUnitHandle& H)
+			{
+				return H.IsValid() && Registry->GetRosterSize(H) > 0;
+			};
+			// First pass: untouched survivors; second: any survivor.
+			for (int32 Pass = 0; Pass < 2 && !Chosen.IsValid(); ++Pass)
+			{
+				for (const TCHAR* RoleName : GarrisonRoles)
+				{
+					const FUnitHandle* H = FieldUnitByRole.Find(RoleName);
+					if (H && Surviving(*H) && (Pass == 1 || !(PC && PC->WasPlayerOrdered(*H))))
+					{
+						Chosen = *H;
+						break;
+					}
+				}
+			}
+			if (Chosen.IsValid() && VillageId != 0)
+			{
+				Beat6GarrisonHandle = Chosen;
+				const bool bIssued = Registry->IssueGarrisonOrder(Chosen, VillageId);
+				UE_LOG(LogDemoBattle, Display,
+					TEXT("EXEC_RESULT DemoBeatOrders Beat=6 Garrison Unit=%u Structure=%u Issued=%d"),
+					Chosen.Index, VillageId, bIssued ? 1 : 0);
+			}
+			else
+			{
+				UE_LOG(LogDemoBattle, Display,
+					TEXT("EXEC_RESULT DemoBeatOrders Beat=6 Garrison MISS (no survivor or no structure=%u)"), VillageId);
+			}
+			// The half-beat: the egress order 45 s later (the march + filing
+			// needs the time; the m7_commandbar_boot measured the full
+			// settle at ~40 s from a standing start).
+			GetWorldTimerManager().SetTimer(Beat6EgressTimer,
+				FTimerDelegate::CreateUObject(this, &ADemoGameMode::FireBeat6Egress),
+				45.f, false);
+		}
+		return;
+	}
 
 	// Beat 1: the enemy line advances on the player center (the spec section
 	// 3 table). Scripted orders ride the same registry surface the player
@@ -770,6 +1127,73 @@ static FAutoConsoleCommandWithWorldAndArgs GDemoSpawnField(
 			GM->SpawnFieldFixture();
 		}
 	}));
+
+// -- Demo.QuitAt (PR-4) ---------------------------------------------------------
+// The boot-harness exit for long evidence windows: the full beat arc runs
+// ~200 game-s (clash +55/+75/+90 then the resolution), and the one-command
+// -ExecCmds slot is taken by nothing else in a beats boot. Quits through the
+// engine's own Quit command on the world's timer.
+static FAutoConsoleCommandWithWorldAndArgs GDemoQuitAt(
+	TEXT("Demo.QuitAt"),
+	TEXT("<seconds> -- quit the process after the delay (the beats-arc boot evidence exit; EXEC_RESULT DemoQuitAt)"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(
+		[](const TArray<FString>& Args, UWorld* World)
+		{
+			const float Delay = Args.Num() > 0 ? FMath::Max(1.f, FCString::Atof(*Args[0])) : 30.f;
+			if (World)
+			{
+				FTimerHandle QuitHandle;
+				World->GetTimerManager().SetTimer(QuitHandle,
+					FTimerDelegate::CreateLambda([]()
+					{
+						if (GEngine)
+						{
+							for (const FWorldContext& Ctx : GEngine->GetWorldContexts())
+							{
+								if (Ctx.World())
+								{
+									GEngine->Exec(Ctx.World(), TEXT("Quit"));
+									return;
+								}
+							}
+						}
+						FPlatformMisc::RequestExit(0);
+					}),
+					Delay, false);
+			}
+			UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoQuitAt armed %.1f"), Delay);
+		}));
+
+// -- Demo.ResolveProbe (PR-4) ----------------------------------------------------
+// The resolution-trigger evidence channel: with the placeholder morale
+// thresholds (the T6.1 co-audit blocker) the full-arc boot stalemates and
+// neither side collapses naturally. This probe attrites ONE team through the
+// SANCTIONED KillEntity exec surface (up to 15 soldiers per unit) -- the M5
+// rout fixture's honest driver: real deaths, real casualty spikes, the
+// morale pass's own route transitions, and the beat-7 verdict off the
+// genuinely-changed state. (A SetAttr Morale base write was tried first and
+// moves nothing -- the exec calc recomputes morale; measured 2026-11-01.)
+static FAutoConsoleCommandWithWorldAndArgs GDemoResolveProbe(
+	TEXT("Demo.ResolveProbe"),
+	TEXT("<delaySec> <teamId> [killsPerUnit=15] -- attrition-kill the team's soldiers via KillEntity at the delay (the beat-7 verdict evidence; EXEC_RESULT DemoResolveProbe)"),
+	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(
+		[](const TArray<FString>& Args, UWorld* World)
+		{
+			const float Delay = Args.Num() > 0 ? FMath::Max(1.f, FCString::Atof(*Args[0])) : 150.f;
+			const uint8 TeamId = Args.Num() > 1 ? static_cast<uint8>(FCString::Atoi(*Args[1])) : 1;
+			const int32 KillsPerUnit = Args.Num() > 2 ? FMath::Max(1, FCString::Atoi(*Args[2])) : 15;
+			ADemoGameMode* GM = World ? Cast<ADemoGameMode>(World->GetAuthGameMode()) : nullptr;
+			if (GM)
+			{
+				FTimerHandle ProbeHandle;
+				GM->GetWorldTimerManager().SetTimer(ProbeHandle,
+					FTimerDelegate::CreateUObject(GM, &ADemoGameMode::ResolveProbeFire, TeamId, KillsPerUnit),
+					Delay, false);
+			}
+			UE_LOG(LogDemoBattle, Display,
+				TEXT("EXEC_RESULT DemoResolveProbe armed delay=%.1f team=%u killsPerUnit=%d"),
+				Delay, TeamId, KillsPerUnit);
+		}));
 
 // -- Demo.AttackTest (PR-1 shoring) ---------------------------------------------
 // The delayed real-attack repro for the owner report 2026-10-31 (RMB attack

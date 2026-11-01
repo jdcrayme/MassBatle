@@ -54,6 +54,11 @@ public:
 
 	const TArray<FUnitHandle>& GetSelectedUnits() const { return SelectedUnits; }
 
+	/** PR-4: the destination flag (the section 4.3 RMB marker). Valid when an
+	 *  order was issued within the last ~2 s; OutAgeFrac 0..1 for the HUD
+	 *  fade. False when no flag is up. */
+	bool GetOrderFlag(FVector2D& OutPointCm, float& OutAgeFrac) const;
+
 	/** PR-1 (demo-shell spec section 3): units the PLAYER has ordered at
 	 *  least once. The beat sequencer skips these -- a player order mid-beat
 	 *  simply wins, with no sim-side scripting (the demo owns the flag; the
@@ -177,6 +182,10 @@ private:
 	static constexpr float PickRadiusPx = 250.f;
 	/** Lateral gap between unit segments when dividing a drag line (cm). */
 	static constexpr float DragSegmentGapCm = 200.f;
+	/** Double-click window for the select-type / charge gestures (s). */
+	static constexpr double DoubleClickSec = 0.35;
+	/** PR-4: the destination flag's on-screen life (s). */
+	static constexpr float OrderFlagLifeSec = 2.f;
 
 	// -- selection state --
 	TArray<FUnitHandle> SelectedUnits;
@@ -192,6 +201,25 @@ private:
 	FUnitHandle LastBannerClick;
 	double LastBannerClickTime = -1.0;
 
+	// -- PR-4 gestures --
+	/** The world-pick double-click (select all of the same EDU type) timing. */
+	FUnitHandle LastWorldClick;
+	double LastWorldClickTime = -1.0;
+	/** The attack-click double-tap (double-RMB charge) timing. */
+	FUnitHandle LastAttackClick;
+	double LastAttackClickTime = -1.0;
+	/** The destination flag (set with every issued RMB order; the HUD fades
+	 *  it over OrderFlagLifeSec). */
+	FVector2D OrderFlagPointCm = FVector2D::ZeroVector;
+	double OrderFlagTime = -100.0;
+	/** Ctrl-group slots (1..9; store = Ctrl+N, recall = N -- the TW
+	 *  convention, PC-side only). */
+	TMap<int32, TArray<FUnitHandle>> ControlGroups;
+	/** Edge latches for the polled group keys (one per logical slot 1..9;
+	 *  both the top row and the numpad drive the same slot). */
+	TSet<int32> LatchedGroupKeys;
+	void PollControlGroups();
+
 	// -- PR-3 command-bar clicks (the card row's own double-click timing) --
 	FUnitHandle LastCardClick;
 	double LastCardClickTime = -1.0;
@@ -205,6 +233,14 @@ private:
 	FVector2D DragStartWorldCm = FVector2D::ZeroVector;
 	FVector2D DragCurrentWorldCm = FVector2D::ZeroVector;
 	bool bDragIsFormation = false;
+
+	/** Stamps the destination flag at the current drag point (every issued
+	 *  RMB order calls this -- the section 4.3 marker). */
+	void SetOrderFlag()
+	{
+		OrderFlagPointCm = DragCurrentWorldCm;
+		OrderFlagTime = FPlatformTime::Seconds();
+	}
 
 	// -- held input state --
 	bool bPanFwd = false;

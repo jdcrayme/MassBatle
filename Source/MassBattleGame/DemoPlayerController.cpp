@@ -307,6 +307,7 @@ void ADemoPlayerController::Tick(float DeltaSeconds)
 
 	UpdateCamera(DeltaSeconds);
 	PruneStaleSelection();
+	PollControlGroups();
 
 	// F3: toggle the battle debug overlay (slot/attack/corpse graphics).
 	{
@@ -644,6 +645,25 @@ void ADemoPlayerController::OnLMBReleased()
 		EDemoTeam PlayerTeam = EDemoTeam::Player;
 		if (PickUnitAtScreen(Current, Picked, &PlayerTeam))
 		{
+			// PR-4: the world-pick double-click selects all units of the same
+			// EDU type (the same verb the banner/card double-clicks run).
+			const double Now = FPlatformTime::Seconds();
+			const bool bDoubleClick = LastWorldClick == Picked
+				&& (Now - LastWorldClickTime) < DoubleClickSec;
+			LastWorldClickTime = Now;
+			LastWorldClick = Picked;
+			if (bDoubleClick)
+			{
+				TArray<FUnitHandle> TypeGroup;
+				CollectSameTypeUnits(Picked, TypeGroup);
+				if (TypeGroup.Num() > 0)
+				{
+					SetSelection(TypeGroup);
+					UE_LOG(LogDemoBattle, Display,
+						TEXT("EXEC_RESULT DemoOrder SelectType Units=%d"), TypeGroup.Num());
+					return;
+				}
+			}
 			const int32 Existing = NewSelection.Find(Picked);
 			if (IsInputKeyDown(EKeys::LeftShift))
 			{
@@ -803,6 +823,7 @@ void ADemoPlayerController::OnRMBReleased()
 			TEXT("EXEC_RESULT DemoOrder Garrison Issued=%d of %d Structure=%u At=(%.1f,%.1f)m"),
 			Issued, SelectedUnits.Num(), StructureId,
 			DragCurrentWorldCm.X * 0.01f, DragCurrentWorldCm.Y * 0.01f);
+		SetOrderFlag();
 		return;
 	}
 
@@ -820,6 +841,7 @@ void ADemoPlayerController::OnRMBReleased()
 	// at the Block policy, and nothing fought).
 	if (bHasMouse && IssueAttackOrders(FVector2D(MouseX, MouseY), DragCurrentWorldCm))
 	{
+		SetOrderFlag();
 		return;
 	}
 
@@ -839,6 +861,7 @@ void ADemoPlayerController::OnRMBReleased()
 				PlayerOrderedUnits.Add(Seg.Handle);
 			}
 			UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoOrder FormationDrag Units=%d"), Segments.Num());
+			SetOrderFlag();
 			return;
 		}
 		// Degenerate line (zero length): fall through to a plain move.
@@ -879,6 +902,7 @@ void ADemoPlayerController::OnRMBReleased()
 		PlayerOrderedUnits.Add(H);
 	}
 	UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoOrder Move Units=%d"), SelectedUnits.Num());
+	SetOrderFlag();
 }
 
 bool ADemoPlayerController::IssueAttackOrders(const FVector2D& ScreenPos, const FVector2D& GroundCm)
@@ -892,11 +916,21 @@ bool ADemoPlayerController::IssueAttackOrders(const FVector2D& ScreenPos, const 
 	const EDemoTeam MyTeam = GetSelectionTeam();
 
 	// RMB on an ENEMY unit: the whole selection AttackUnits it (the sim's
-	// assign pass fans the pairs out at ring distance).
+	// assign pass fans the pairs out at ring distance). PR-4: a DOUBLE-RMB on
+	// the same enemy is the CHARGE gesture (the spec section 4.1) -- the same
+	// attack order plus the guard clear per attacker (chases, auto-charges,
+	// pursues routers; UChargeProcessor seeds the bonus on run-up + fresh
+	// contact, so the only delta IS the guard clear).
 	FUnitHandle Enemy;
 	EDemoTeam EnemyTeam = EDemoTeam::Enemy;
 	if (PickUnitAtScreen(ScreenPos, Enemy, &EnemyTeam) && EnemyTeam != MyTeam)
 	{
+		const double Now = FPlatformTime::Seconds();
+		const bool bCharge = LastAttackClick == Enemy
+			&& (Now - LastAttackClickTime) < DoubleClickSec;
+		LastAttackClickTime = Now;
+		LastAttackClick = Enemy;
+
 		int32 Issued = 0;
 		for (const FUnitHandle& H : SelectedUnits)
 		{
@@ -907,8 +941,21 @@ bool ADemoPlayerController::IssueAttackOrders(const FVector2D& ScreenPos, const 
 			}
 		}
 		UE_LOG(LogDemoBattle, Display,
-			TEXT("EXEC_RESULT DemoOrder AttackUnit Issued=%d of %d Target=%u:%u"),
-			Issued, SelectedUnits.Num(), Enemy.Index, Enemy.Serial);
+			TEXT("EXEC_RESULT DemoOrder AttackUnit Issued=%d of %d Target=%u:%u%s"),
+			Issued, SelectedUnits.Num(), Enemy.Index, Enemy.Serial, bCharge ? TEXT(" (charge)") : TEXT(""));
+		if (bCharge)
+		{
+			int32 GuardCleared = 0;
+			for (const FUnitHandle& H : SelectedUnits)
+			{
+				if (H != Enemy && Registry->SetUnitGuardToggle(H, false))
+				{
+					++GuardCleared;
+				}
+			}
+			UE_LOG(LogDemoBattle, Display,
+				TEXT("EXEC_RESULT DemoOrder Charge Issued=%d GuardCleared=%d"), Issued, GuardCleared);
+		}
 		return true;
 	}
 
@@ -1279,6 +1326,78 @@ void ADemoPlayerController::CollectSameTypeUnits(FUnitHandle Seed, TArray<FUnitH
 			Out.Add(H);
 		}
 	}
+}
+
+// -- PR-4 gestures --------------------------------------------------------------
+
+void ADemoPlayerController::PollControlGroups()
+{
+	// Ctrl-groups (the spec section 4.1): Ctrl+1..9 stores the selection,
+	// 1..9 recalls. The number keys are not in the IMC -- the F3 precedent:
+	// edge-latched IsInputKeyDown polling for fixed-convention keys. Both the
+	// top row and the numpad drive the same slot (a press of either latches).
+	UUnitRegistrySubsystem* Registry = GetWorld() ? GetWorld()->GetSubsystem<UUnitRegistrySubsystem>() : nullptr;
+	static const FKey TopRow[9] = { EKeys::One, EKeys::Two, EKeys::Three, EKeys::Four, EKeys::Five,
+		EKeys::Six, EKeys::Seven, EKeys::Eight, EKeys::Nine };
+	static const FKey NumRow[9] = { EKeys::NumPadOne, EKeys::NumPadTwo, EKeys::NumPadThree, EKeys::NumPadFour,
+		EKeys::NumPadFive, EKeys::NumPadSix, EKeys::NumPadSeven, EKeys::NumPadEight, EKeys::NumPadNine };
+	const bool bCtrl = IsInputKeyDown(EKeys::LeftControl) || IsInputKeyDown(EKeys::RightControl);
+	for (int32 Slot = 1; Slot <= 9; ++Slot)
+	{
+		const bool bDown = IsInputKeyDown(TopRow[Slot - 1]) || IsInputKeyDown(NumRow[Slot - 1]);
+		if (!bDown)
+		{
+			LatchedGroupKeys.Remove(Slot);
+			continue;
+		}
+		if (LatchedGroupKeys.Contains(Slot))
+		{
+			continue; // held from a previous tick
+		}
+		LatchedGroupKeys.Add(Slot);
+		if (bCtrl)
+		{
+			ControlGroups.Add(Slot, SelectedUnits);
+			UE_LOG(LogDemoBattle, Display,
+				TEXT("EXEC_RESULT DemoOrder GroupStore Slot=%d Units=%d"), Slot, SelectedUnits.Num());
+		}
+		else
+		{
+			TArray<FUnitHandle> Group;
+			int32 Stored = 0;
+			if (const TArray<FUnitHandle>* Found = ControlGroups.Find(Slot))
+			{
+				Group = *Found;
+				Stored = Found->Num();
+			}
+			if (Group.Num() == 0)
+			{
+				continue;
+			}
+			// Recall keeps the stored group (re-recallable); registry-stale
+			// handles drop (the PruneStaleSelection check).
+			Group.RemoveAll([Registry](const FUnitHandle& H) { return !Registry || !Registry->IsHandleValid(H); });
+			if (Group.Num() > 0)
+			{
+				SetSelection(Group);
+			}
+			UE_LOG(LogDemoBattle, Display,
+				TEXT("EXEC_RESULT DemoOrder GroupRecall Slot=%d Kept=%d of %d"),
+				Slot, Group.Num(), Stored);
+		}
+	}
+}
+
+bool ADemoPlayerController::GetOrderFlag(FVector2D& OutPointCm, float& OutAgeFrac) const
+{
+	const double Age = FPlatformTime::Seconds() - OrderFlagTime;
+	if (Age > OrderFlagLifeSec)
+	{
+		return false;
+	}
+	OutPointCm = OrderFlagPointCm;
+	OutAgeFrac = static_cast<float>(Age / OrderFlagLifeSec);
+	return true;
 }
 
 // -- zoom ----------------------------------------------------------------------

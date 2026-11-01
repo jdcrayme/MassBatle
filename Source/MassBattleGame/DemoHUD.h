@@ -44,6 +44,9 @@ private:
 	void DrawSelectionCircles();
 	void DrawMarquee();
 	void DrawOrderDragPreview();
+	/** PR-4: the destination flag at the last RMB order point (the section
+	 *  4.3 marker) -- pole + pennant, fading over ~2 s. */
+	void DrawDestinationFlag();
 	/** PR-1: the beat sequencer's current beat, top-center -- the D.1/D.17 read. */
 	void DrawBeatLabel();
 

@@ -38,6 +38,9 @@ public:
 	/** PR-1: the current beat's HUD surface (INDEX_NONE beat = idle). */
 	const FName& GetBeatLabel() const { return BeatLabel; }
 	int32 GetBeatIndex() const { return CurrentBeat; }
+	/** PR-4 beat 7: the resolution verdict line (empty until the arc ends).
+	 *  The HUD draws it under the beat label. */
+	const FString& GetVerdictLine() const { return VerdictLine; }
 
 	/** PR-2: the EDU row stats for a unit's row (the banner hover card's
 	 *  ATK/DEF/CHG/ARM/SHD/RNG block). The golden fixture parses once at
@@ -52,6 +55,14 @@ public:
 	 *  Public: the Demo.AttackTest command path. */
 	void AttackTestFire(int32 UnitIdx, int32 TargetIdx);
 	void AttackTestPoll(int32 UnitIdx, int32 TargetIdx, int32 Poll);
+
+	/** PR-4 evidence probe (Demo.ResolveProbe): kills up to AttritionKills
+	 *  soldiers per unit of one team through BattleExec::KillEntity at the
+	 *  armed delay -- the M5-fixture's honest rout driver (real casualty
+	 *  spikes; a SetAttr Morale base write does NOT move the exec calc's
+	 *  recomputed morale, measured 2026-11-01). The beat-7 verdict then
+	 *  fires off the real state. Public: the command path. */
+	void ResolveProbeFire(uint8 TeamId, int32 KillsPerUnit);
 
 private:
 	/** Deferred spawn pump: retries until the world + Mass are ready. */
@@ -91,6 +102,19 @@ private:
 	static const FDemoFieldUnit* GetFieldTable(int32& OutCount);
 	void TickSequencer(float DeltaSeconds);
 	void FireBeat(int32 BeatIndex);
+	/** PR-4: the state triggers (the spec table's non-time rows). Beat 3
+	 *  polls the engagement records touching a player unit; beat 2 keeps its
+	 *  time fallback (no public shots metric exists -- disclosed PR-4). */
+	bool PlayerEngaged() const;
+	/** PR-4 beat 4 + 10 s: kills the enemy general entity through
+	 *  BattleExec::KillEntity (the officer-death shock, D.13). */
+	void FireGeneralKill();
+	/** PR-4 beat 6 + 45 s (the half-beat): orders the egress of the unit
+	 *  beat 6 garrisoned (D.14's second half). */
+	void FireBeat6Egress();
+	/** PR-4 beat 7's state trigger: one side has no steady units alive ->
+	 *  the verdict line + the arc ends. */
+	void CheckResolution();
 	/** PR-4 (early slice): binds the beat sequencer to the LEVEL-PLACED
 	 *  units -- role = the field-table row whose dictionary + spawn position
 	 *  (within 5 m) match the placed actor. Logs EXEC_RESULT DemoBind. */
@@ -111,6 +135,21 @@ private:
 	float SequencerTime = 0.f;
 	bool bSequencerRunning = false;
 	bool bFieldSpawned = false;
+	/** PR-4: the beat-3 (Clash) fire time -- beats 4-6 are scheduled as
+	 *  clash-relative offsets (the spec table's t+55/t+75/t+90). < 0 until
+	 *  the clash fires. */
+	float ClashTime = -1.f;
+	/** PR-4 beat 7: the verdict line (set when one side runs out of steady
+	 *  units; also the DemoVerdict evidence channel). */
+	UPROPERTY(Transient) FString VerdictLine;
+	/** PR-4 beat 6: the unit the sequencer garrisoned (the half-beat egress
+	 *  orders ITS egress). Invalid until beat 6 fires. */
+	FUnitHandle Beat6GarrisonHandle;
+	/** PR-4 scripted timers (the general kill rides beat 4 + 10 s; the
+	 *  egress half-beat rides beat 6 + 45 s -- enough for the march + filing
+	 *  per the m7_commandbar_boot measurement). */
+	FTimerHandle GeneralKillTimer;
+	FTimerHandle Beat6EgressTimer;
 	/** Role -> live handle (the sequencer commands by role, P1..E5). */
 	TMap<FName, FUnitHandle> FieldUnitByRole;
 	/** Spawned handle -> its level actor (the level-path binding key). */

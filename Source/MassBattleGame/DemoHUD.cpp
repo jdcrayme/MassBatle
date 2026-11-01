@@ -84,6 +84,7 @@ void ADemoHUD::DrawHUD()
 	DrawSelectionCircles();
 	DrawMarquee();
 	DrawOrderDragPreview();
+	DrawDestinationFlag();
 	DrawUnitCards();
 	DrawSelectedPanel();
 }
@@ -271,9 +272,12 @@ void ADemoHUD::DrawControlsHint()
 		TEXT("LMB drag                 - marquee select"),
 		TEXT("RMB click                - move (keeps formation)"),
 		TEXT("RMB on ENEMY unit        - ATTACK (selection attacks the target)"),
+		TEXT("double-RMB on enemy      - CHARGE (guard clears; chases + pursues)"),
 		TEXT("Ctrl+RMB on ground       - attack-move (march, engage en route)"),
 		TEXT("RMB on structure         - garrison (units file in)"),
 		TEXT("RMB drag                 - formation: width + facing (drag line = front)"),
+		TEXT("double-LMB unit          - select all of that EDU type"),
+		TEXT("Ctrl+1..9 store group    - 1..9 recall group"),
 		TEXT("G - guard  F - fire-at-will  R - skirmish  X - exit garrison"),
 		TEXT("H                        - halt        WASD/arrows - pan"),
 		TEXT("Q/E - rotate             - mouse wheel - zoom"),
@@ -286,6 +290,29 @@ void ADemoHUD::DrawControlsHint()
 		Canvas->DrawText(GEngine->GetMediumFont(), Line, Pos.X, Pos.Y, 0.8f, 0.8f);
 		Pos.Y += 18.f;
 	}
+}
+
+void ADemoHUD::DrawDestinationFlag()
+{
+	ADemoPlayerController* PC = Cast<ADemoPlayerController>(GetOwningPlayerController());
+	if (!PC)
+	{
+		return;
+	}
+	FVector2D PointCm;
+	float AgeFrac = 0.f;
+	if (!PC->GetOrderFlag(PointCm, AgeFrac))
+	{
+		return;
+	}
+	const FVector2D Base = Project(PointCm, 0.f);
+	const float Alpha = 1.f - AgeFrac;
+	const FColor Ink(255, 224, 64, static_cast<uint8>(230.f * Alpha));
+	const FLinearColor Pennant(1.f, 0.875f, 0.25f, 0.9f * Alpha);
+	// The pole + pennant (the TW order flag): projects on the ground plane.
+	DrawLine(Base.X, Base.Y, Base.X, Base.Y - 34.f, Ink, 2.f);
+	DrawRect(Pennant, Base.X + 1.f, Base.Y - 34.f, 12.f, 7.f);
+	DrawRect(FLinearColor(1.f, 0.875f, 0.25f, 0.7f * Alpha), Base.X - 2.f, Base.Y - 2.f, 4.f, 4.f);
 }
 
 void ADemoHUD::DrawBeatLabel()
@@ -302,6 +329,13 @@ void ADemoHUD::DrawBeatLabel()
 	// Top-center, rough half-width offset (the medium font at 1.1 scale).
 	Canvas->DrawText(GEngine->GetMediumFont(), Text,
 		FMath::Max(4.f, Canvas->SizeX * 0.5f - 140.f), 14.f, 1.1f, 1.1f);
+	// PR-4 beat 7: the verdict line rides under the beat label.
+	if (!GM->GetVerdictLine().IsEmpty())
+	{
+		Canvas->SetDrawColor(140, 255, 140, 245);
+		Canvas->DrawText(GEngine->GetMediumFont(), GM->GetVerdictLine(),
+			FMath::Max(4.f, Canvas->SizeX * 0.5f - 140.f), 34.f, 0.9f, 0.9f);
+	}
 }
 
 // -- PR-2 banners ---------------------------------------------------------------
