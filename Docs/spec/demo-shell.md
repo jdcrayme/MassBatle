@@ -149,7 +149,7 @@ Every D-gate names the automated suites that assert the same layer headlessly (t
 
 ## 7. Constraints and open dependencies
 
-- **Morale Enable flip is evidence-blocked** (PR-12: the levy base morale 2 vs the placeholder WaveringThreshold 4.0 -- PairLifecycle regressed on the probe). The demo enables morale session-on (`ECVF_SetByCode`, the `MoraleSpawnRout` pattern); beat 4/5 timing lands with the T6.1 threshold co-audit.
+- **Morale Enable flip LANDED** (2026-11-01, the T6.1 morale-threshold co-audit: `Docs/phases/phase-4/t61-morale-threshold-audit.md` -- the PR-12 block was threshold placement, not the flag; the audited family Wavering 1.0 / Rally 1.5 / break offsets +-0.5 verified unit 84/84, func 24/27 = the three known, PairLifecycle PASS). The demo's session-on Enable set is redundant but harmless; beat 4/5's placeholder timings (section 3) are now re-clockable off the real cascade -- the re-clock boot + the `Demo.ResolveProbe` retirement is the outstanding demo-side follow-up.
 - **The .umap cannot be authored statically** (PR-11 posture): the §2 placements need an editor session; static tooling may not touch the map.
 - **One order per unit**: the registry holds a single current order, so shift-queue is a sim change, deferred. The sequencer is built to not need it.
 - **No walk/run state** in the sim (`SpeedMod` exists; a toggle would be a small sim addition) -- deferred.

@@ -157,7 +157,7 @@ EBattleRoutState EvaluateRoutTransition(EBattleRoutState Current, float Morale,
     EBattleDiscipline Discipline, float Dt);
 ```
 
-Thresholds are ABSOLUTE morale values (placeholder defaults section 4.12) shifted by discipline: the unit breaks when morale drops below `BreakThreshold + DisciplineBreakOffset[Discipline]` (Low +2, Normal 0, Disciplined -2, Impetuous 0 -- a disciplined unit holds two points longer, a low-discipline one breaks two points earlier; the additive form survives the 0-anchored default threshold, where a multiplicative resistance would be degenerate -- corrected at seam review, disclosed). Transitions: `Steady -> Wavering` when `Morale < WaveringThreshold`; `Wavering -> Routing` when `Morale < BreakThreshold` (hysteresis: Wavering recovers to Steady when `Morale > WaveringThreshold + WaveringHysteresis`); `* -> Shattered` when `RoutCount >= MaxRallies`. The registry applies a Routing entry exactly like RC7 applies a retreat: `FlagUnitEngagementsDead` (mass release both directions), self-issued Move directly away from the nearest threat anchor (auto-flagged; facing away from the threat; CommandedSpeed = run x fatigue speed multiplier), `bRoutFleeing` bookkeeping with the order-serial guard (a player order bump cancels OUR flee -- the unit is under player control again; it will re-evaluate on the next tick). Routers are legitimate melee targets; pursuers gain the rear-arc resolution the sectorizer already gives (T4.3's chase half needs zero new combat code -- the fleeing unit's facing serves rear arcs to its pursuers).
+Thresholds are ABSOLUTE morale values (defaults section 4.12) shifted by discipline: the unit breaks when morale drops below `BreakThreshold + DisciplineBreakOffset[Discipline]` (Low +0.5, Normal 0, Disciplined -0.5, Impetuous 0 -- a disciplined unit holds half a point longer, a low-discipline one breaks half a point earlier; the offsets are sized SMALL against the EDU base-morale spread 2..9 per the T6.1 morale-threshold co-audit, 2026-11-01: the placeholder +-2.0 put the base-2 levy row one casualty from routing at its own base -- `Docs/phases/phase-4/t61-morale-threshold-audit.md`; the additive form survives the 0-anchored default threshold, where a multiplicative resistance would be degenerate -- corrected at seam review, disclosed). Transitions: `Steady -> Wavering` when `Morale < WaveringThreshold`; `Wavering -> Routing` when `Morale < BreakThreshold` (hysteresis: Wavering recovers to Steady when `Morale > WaveringThreshold + WaveringHysteresis`); `* -> Shattered` when `RoutCount >= MaxRallies`. The registry applies a Routing entry exactly like RC7 applies a retreat: `FlagUnitEngagementsDead` (mass release both directions), self-issued Move directly away from the nearest threat anchor (auto-flagged; facing away from the threat; CommandedSpeed = run x fatigue speed multiplier), `bRoutFleeing` bookkeeping with the order-serial guard (a player order bump cancels OUR flee -- the unit is under player control again; it will re-evaluate on the next tick). Routers are legitimate melee targets; pursuers gain the rear-arc resolution the sectorizer already gives (T4.3's chase half needs zero new combat code -- the fleeing unit's facing serves rear arcs to its pursuers).
 
 ### 4.5 Rally (seam + registry, MC6)
 
@@ -202,17 +202,17 @@ Six C++-authored infinite GEs (`UBattleFatigueStateEffect` parameterized by stat
 
 `SetUnitGuardToggle` + ExecBridge `Battle.Morale.Toggle <unit> <Guard> <0|1>` + `Battle.Morale.Dump <unit>` (rout state, morale/fatigue values + staleness, contributions breakdown, rout count, toggles -- the A4 order-surface pattern). Guard semantics (MC9): suppresses impetuous auto-charge and pursuit-chasing (a guarded unit's attack orders hold ground: the assign pass's pursue extension consumes the flag; v1 assertion is the auto-charge suppression). Impetuous auto-charge: at the cluster cadence, an Impetuous-discipline unit with no player order since its last auto order, not routing, not guarded, with a nearest enemy envelope inside `ImpetuousChargeRadiusM` (default 30 m), self-issues an AttackUnit order (auto-flagged, serial-guarded). The demo HUD keys are PR-scoped (editor-owned input, PR-2 precedent).
 
-### 4.12 Tunables (CVAR block `Battle.Morale.*`; A6 placeholders, T6.1 owns the audit)
+### 4.12 Tunables (CVAR block `Battle.Morale.*`; the threshold family is T6.1-audited 2026-11-01, the remaining rows stay A6 placeholders)
 
 | CVar | Default | Meaning |
 |------|---------|---------|
-| `Battle.Morale.Enable` | 0 -> 1 at landing | master flag (B.8 item 6; flags-off = byte-identical baseline) |
+| `Battle.Morale.Enable` | 1 (the T6.1 flip landed 2026-11-01) | master flag (B.8 item 6; flags-off = byte-identical baseline) |
 | `Battle.Morale.TickPeriod` | 0.35 s | the GE period (arch section 12 band 0.25-0.5) |
 | `Battle.Morale.DeterministicTick` | 0 | pin the tick to the sim cadence (gates/soak set 1) |
-| `Battle.Morale.WaveringThreshold` | 4.0 | absolute morale below which a unit wavers |
+| `Battle.Morale.WaveringThreshold` | 1.0 | absolute morale below which a unit wavers (one point above the M2TW break-at-zero anchor, below the fixture's lowest base -- the audit) |
 | `Battle.Morale.BreakThreshold` | 0.0 | absolute morale below which a unit breaks |
 | `Battle.Morale.WaveringHysteresis` | 1.0 | recovery margin above the wavering threshold |
-| `Battle.Morale.RallyThreshold` | 6.0 | morale required to attempt rally |
+| `Battle.Morale.RallyThreshold` | 1.5 | morale required to attempt rally (reachable by the lowest base under the general aura, unreachable without it -- the audit) |
 | `Battle.Morale.RallyBase` / `.RallyDecay` | 0.4 / 0.5 | rally chance base / per-break decay |
 | `Battle.Morale.MaxRallies` | 2 | breaks beyond which a unit is Shattered |
 | `Battle.Morale.SpikePerCasualty` / `.SpikeHalfLifeS` / `.OfficerSpikeMultiplier` | 1.0 / 4.0 s / 3.0 | the fresh-casualty term (4.2) |
