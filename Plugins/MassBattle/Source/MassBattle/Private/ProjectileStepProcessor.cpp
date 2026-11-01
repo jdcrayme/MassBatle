@@ -199,7 +199,13 @@ void RunProjectileStepPass(UWorld* World, float DeltaSeconds)
 			// body killed THIS pass is still in the last-tick hash until the
 			// death receiver destroys it -- and its FDeadTag is DEFERRED, so
 			// the killed-this-pass ledger is the only honest visibility.
-			if (GKilledLedger.Contains(GHitEntries[i].Entity)
+			// PR-2 shoring: entities destroyed in an EARLIER pass are GONE by
+			// this scan (stale last-tick hash handles) -- FMassEntityView
+			// asserts on a freed archetype (the ChargeMechanics crash the
+			// record-centroid kill-timing shift exposed), so the validity
+			// check must come first.
+			if (!EM.IsEntityValid(GHitEntries[i].Entity)
+				|| GKilledLedger.Contains(GHitEntries[i].Entity)
 				|| FMassEntityView(EM, GHitEntries[i].Entity).HasTag<FDeadTag>())
 			{
 				continue;

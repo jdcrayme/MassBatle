@@ -7,6 +7,7 @@
 #include "BattleRegistry.h"
 #include "BattleUnitContact.h"
 #include "BattleMovementFragments.h"
+#include "MassCommonFragments.h"
 #include "MassBattleModule.h"
 
 #include "MassExecutionContext.h"
@@ -39,8 +40,27 @@ void UEngagementClustersProcessor::ConfigureQueries(const TSharedRef<FMassEntity
 {
 	UnitBodyQuery.AddSharedRequirement<FUnitFormationSharedFragment>(EMassFragmentAccess::ReadOnly);
 	UnitBodyQuery.AddRequirement<FOwnerUnitFragment>(EMassFragmentAccess::ReadOnly);
+	// PR-2 shoring: the per-chunk entity transforms feed the blob centroid
+	// (the record-center mode below).
+	UnitBodyQuery.AddRequirement<FTransformFragment>(EMassFragmentAccess::ReadOnly);
 	UnitBodyQuery.AddTagRequirement<FDeadTag>(EMassFragmentPresence::None); // audit M8
 	UnitBodyQuery.RegisterWithProcessor(*this);
+}
+
+namespace
+{
+	// PR-2 shoring (the owner PIE report 2026-10-31): 1 = the engagement
+	// contact node centers on the LIVING-ENTITY centroid of the unit's chunks
+	// (the blob the player sees) instead of the formation anchor -- the
+	// progressive fall-in legitimately leads the blob up to ~20 m ahead of
+	// the anchor on a long march, and anchor-centered records held melee
+	// closed until the anchor caught up. The extents stay formation-based.
+	// 0 = the pre-shoring anchor-centered behavior.
+	TAutoConsoleVariable<int32> GCCombatRecordCentroid(
+		TEXT("Battle.Combat.RecordCentroid"),
+		1,
+		TEXT("1 = engagement records form on the living-entity centroid (blob contact); 0 = the formation-anchor OBB (pre-shoring)."),
+		ECVF_Default);
 }
 
 void UEngagementClustersProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionContext& Context)
@@ -61,7 +81,14 @@ void UEngagementClustersProcessor::Execute(FMassEntityManager& EntityManager, FM
 	}
 	Registry->SetCombatClusterCooldown(FCombatCVars::ClusterPeriod());
 
-	// -- Gather unit bodies (FUnitClusterNode mirrors; garrisoned excluded). --
+	// -- Gather unit bodies (FUnitClusterNode mirrors; garrisoned excluded).
+	// PR-2 shoring: Node.AnchorM is the unit's LIVING-ENTITY centroid when
+	// Battle.Combat.RecordCentroid is on (the blob the soldiers form), else
+	// the formation anchor. NOTE: melee stays team-agnostic by design (the
+	// phase-3 A7/A8 posture; the CI fixtures rely on it) -- the converging-
+	// friendly-columns defect the owner's demo exposed is fixed at the SCENARIO
+	// layer (lane goals), not here. The team-aware melee rule is phase-2/4
+	// design territory (the R12-adjacent friendly-fire rule).
 	TArray<FCombatSolver::FUnitClusterNode> Nodes;
 	UnitBodyQuery.ForEachEntityChunk(Context, [&Nodes](FMassExecutionContext& Context)
 	{
@@ -78,6 +105,21 @@ void UEngagementClustersProcessor::Execute(FMassEntityManager& EntityManager, FM
 		FCombatSolver::FUnitClusterNode Node;
 		Node.Unit = Owners[0].Owner;
 		Node.AnchorM = FVector2D(Formation.AnchorPos) * 0.01f;
+		const auto Transforms = Context.GetFragmentView<FTransformFragment>();
+		// Live Coding caveat: a patched session keeps the STARTUP query (no
+		// transform requirement) -- the view comes back empty and the centroid
+		// would collapse to the origin. The arity guard degrades such a
+		// session to the anchor-centered behavior; a full build arms the mode.
+		if (GCCombatRecordCentroid.GetValueOnGameThread() != 0
+			&& Transforms.Num() == Context.GetNumEntities())
+		{
+			FVector2D Mean = FVector2D::ZeroVector;
+			for (int32 i = 0; i < Context.GetNumEntities(); ++i)
+			{
+				Mean += FVector2D(Transforms[i].GetTransform().GetTranslation());
+			}
+			Node.AnchorM = Mean * 0.01f / FMath::Max(1, Context.GetNumEntities());
+		}
 		Node.YawDeg = Formation.FacingYaw;
 		Node.HalfAlongM = (Formation.NumFiles * Formation.FileSpacing) * 0.005f;
 		Node.HalfAcrossM = (FMath::CeilToInt(Formation.NumSlots / (float)FMath::Max(1, Formation.NumFiles)) * Formation.RankSpacing) * 0.005f;
@@ -102,12 +144,12 @@ void UEngagementClustersProcessor::Execute(FMassEntityManager& EntityManager, FM
 		BodyA.YawDeg = Nodes[A].YawDeg;
 		BodyA.HalfAlongFacing = Nodes[A].HalfAcrossM + Dilation; // rank depth
 		BodyA.HalfAcrossFacing = Nodes[A].HalfAlongM + Dilation; // frontage
-		for (int32 B = A + 1; B < Nodes.Num(); ++B)
+	for (int32 B = A + 1; B < Nodes.Num(); ++B)
+	{
+		if (Nodes[A].Unit == Nodes[B].Unit)
 		{
-			if (Nodes[A].Unit == Nodes[B].Unit)
-			{
-				continue;
-			}
+			continue;
+		}
 			FUnitOBB BodyB;
 			BodyB.Center = Nodes[B].AnchorM;
 			BodyB.YawDeg = Nodes[B].YawDeg;

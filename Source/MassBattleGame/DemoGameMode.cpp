@@ -231,23 +231,30 @@ void ADemoGameMode::FireBeat(int32 BeatIndex)
 	// 3 table). Scripted orders ride the same registry surface the player
 	// uses and skip player-touched units, so a player order mid-beat simply
 	// wins -- the determinism story holds (no sim-side scripting).
+	// PR-2 shoring: LANE goals -- the shared (-10,0) goal converged all three
+	// columns onto one point and their 12 m frontages touched mid-march (the
+	// friendly-contact defect the cluster team-filter now also guards). The
+	// wings advance in their lanes; E3 walks up as the second line.
 	if (BeatIndex == 1)
 	{
 		if (UUnitRegistrySubsystem* Registry = GetWorld() ? GetWorld()->GetSubsystem<UUnitRegistrySubsystem>() : nullptr)
 		{
 			const ADemoPlayerController* PC = Cast<ADemoPlayerController>(GetWorld()->GetFirstPlayerController());
 			static const TCHAR* AdvanceRoles[] = { TEXT("E1"), TEXT("E2"), TEXT("E3") };
+			// Through the player line (the lanes carry the columns INTO
+			// contact; stopping short left the advance bloodless).
+			static const FVector2D AdvanceGoals[] = { FVector2D(-48.f, 12.f), FVector2D(-48.f, -12.f), FVector2D(20.f, 0.f) };
 			int32 Issued = 0;
 			int32 Skipped = 0;
-			for (const TCHAR* RoleName : AdvanceRoles)
+			for (int32 i = 0; i < 3; ++i)
 			{
-				const FUnitHandle* H = FieldUnitByRole.Find(RoleName);
+				const FUnitHandle* H = FieldUnitByRole.Find(AdvanceRoles[i]);
 				if (!H || !H->IsValid() || (PC && PC->WasPlayerOrdered(*H)))
 				{
 					++Skipped;
 					continue;
 				}
-				if (Registry->IssueAttackMoveOrder(*H, FVector2D(-10.f, 0.f) * 100.f, 180.f))
+				if (Registry->IssueAttackMoveOrder(*H, AdvanceGoals[i] * 100.f, 180.f))
 				{
 					++Issued;
 				}
