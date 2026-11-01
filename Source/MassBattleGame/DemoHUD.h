@@ -47,6 +47,10 @@ private:
 	/** PR-4: the destination flag at the last RMB order point (the section
 	 *  4.3 marker) -- pole + pennant, fading over ~2 s. */
 	void DrawDestinationFlag();
+	/** PR-5: the tactical minimap (the section 4.3 optional-last item) --
+	 *  terrain panel, structure footprints, team-colored unit dots with the
+	 *  general's gold mark, and the camera frustum quad. Display-only. */
+	void DrawMinimap();
 	/** PR-1: the beat sequencer's current beat, top-center -- the D.1/D.17 read. */
 	void DrawBeatLabel();
 

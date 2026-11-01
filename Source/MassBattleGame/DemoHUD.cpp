@@ -10,6 +10,8 @@
 #include "Engine/Engine.h"
 #include "Engine/Font.h"
 #include "BattleSpawnLibrary.h"
+#include "BattleGarrisonSubsystem.h"
+#include "BattleCostGrid.h"
 #include "Kismet/GameplayStatics.h"
 #include "UObject/ConstructorHelpers.h"
 
@@ -85,8 +87,109 @@ void ADemoHUD::DrawHUD()
 	DrawMarquee();
 	DrawOrderDragPreview();
 	DrawDestinationFlag();
+	DrawMinimap();
 	DrawUnitCards();
 	DrawSelectedPanel();
+}
+
+void ADemoHUD::DrawMinimap()
+{
+	UDemoUnitVisualSubsystem* Visuals = GetWorld() ? GetWorld()->GetSubsystem<UDemoUnitVisualSubsystem>() : nullptr;
+	UBattleGarrisonSubsystem* Garrison = GetWorld() ? GetWorld()->GetSubsystem<UBattleGarrisonSubsystem>() : nullptr;
+	APlayerController* BasePC = GetOwningPlayerController();
+	if (!Visuals || !Garrison || !BasePC || !Canvas || !GEngine || !GEngine->GetMediumFont())
+	{
+		return;
+	}
+	const float ViewX = static_cast<float>(Canvas->SizeX);
+	const float ViewY = static_cast<float>(Canvas->SizeY);
+	const FBox2D Panel = DemoMinimap::PanelRect(ViewX, ViewY);
+	const float HalfM = BattleGridGeo::TileHalfExtentM;
+	const auto ToMap = [ViewX, ViewY, HalfM](const FVector2D& PosCm)
+	{
+		return DemoMinimap::WorldToMap(PosCm, ViewX, ViewY, HalfM);
+	};
+
+	// The panel: dark frame + the field tone (the gray-box ground reads as
+	// the terrain plate; the impassable margin outside the tile stays dark).
+	DrawRect(FLinearColor(0.03f, 0.03f, 0.05f, 0.85f),
+		Panel.Min.X - 3.f, Panel.Min.Y - 3.f, Panel.GetSize().X + 6.f, Panel.GetSize().Y + 6.f);
+	DrawRect(FLinearColor(0.10f, 0.13f, 0.09f, 0.85f), Panel.Min.X, Panel.Min.Y, Panel.GetSize().X, Panel.GetSize().Y);
+	Canvas->SetDrawColor(150, 150, 155, 120);
+	Canvas->DrawText(GEngine->GetMediumFont(), TEXT("BATTLE"), Panel.Min.X + 4.f, Panel.Min.Y + 2.f, 0.42f, 0.42f);
+
+	// Structures: the garrison records' footprints (meters), tinted by type
+	// (buildings stand out from the wall/trench channels).
+	static const FLinearColor TypeTints[3] = {
+		FLinearColor(0.55f, 0.45f, 0.30f, 0.9f),  // Building: tan
+		FLinearColor(0.35f, 0.38f, 0.42f, 0.9f),  // Wall: slate
+		FLinearColor(0.30f, 0.42f, 0.35f, 0.9f)   // Trench: moss
+	};
+	for (const TPair<uint32, FGarrisonStructureRecord>& It : Garrison->GetAllStructures())
+	{
+		const int32 TypeIdx = FMath::Clamp(static_cast<int32>(It.Value.Type), 0, 2);
+		const FVector2D MinPx = ToMap(It.Value.Footprint.Min * 100.f);
+		const FVector2D MaxPx = ToMap(It.Value.Footprint.Max * 100.f);
+		DrawRect(TypeTints[TypeIdx], MinPx.X, MinPx.Y,
+			FMath::Max(2.f, MaxPx.X - MinPx.X), FMath::Max(2.f, MaxPx.Y - MinPx.Y));
+	}
+
+	// Unit dots (the visual blob centroids), team-colored; the general's mark
+	// is gold. A selected unit carries a white core.
+	for (const FUnitHandle& Handle : Visuals->GetAllUnits())
+	{
+		FDemoUnitBodyInfo Info;
+		if (!Visuals->GetUnitBodyInfo(Handle, Info))
+		{
+			continue;
+		}
+		const FVector2D Dot = ToMap(Info.VisualCentroidCm);
+		const FLinearColor TeamDot = Info.Team == EDemoTeam::Enemy
+			? FLinearColor(0.95f, 0.30f, 0.25f)
+			: FLinearColor(0.30f, 0.60f, 0.98f);
+		const float DotW = Info.bGeneral ? 6.f : 4.f;
+		DrawRect(TeamDot, Dot.X - DotW * 0.5f, Dot.Y - DotW * 0.5f, DotW, DotW);
+		if (Info.bGeneral)
+		{
+			DrawRect(FLinearColor(1.f, 0.85f, 0.3f), Dot.X - 1.5f, Dot.Y - 1.5f, 3.f, 3.f);
+		}
+		if (Visuals->IsSelected(Handle))
+		{
+			DrawRect(FLinearColor::White, Dot.X - 1.f, Dot.Y - 1.f, 2.f, 2.f);
+		}
+	}
+
+	// The camera frustum: the four viewport corner rays intersected with the
+	// ground plane (z=0), drawn as a quad. Rays pointing skyward (no ground
+	// hit) skip the frustum this frame.
+	FVector2D FrustumPx[4];
+	bool bFrustum = true;
+	for (int32 i = 0; i < 4 && bFrustum; ++i)
+	{
+		const FVector2D Corner(
+			(i == 0 || i == 3) ? 0.f : static_cast<float>(Canvas->SizeX - 1),
+			(i < 2) ? 0.f : static_cast<float>(Canvas->SizeY - 1));
+		FVector Origin, Dir;
+		if (BasePC->DeprojectScreenPositionToWorld(Corner.X, Corner.Y, Origin, Dir)
+			&& Dir.Z < -KINDA_SMALL_NUMBER)
+		{
+			const float T = -Origin.Z / Dir.Z;
+			FrustumPx[i] = ToMap(FVector2D((Origin + Dir * T).X, (Origin + Dir * T).Y));
+		}
+		else
+		{
+			bFrustum = false;
+		}
+	}
+	if (bFrustum)
+	{
+		for (int32 i = 0; i < 4; ++i)
+		{
+			const FVector2D A = FrustumPx[i];
+			const FVector2D B = FrustumPx[(i + 1) % 4];
+			DrawLine(A.X, A.Y, B.X, B.Y, FColor(255, 224, 64, 170), 1.5f);
+		}
+	}
 }
 
 void ADemoHUD::DrawUnitCards()

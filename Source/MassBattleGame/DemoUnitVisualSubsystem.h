@@ -78,6 +78,9 @@ private:
 	 *  home; ProjectWorldLocationToScreen on the first player controller). */
 	TMap<FUnitHandle, FBox2D> BannerRects;
 	TSet<FUnitHandle> BannerCollapsed;
+	/** PR-5: last tick's collapsed set -- the LOD hysteresis memory (collapse
+	 *  and re-expand thresholds differ by +20%). */
+	TSet<FUnitHandle> PrevBannerCollapsed;
 	/** PR-2 shoring: the trimmed entity centroid per unit (cm) -- the banners
 	 *  track the visual blob, not the sim's formation anchor. */
 	TMap<FUnitHandle, FVector2D> CentroidByUnit;

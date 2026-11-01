@@ -259,6 +259,11 @@ void UDemoUnitVisualSubsystem::Tick(float DeltaTime)
 	// than the expanded card collapses to the small flag (M2TW convention).
 	// The banners project the TRIMMED ENTITY CENTROID (the visual blob), not
 	// the sim's formation anchor -- the card sits on the fight.
+	// PR-5 tuning: the collapse carries HYSTERESIS (collapse below the
+	// threshold, re-expand above +20%) -- the projected frontage jitters
+	// tick-to-tick at the boundary (the blob breathes) and without the gap
+	// the card flickers between states while zooming.
+	PrevBannerCollapsed = MoveTemp(BannerCollapsed);
 	BannerRects.Reset();
 	BannerCollapsed.Reset();
 	APlayerController* PC = World->GetFirstPlayerController();
@@ -294,8 +299,14 @@ void UDemoUnitVisualSubsystem::Tick(float DeltaTime)
 		const float FrontPx = bEdges ? FVector2D::Distance(EdgeL, EdgeR) : 0.f;
 
 		// The expanded card is 96 x 30 px; the collapsed flag 14 x 20.
+		// PR-5: collapse below CollapsePx, re-expand only above ExpandPx
+		// (+20% hysteresis -- the frontage jitters at the boundary).
 		constexpr float CardW = 96.f, CardH = 30.f, FlagW = 14.f, FlagH = 20.f;
-		const bool bCollapsed = bEdges && FrontPx < CardW * 1.5f;
+		constexpr float CollapsePx = CardW * 1.5f;
+		constexpr float ExpandPx = CollapsePx * 1.2f;
+		const bool bWasCollapsed = PrevBannerCollapsed.Contains(Handle);
+		const bool bCollapsed = bEdges
+			&& FrontPx < (bWasCollapsed ? ExpandPx : CollapsePx);
 		const float W = bCollapsed ? FlagW : CardW;
 		const float H = bCollapsed ? FlagH : CardH;
 		// Anchored ABOVE the body center (a 6 px gap for the selection ring).

@@ -120,6 +120,35 @@ namespace DemoCommandBar
 	}
 };
 
+/** PR-5 minimap (demo-shell spec section 4.3, the optional-last command-bar
+ *  item): a display-only tactical map -- structure footprints, unit dots,
+ *  the camera frustum. One geometry home for the HUD's draw (no minimap
+ *  clicks in scope). The map frame is the cost-grid tile: callers pass the
+ *  plugin's BattleGridGeo::TileHalfExtentM (one home for the extent). */
+namespace DemoMinimap
+{
+	constexpr float SizePx = 180.f;
+	constexpr float MarginPx = 14.f;
+
+	inline FBox2D PanelRect(float ViewX, float ViewY)
+	{
+		const float X = ViewX - SizePx - MarginPx;
+		const float Y = ViewY - SizePx - MarginPx;
+		return FBox2D(FVector2D(X, Y), FVector2D(X + SizePx, Y + SizePx));
+	}
+
+	/** World (cm, planar) -> minimap px inside the panel. Planar x maps to
+	 *  screen x, planar y to screen y (north up -- the camera's default). */
+	inline FVector2D WorldToMap(const FVector2D& PosCm, float ViewX, float ViewY, float HalfExtentM)
+	{
+		const FBox2D Panel = PanelRect(ViewX, ViewY);
+		const float HalfCm = HalfExtentM * 100.f;
+		const float Nx = FMath::Clamp(PosCm.X / (2.f * HalfCm) + 0.5f, 0.f, 1.f);
+		const float Ny = FMath::Clamp(0.5f - PosCm.Y / (2.f * HalfCm), 0.f, 1.f); // +y (north) at the top
+		return FVector2D(Panel.Min.X + Nx * SizePx, Panel.Min.Y + Ny * SizePx);
+	}
+};
+
 /** One selected unit's piece of a formation-drag preview/commit: the drag line
  *  divided across units (Total War frontage semantics). */
 struct FDemoDragSegment

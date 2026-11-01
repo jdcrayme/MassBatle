@@ -1128,20 +1128,34 @@ static FAutoConsoleCommandWithWorldAndArgs GDemoSpawnField(
 		}
 	}));
 
-// -- Demo.QuitAt (PR-4) ---------------------------------------------------------
+// -- Demo.QuitAt (PR-4, PR-5) ----------------------------------------------------
 // The boot-harness exit for long evidence windows: the full beat arc runs
 // ~200 game-s (clash +55/+75/+90 then the resolution), and the one-command
-// -ExecCmds slot is taken by nothing else in a beats boot. Quits through the
-// engine's own Quit command on the world's timer.
+// -ExecCmds slot is all a boot gets (multi-command chains are unreliable in
+// -game processes -- measured twice). PR-5: the optional probe args arm the
+// Demo.ResolveProbe attrition (the one-command D.18 arc boot), and the quit
+// dumps the FPS chart first -- the D.18 frame-rate/hitch read over the arc.
 static FAutoConsoleCommandWithWorldAndArgs GDemoQuitAt(
 	TEXT("Demo.QuitAt"),
-	TEXT("<seconds> -- quit the process after the delay (the beats-arc boot evidence exit; EXEC_RESULT DemoQuitAt)"),
+	TEXT("<seconds> [probeDelay=0] [probeTeam=1] -- dump the FPS chart + quit after the delay; probeDelay>0 arms the Demo.ResolveProbe attrition at it (EXEC_RESULT DemoQuitAt)"),
 	FConsoleCommandWithWorldAndArgsDelegate::CreateStatic(
 		[](const TArray<FString>& Args, UWorld* World)
 		{
 			const float Delay = Args.Num() > 0 ? FMath::Max(1.f, FCString::Atof(*Args[0])) : 30.f;
+			const float ProbeDelay = Args.Num() > 1 ? FMath::Max(0.f, FCString::Atof(*Args[1])) : 0.f;
+			const uint8 ProbeTeam = Args.Num() > 2 ? static_cast<uint8>(FCString::Atoi(*Args[2])) : 1;
 			if (World)
 			{
+				if (ProbeDelay > 0.f)
+				{
+					if (ADemoGameMode* GM = Cast<ADemoGameMode>(World->GetAuthGameMode()))
+					{
+						FTimerHandle ProbeHandle;
+						GM->GetWorldTimerManager().SetTimer(ProbeHandle,
+							FTimerDelegate::CreateUObject(GM, &ADemoGameMode::ResolveProbeFire, ProbeTeam, /*kills per unit*/ 15),
+							ProbeDelay, false);
+					}
+				}
 				FTimerHandle QuitHandle;
 				World->GetTimerManager().SetTimer(QuitHandle,
 					FTimerDelegate::CreateLambda([]()
@@ -1152,6 +1166,15 @@ static FAutoConsoleCommandWithWorldAndArgs GDemoQuitAt(
 							{
 								if (Ctx.World())
 								{
+									// The D.18 headless read: the arc TOTALS line
+									// (Routs/OfficerDeaths/AuraActive). The pass
+									// ms fields read zero here by design -- the
+									// metric hooks register on the interactive/
+									// soak path only (the m5_boot posture), and
+									// t.FPSChart dumps nothing under -nullrhi
+									// (RHI-tied; measured twice). The render-rate
+									// half of D.18 stays the owner's PIE eyeball.
+									BattleExec::DumpMetrics(TArray<FString>(), Ctx.World());
 									GEngine->Exec(Ctx.World(), TEXT("Quit"));
 									return;
 								}
@@ -1161,7 +1184,9 @@ static FAutoConsoleCommandWithWorldAndArgs GDemoQuitAt(
 					}),
 					Delay, false);
 			}
-			UE_LOG(LogDemoBattle, Display, TEXT("EXEC_RESULT DemoQuitAt armed %.1f"), Delay);
+			UE_LOG(LogDemoBattle, Display,
+				TEXT("EXEC_RESULT DemoQuitAt armed %.1f probeDelay=%.1f probeTeam=%u"),
+				Delay, ProbeDelay, ProbeTeam);
 		}));
 
 // -- Demo.ResolveProbe (PR-4) ----------------------------------------------------

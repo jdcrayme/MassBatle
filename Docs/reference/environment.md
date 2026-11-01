@@ -76,6 +76,7 @@ The named reference machine for all perf baselines (roadmap R10): **`Docs/spec/r
 | "Plane scaled ×2560 → 256 m × 256 m" (pre-phase-0 Task 3) | Engine plane base is 100 cm → ×2560 = 2560 m; honored the 256 m intent with ×256, bounds-verified |
 | "2 unit types × 13 fields" (briefs) | Fixture has **14** field keys; off-by-one propagated through 3 files before being caught |
 | Python `unreal` fallbacks via MCP (pre-phase-0 §1.4) | Unreachable — `ProgrammaticToolset` sandbox import whitelist |
+| `t.FPSChart.DurationAndExit N` as the headless boot's frame-rate evidence (the m4/m5/m7 boot convention) | Dumps NOTHING under `-nullrhi -benchmark` (RHI-tied instrument; verified 2026-11-01 on m7_banner_boot's own log and the PR-5 sweep) — the headless D.18 read is the arc boot + `BattleMetrics` totals (whose pass-ms fields zero in `-game`: the metric hooks register on the interactive/soak path only); frame rate + hitches stay the owner's PIE + the nightly soak |
 
 ## 9. Provenance
 
