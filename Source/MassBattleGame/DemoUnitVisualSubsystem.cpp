@@ -163,6 +163,7 @@ void UDemoUnitVisualSubsystem::Tick(float DeltaTime)
 			VisualByUnit.Remove(Units[i]);
 			Selected.Remove(Units[i]);
 			TeamByUnit.Remove(Units[i]);
+			CentroidByUnit.Remove(Units[i]);
 			Units.RemoveAtSwap(i);
 		}
 	}
@@ -219,12 +220,45 @@ void UDemoUnitVisualSubsystem::Tick(float DeltaTime)
 			Visual->BatchUpdateInstancesTransforms(/*StartInstanceIndex*/ 0, Instances,
 				/*bWorldSpace*/ true, /*bMarkRenderStateDirty*/ true, /*bTeleport*/ true);
 		}
+
+		// PR-2 shoring (the owner report: entities outrun the banner): the
+		// visual blob center -- mean of the living entities, drop the farthest
+		// quarter, re-mean (the 25% trim keeps a stuck straggler from dragging
+		// the card off the formation). The BANNERS track this; the SIM's
+		// formation anchor (BodyCenterCm) stays the order/sim surface.
+		if (Instances.Num() > 0)
+		{
+			FVector2D Mean = FVector2D::ZeroVector;
+			for (const FTransform& T : Instances)
+			{
+				Mean += FVector2D(T.GetTranslation());
+			}
+			Mean /= static_cast<float>(Instances.Num());
+			if (Instances.Num() >= 8)
+			{
+				Instances.Sort([Mean](const FTransform& A, const FTransform& B)
+				{
+					return FVector2D::DistSquared(FVector2D(A.GetTranslation()), Mean)
+						> FVector2D::DistSquared(FVector2D(B.GetTranslation()), Mean);
+				});
+				const int32 Keep = FMath::Max(1, Instances.Num() * 3 / 4);
+				FVector2D Trimmed = FVector2D::ZeroVector;
+				for (int32 i = Instances.Num() - Keep; i < Instances.Num(); ++i)
+				{
+					Trimmed += FVector2D(Instances[i].GetTranslation());
+				}
+				Mean = Trimmed / static_cast<float>(Keep);
+			}
+			CentroidByUnit.Add(Handle, Mean);
+		}
 	}
 
 	// -- PR-2 banner rects: ONE projection pass per tick, consumed by the HUD
 	// (draw) and the player controller (click hit tests). The zoom-LOD
 	// collapse is measured in screen space: the projected frontage narrower
 	// than the expanded card collapses to the small flag (M2TW convention).
+	// The banners project the TRIMMED ENTITY CENTROID (the visual blob), not
+	// the sim's formation anchor -- the card sits on the fight.
 	BannerRects.Reset();
 	BannerCollapsed.Reset();
 	APlayerController* PC = World->GetFirstPlayerController();
@@ -239,7 +273,10 @@ void UDemoUnitVisualSubsystem::Tick(float DeltaTime)
 		{
 			continue;
 		}
-		const FVector Center(Info.BodyCenterCm.X, Info.BodyCenterCm.Y, DemoUi::BodyLabelZCm);
+		const FVector2D ProjCm = CentroidByUnit.FindRef(Handle).IsNearlyZero()
+			? Info.BodyCenterCm
+			: CentroidByUnit.FindRef(Handle);
+		const FVector Center(ProjCm.X, ProjCm.Y, DemoUi::BodyLabelZCm);
 		FVector2D Screen;
 		if (!PC->ProjectWorldLocationToScreen(Center, Screen))
 		{
@@ -251,9 +288,9 @@ void UDemoUnitVisualSubsystem::Tick(float DeltaTime)
 		const float HalfFrontCm = Info.NumFiles * Info.FileSpacingM * 50.f;
 		FVector2D EdgeL, EdgeR;
 		const bool bEdges = PC->ProjectWorldLocationToScreen(
-			FVector(Info.BodyCenterCm.X - Right.X * HalfFrontCm, Info.BodyCenterCm.Y - Right.Y * HalfFrontCm, DemoUi::BodyLabelZCm), EdgeL)
+			FVector(ProjCm.X - Right.X * HalfFrontCm, ProjCm.Y - Right.Y * HalfFrontCm, DemoUi::BodyLabelZCm), EdgeL)
 			&& PC->ProjectWorldLocationToScreen(
-			FVector(Info.BodyCenterCm.X + Right.X * HalfFrontCm, Info.BodyCenterCm.Y + Right.Y * HalfFrontCm, DemoUi::BodyLabelZCm), EdgeR);
+			FVector(ProjCm.X + Right.X * HalfFrontCm, ProjCm.Y + Right.Y * HalfFrontCm, DemoUi::BodyLabelZCm), EdgeR);
 		const float FrontPx = bEdges ? FVector2D::Distance(EdgeL, EdgeR) : 0.f;
 
 		// The expanded card is 96 x 30 px; the collapsed flag 14 x 20.
@@ -526,6 +563,11 @@ bool UDemoUnitVisualSubsystem::GetUnitBodyInfo(FUnitHandle Handle, FDemoUnitBody
 		OutInfo.InitialRoster = Spec->SoldierCount + Spec->OfficerCount;
 		OutInfo.bGeneral = Spec->bIsGeneral;
 	}
+	// The visual blob center (the banners/circles track this); falls back to
+	// the sim's formation center until the first visual tick fills the cache.
+	OutInfo.VisualCentroidCm = CentroidByUnit.FindRef(Handle).IsNearlyZero()
+		? OutInfo.BodyCenterCm
+		: CentroidByUnit.FindRef(Handle);
 	// PR-2 banner fields: rout state (the chip's color index), the live
 	// morale/fatigue snapshot values, the ammo fraction (negative = not
 	// missile-capable) and the fire-toggle read-back (the badges).

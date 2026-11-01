@@ -427,7 +427,9 @@ void ADemoHUD::DrawSelectionCircles()
 		}
 		// Ring sized to the unit's actual frontage.
 		const float RadiusCm = FMath::Max(Info.NumFiles * Info.FileSpacingM * 100.f * 0.5f, 150.f) + 60.f;
-		DrawWorldCircle(Info.BodyCenterCm, RadiusCm, FColor::Green);
+		// Ring sized to the unit's actual frontage, drawn on the visual blob
+		// (the trimmed entity centroid) -- the card and the ring agree.
+		DrawWorldCircle(Info.VisualCentroidCm, RadiusCm, FColor::Green);
 	}
 }
 

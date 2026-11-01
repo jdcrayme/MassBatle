@@ -442,7 +442,9 @@ bool ADemoPlayerController::PickUnitAtScreen(const FVector2D& ScreenPos, FUnitHa
 			continue;
 		}
 		FVector2D Proj;
-		if (!ProjectWorldLocationToScreen(FVector(Info.BodyCenterCm.X, Info.BodyCenterCm.Y, DemoUi::BodyLabelZCm), Proj))
+		// PR-2 shoring: picking tracks the visual blob (the trimmed entity
+		// centroid), not the sim's formation anchor.
+		if (!ProjectWorldLocationToScreen(FVector(Info.VisualCentroidCm.X, Info.VisualCentroidCm.Y, DemoUi::BodyLabelZCm), Proj))
 		{
 			continue;
 		}
@@ -616,7 +618,8 @@ void ADemoPlayerController::OnLMBReleased()
 				continue;
 			}
 			FVector2D Proj;
-			if (ProjectWorldLocationToScreen(FVector(Info.BodyCenterCm.X, Info.BodyCenterCm.Y, DemoUi::BodyLabelZCm), Proj)
+			// PR-2 shoring: the marquee selects on the visual blob.
+			if (ProjectWorldLocationToScreen(FVector(Info.VisualCentroidCm.X, Info.VisualCentroidCm.Y, DemoUi::BodyLabelZCm), Proj)
 				&& Box.IsInside(Proj))
 			{
 				Marquee.Add(Handle);

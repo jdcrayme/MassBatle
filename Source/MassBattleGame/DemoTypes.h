@@ -24,8 +24,15 @@ struct FDemoUnitBodyInfo
 {
 	FUnitHandle Handle;
 	EDemoTeam Team = EDemoTeam::Player;
-	/** Body (formation block) center, cm, planar. */
+	/** Body (formation block) center, cm, planar -- the SIM's formation anchor
+	 *  view (the shared fragment's anchor, rank-depth adjusted). The order
+	 *  math and the sim read this one. */
 	FVector2D BodyCenterCm = FVector2D::ZeroVector;
+	/** PR-2 shoring (the owner report: entities outrun the banner): the
+	 *  trimmed centroid of the LIVING entities (mean, drop the farthest
+	 *  quarter, re-mean -- stragglers don't pull it). The banner/cards track
+	 *  this one. Equal to BodyCenterCm until the first visual tick. */
+	FVector2D VisualCentroidCm = FVector2D::ZeroVector;
 	float FacingYawDeg = 0.f;
 	int32 NumFiles = 0;
 	int32 NumRanks = 0;

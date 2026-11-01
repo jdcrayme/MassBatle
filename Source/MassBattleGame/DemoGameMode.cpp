@@ -410,6 +410,7 @@ void ADemoGameMode::AttackTestPoll(int32 UnitIdx, int32 TargetIdx, int32 Poll)
 	const FUnitHandle Attacker(static_cast<uint32>(UnitIdx), 1);
 	const TArray<FMassEntityHandle>* Roster = Registry->FindRoster(Attacker);
 	FVector2D Anchor = FVector2D::ZeroVector;
+	FVector2D Blob = FVector2D::ZeroVector;
 	float Fatigue = -1.f;
 	if (Roster && Roster->Num() > 0)
 	{
@@ -423,9 +424,21 @@ void ADemoGameMode::AttackTestPoll(int32 UnitIdx, int32 TargetIdx, int32 Poll)
 	{
 		Fatigue = Cached->Fatigue;
 	}
+	// The visual blob center (the trimmed entity centroid) + the delta from
+	// the sim anchor: the number that sizes the entity-vs-banner tear the
+	// owner reported (PR-2 shoring).
+	if (UDemoUnitVisualSubsystem* Visuals = GetWorld()->GetSubsystem<UDemoUnitVisualSubsystem>())
+	{
+		FDemoUnitBodyInfo Info;
+		if (Visuals->GetUnitBodyInfo(Attacker, Info))
+		{
+			Blob = Info.VisualCentroidCm;
+		}
+	}
 	UE_LOG(LogDemoBattle, Display,
-		TEXT("EXEC_RESULT DemoAttackTest Poll=%d Unit=%u Anchor=(%.1f,%.1f)m Fatigue=%.3f"),
-		Poll, Attacker.Index, Anchor.X * 0.01f, Anchor.Y * 0.01f, Fatigue);
+		TEXT("EXEC_RESULT DemoAttackTest Poll=%d Unit=%u Anchor=(%.1f,%.1f)m Blob=(%.1f,%.1f)m Tear=%.1fm Fatigue=%.3f"),
+		Poll, Attacker.Index, Anchor.X * 0.01f, Anchor.Y * 0.01f, Blob.X * 0.01f, Blob.Y * 0.01f,
+		FVector2D::Distance(Anchor, Blob) * 0.01f, Fatigue);
 }
 
 void ADemoGameMode::SpawnFieldFixture()
