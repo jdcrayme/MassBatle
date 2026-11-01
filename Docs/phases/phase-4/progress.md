@@ -10,6 +10,25 @@
 
 ## Discrepancies (dated, newest first)
 
+- **2026-11-01 (T6.1 prep, the morale threshold co-audit)** -- the morale half
+  of T6.1 pulled forward on branch `t61-morale-threshold-audit` (PENDING owner
+  sign-off): the PR-12 evidence block quantified (levy base 2 vs
+  WaveringThreshold 4.0 -> spawn-wavering, one-casualty routing; the Low
+  break offset +2.0 equaled the levy row's whole base) and the family
+  re-placed against the M2TW anchors (break at zero absolute, wavering the
+  band just above, the base `stat_mental` carrying the spread -- our
+  CasualtyFraction weight -8 already reproduces the community casualty
+  curve -2/-4/-6 at 25/50/75%). Proposed swap: Enable 0->1, Wavering 4.0->1.0,
+  Rally 6.0->1.5, BreakOffset {+2,0,-2,0}->{+0.5,0,-0.5,0}, everything else
+  kept. Verified with the candidates LIVE as defaults, no session flags:
+  unit 84/84; func 24/27 = exactly the three known (PairLifecycle PASS --
+  the PR-12 probe cleared; S0_SyncLatency PASS; OfficerDeath ratio 3.00
+  golden; S7 order + cascade green). Full record + the M2TW source register:
+  `Docs/phases/phase-4/t61-morale-threshold-audit.md`. Follow-ups recorded
+  there: the Feudal_Knights `impetuous` deviation call, the nightly
+  re-baseline, the demo beat 4/5 re-clock (+ the ResolveProbe retirement
+  candidate), the spec section 4.12 table update riding the flip commit.
+
 - **2026-10-31 (PR-12, the Enable flip is EVIDENCE-BLOCKED)** -- the task-6
   flip (`Battle.Morale.Enable` default 0 -> 1) regressed the PR gate on the
   probe: `PairLifecycle` failed with `MoraleRout Unit=1:1 State=Wavering

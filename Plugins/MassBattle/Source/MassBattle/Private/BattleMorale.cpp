@@ -9,14 +9,15 @@ namespace
 {
 	TAutoConsoleVariable<int32> GCMoraleEnable(
 		TEXT("Battle.Morale.Enable"),
-		0,
-		TEXT("Master morale flag (tick GE + FSM + effects). The task-6 flip to "
-			 "default 1 is EVIDENCE-BLOCKED (measured 2026-10-31): the fixture's "
-			 "levy base morale (2) sits below the placeholder WaveringThreshold "
-			 "(4.0), so levy units waver at spawn and route at one casualty -- "
-			 "PairLifecycle regressed on the flip probe (Morale=2.00 wavering, "
-			 "0.62 routing). The flip waits for the T6.1 threshold audit; the "
-			 "T4 scenarios and fixtures set the flag session-on."),
+		1,
+		TEXT("Master morale flag (tick GE + FSM + effects). Default 1 per the "
+			 "T6.1 threshold co-audit (Docs/phases/phase-4/t61-morale-threshold-"
+			 "audit.md): the PR-12 evidence block (levy base 2 vs WaveringThreshold "
+			 "4.0 -- spawn-wavering, one-casualty routing) was the THRESHOLD "
+			 "placement, not the flag; the audited family (Wavering 1.0, "
+			 "Rally 1.5, break offsets +-0.5) keeps every fixture row steady at "
+			 "spawn. The PR-12 session-on posture (T4 scenarios set the flag) is "
+			 "redundant now but harmless."),
 		ECVF_Default);
 
 	TAutoConsoleVariable<float> GCMoraleTickPeriod(
@@ -38,8 +39,11 @@ namespace
 
 	TAutoConsoleVariable<float> GCMoraleWavering(
 		TEXT("Battle.Morale.WaveringThreshold"),
-		4.f,
-		TEXT("Absolute morale below which a unit wavers (MC5)."),
+		1.f,
+		TEXT("Absolute morale below which a unit wavers (MC5). T6.1 co-audit: "
+			 "one point above the M2TW break-at-zero anchor, BELOW the fixture's "
+			 "lowest base morale (levy 2) so nothing wavers at spawn -- the "
+			 "placeholder 4.0 sat above half the roster."),
 		ECVF_Default);
 
 	TAutoConsoleVariable<float> GCMoraleBreak(
@@ -57,8 +61,12 @@ namespace
 
 	TAutoConsoleVariable<float> GCMoraleRallyThreshold(
 		TEXT("Battle.Morale.RallyThreshold"),
-		6.f,
-		TEXT("Morale required to attempt a rally roll (MC6)."),
+		1.5f,
+		TEXT("Morale required to attempt a rally roll (MC6). T6.1 co-audit: "
+			 "reachable by the fixture's LOWEST base (levy 2) under the general "
+			 "aura (+2.0) and unreachable without it (a routed levy sits below "
+			 "0.5) -- the placeholder 6.0 made levy and peasant archers "
+			 "permanently unrallyable."),
 		ECVF_Default);
 
 	TAutoConsoleVariable<float> GCMoraleRallyBase(

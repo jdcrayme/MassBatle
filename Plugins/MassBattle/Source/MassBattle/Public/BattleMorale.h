@@ -108,16 +108,19 @@ namespace FFatigueConstants
 
 /** Discipline scaling tables (ONE home; spec sections 4.4-4.5). BreakOffset
  *  ADDS to the break threshold: a unit breaks when morale drops below
- *  BreakThreshold + BreakOffset -- Low breaks 2 points earlier, Disciplined
- *  holds 2 points longer, Impetuous fights like Normal (it is brave in the
- *  charge, not in the rout -- MC9). The additive form survives the 0-anchored
+ *  BreakThreshold + BreakOffset -- Low breaks half a point earlier,
+ *  Disciplined holds half a point longer, Impetuous fights like Normal (it is
+ *  brave in the charge, not in the rout -- MC9). T6.1 co-audit sizing: the
+ *  offsets must stay SMALL against the EDU base-morale spread (2..9) -- the
+ *  placeholder +-2.0 put the levy row (base 2, Low) one casualty from
+ *  routing at its own base. The additive form survives the 0-anchored
  *  default threshold (a multiplicative resistance would be degenerate there;
  *  corrected at seam review, disclosed). RallyFactor multiplies the rally
  *  chance. Discipline NEVER scales the weights (MC2). Indexed by
  *  EBattleDiscipline. */
 namespace FMoraleDiscipline
 {
-	constexpr float BreakOffset[4] = { 2.f, 0.f, -2.f, 0.f };
+	constexpr float BreakOffset[4] = { 0.5f, 0.f, -0.5f, 0.f };
 	constexpr float RallyFactor[4] = { 0.7f, 1.f, 1.3f, 0.8f };
 }
 

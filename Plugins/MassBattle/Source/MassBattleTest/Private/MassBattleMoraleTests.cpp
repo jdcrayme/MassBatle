@@ -156,8 +156,11 @@ bool FMorale_Stack::RunTest(const FString& Parameters)
 	}
 
 	// -- discipline shifts the BREAK threshold, never the weights (MC2).
-	//    Additive offsets (FMoraleDiscipline::BreakOffset): Low +2, Normal 0,
-	//    Disciplined -2 -- a disciplined unit holds two points longer.
+	//    Additive offsets (FMoraleDiscipline::BreakOffset): Low +0.5, Normal 0,
+	//    Disciplined -0.5 -- a disciplined unit holds half a point longer
+	//    (T6.1 co-audit sizing: the offsets stay small against the EDU
+	//    base-morale spread 2..9; the placeholder +-2 routed a base-2 levy at
+	//    first blood).
 	{
 		const float Wavering = 4.f;
 		const float Break = 0.f;
@@ -165,14 +168,21 @@ bool FMorale_Stack::RunTest(const FString& Parameters)
 		TestEqual(TEXT("normal breaks below the raw threshold"),
 			static_cast<int32>(EvaluateRoutTransition(EBattleRoutState::Wavering, -1.f, Wavering, Break, 1.f, 0, 2, EBattleDiscipline::Normal)),
 			static_cast<int32>(EBattleRoutState::Routing));
-		// The same morale with Disciplined: effective break -2, -1 holds -> only
-		// wavering (it keeps fighting where the normal unit broke).
+		// Morale -0.25: Normal breaks (below the raw 0) while Disciplined
+		// holds (effective break -0.5) -> only wavering.
+		TestEqual(TEXT("normal breaks in the raw-threshold band"),
+			static_cast<int32>(EvaluateRoutTransition(EBattleRoutState::Wavering, -0.25f, Wavering, Break, 1.f, 0, 2, EBattleDiscipline::Normal)),
+			static_cast<int32>(EBattleRoutState::Routing));
 		TestEqual(TEXT("disciplined holds below the raw threshold"),
-			static_cast<int32>(EvaluateRoutTransition(EBattleRoutState::Wavering, -1.f, Wavering, Break, 1.f, 0, 2, EBattleDiscipline::Disciplined)),
+			static_cast<int32>(EvaluateRoutTransition(EBattleRoutState::Wavering, -0.25f, Wavering, Break, 1.f, 0, 2, EBattleDiscipline::Disciplined)),
 			static_cast<int32>(EBattleRoutState::Wavering));
-		// Low discipline: effective break +2, so morale 1 already routs.
-		TestEqual(TEXT("low discipline breaks two points early"),
-			static_cast<int32>(EvaluateRoutTransition(EBattleRoutState::Wavering, 1.f, Wavering, Break, 1.f, 0, 2, EBattleDiscipline::Low)),
+		// Low discipline: effective break +0.5, so morale 0.25 already routs
+		// where the Normal unit at the same morale only wavers.
+		TestEqual(TEXT("normal wavers above the low-discipline break"),
+			static_cast<int32>(EvaluateRoutTransition(EBattleRoutState::Wavering, 0.25f, Wavering, Break, 1.f, 0, 2, EBattleDiscipline::Normal)),
+			static_cast<int32>(EBattleRoutState::Wavering));
+		TestEqual(TEXT("low discipline breaks early"),
+			static_cast<int32>(EvaluateRoutTransition(EBattleRoutState::Wavering, 0.25f, Wavering, Break, 1.f, 0, 2, EBattleDiscipline::Low)),
 			static_cast<int32>(EBattleRoutState::Routing));
 		// Impetuous fights like Normal at the break (its edge is the auto-charge).
 		TestEqual(TEXT("impetuous breaks like normal"),
