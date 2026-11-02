@@ -230,6 +230,8 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 		static thread_local TArray<bool> TLSlotOccupied;
 		static thread_local TArray<uint8> TLStuckFlags;
 		static thread_local TArray<uint8> TLStaleSkipFlags;
+		static thread_local TArray<int32> TLPerm, TLInvPerm, TLPermTmp;
+		static thread_local TArray<FVector2D> TLPermTmpPos;
 		static thread_local FBattlePlannedPath TLPathM;
 
 		FUnitFormationSharedFragment& Formation = Context.GetMutableSharedFragment<FUnitFormationSharedFragment>();
@@ -246,6 +248,49 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 		{
 			const FVector Pos = Context.GetFragmentView<FTransformFragment>()[i].GetTransform().GetTranslation();
 			EntityPosM.Add(FVector2D(Pos.X, Pos.Y) * 0.01f);
+		}
+
+		// ---- Canonical E-space (RC8; the DeterminismTwoRun seed, measured
+		// 2026-11-01 via the DetHex hex trace): the assigner bids entities in
+		// ARRAY order ("roster order" was the intent), but the array was CHUNK
+		// order -- entity-slot-creation-dependent across a battle reset. Tied
+		// bids then resolved different roster slots per run (the archer
+		// rosters 8/11 swapped slots between the two runs from the FIRST servo
+		// tick; the phase-3 dossier's "entities 8/11, tick-14 onset" was this
+		// divergence becoming visible at the old trace's decimal resolution).
+		// Fix: every assigner input below is assembled in CANONICAL roster
+		// order (the A13 identity; the chunk is single-unit) and every
+		// fragment write-back maps through InvPerm. Within-lambda consumers
+		// pair permuted arrays consistently. Off-path reads (officer override,
+		// debug lines, the feed-forward stamps) stay chunk-indexed by design.
+		const auto CanonOwners = Context.GetFragmentView<FOwnerUnitFragment>();
+		TArray<int32>& Perm = TLPerm;
+		Perm.Reset(NumEntities);
+		for (int32 i = 0; i < NumEntities; ++i)
+		{
+			Perm.Add(i);
+		}
+		Perm.Sort([&CanonOwners](int32 A, int32 B)
+		{
+			return CanonOwners[A].RosterIndex < CanonOwners[B].RosterIndex;
+		});
+		TArray<int32>& InvPerm = TLInvPerm;
+		InvPerm.SetNumUninitialized(NumEntities);
+		for (int32 i = 0; i < NumEntities; ++i)
+		{
+			InvPerm[Perm[i]] = i;
+		}
+		{
+			TArray<FVector2D>& Tmp = TLPermTmpPos;
+			Tmp.Reset(NumEntities);
+			for (int32 i = 0; i < NumEntities; ++i)
+			{
+				Tmp.Add(EntityPosM[Perm[i]]);
+			}
+			for (int32 i = 0; i < NumEntities; ++i)
+			{
+				EntityPosM[i] = Tmp[i];
+			}
 		}
 
 		// ---- Garrison slot-source branch (spec §4.4, A1/A2): when the unit
@@ -282,7 +327,7 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 			Assignment.Reset(NumEntities);
 			for (int32 i = 0; i < NumEntities; ++i)
 			{
-				const int32 Slot = Context.GetFragmentView<FSlotAssignmentFragment>()[i].SlotIndex - SlotBase;
+				const int32 Slot = Context.GetFragmentView<FSlotAssignmentFragment>()[Perm[i]].SlotIndex - SlotBase;
 				Assignment.Add((Slot >= 0 && Slot < Count) ? Slot : INDEX_NONE);
 			}
 
@@ -298,8 +343,8 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 				TArrayView<FSlotAssignmentFragment> HoldSlots = Context.GetMutableFragmentView<FSlotAssignmentFragment>();
 				for (int32 i = 0; i < NumEntities; ++i)
 				{
-					HoldSlots[i].SlotIndex = NewAssignment[i] >= 0 ? NewAssignment[i] + SlotBase : INDEX_NONE;
-					HoldSlots[i].Generation = Formation.Generation; // audit L12: the mirror is now live
+					HoldSlots[Perm[i]].SlotIndex = NewAssignment[i] >= 0 ? NewAssignment[i] + SlotBase : INDEX_NONE;
+					HoldSlots[Perm[i]].Generation = Formation.Generation; // audit L12: the mirror is now live
 				}
 				Assignment = MoveTemp(NewAssignment);
 				Formation.AssignedGeneration = Formation.Generation;
@@ -316,7 +361,8 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 			int32 HoldSlotErrorCount = 0;
 			for (int32 i = 0; i < NumEntities; ++i)
 			{
-				const int32 Slot = Assignment[i];
+				const int32 Ei = InvPerm[i]; // the entity's canonical index
+				const int32 Slot = Assignment[Ei];
 				if (Slot < 0 || Slot >= Count)
 				{
 					continue;
@@ -333,7 +379,7 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 
 				// Phase 2 B1: the same reduction rides the garrison branch.
 				{
-					const float ErrorM = FVector2D::Distance(EntityPosM[i], PostPosM[Slot]);
+					const float ErrorM = FVector2D::Distance(EntityPosM[Ei], PostPosM[Slot]);
 					HoldMaxSlotErrorM = FMath::Max(HoldMaxSlotErrorM, ErrorM);
 					HoldSlotErrorSum += ErrorM;
 					++HoldSlotErrorCount;
@@ -344,7 +390,7 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 					FBattleOverlayLine Line;
 					Line.From = Context.GetFragmentView<FTransformFragment>()[i].GetTransform().GetTranslation();
 					Line.To = FVector(HoldTargets[i].TargetPos.X, HoldTargets[i].TargetPos.Y, PostZCm[Slot]);
-					const float ErrorM = FVector2D::Distance(EntityPosM[i], PostPosM[Slot]);
+					const float ErrorM = FVector2D::Distance(EntityPosM[Ei], PostPosM[Slot]);
 					const uint8 Magnitude = static_cast<uint8>(FMath::Clamp(ErrorM * 25.5f, 0.f, 255.f));
 					Line.Color = FColor(0, 255 - Magnitude, 255); // cyan-graded: garrison slot error
 					DebugHold->EnqueueOverlayLine(Line);
@@ -483,11 +529,11 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 		const auto CombatPairView = Context.GetFragmentView<FCombatPairFragment>();
 		for (int32 i = 0; i < NumEntities; ++i)
 		{
-			const FSlotAssignmentFragment& SlotFrag = Context.GetFragmentView<FSlotAssignmentFragment>()[i];
+			const FSlotAssignmentFragment& SlotFrag = Context.GetFragmentView<FSlotAssignmentFragment>()[Perm[i]];
 			Assignment.Add(SlotFrag.SlotIndex);
 			StuckFlags[i] = SlotFrag.StuckMark;
 			bStuckPresent = bStuckPresent || SlotFrag.StuckMark != 0;
-			StaleSkipFlags[i] = (CombatPairView.Num() == NumEntities && CombatPairView[i].bRingValid != 0) ? 1 : 0;
+			StaleSkipFlags[i] = (CombatPairView.Num() == NumEntities && CombatPairView[Perm[i]].bRingValid != 0) ? 1 : 0;
 			if (Assignment[i] != INDEX_NONE && Assignment[i] < Formation.NumSlots)
 			{
 				SlotOccupied[Assignment[i]] = true;
@@ -604,7 +650,7 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 					VelM.Reset(NumEntities);
 					for (int32 i = 0; i < NumEntities; ++i)
 					{
-						const FVector Vel = Context.GetFragmentView<FMassVelocityFragment>()[i].Value;
+						const FVector Vel = Context.GetFragmentView<FMassVelocityFragment>()[Perm[i]].Value;
 						VelM.Add(FVector2D(Vel.X, Vel.Y) * 0.01f);
 					}
 					TArray<FIntPoint> Pairs;
@@ -691,9 +737,9 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 			TArrayView<FSlotAssignmentFragment> SlotsView = Context.GetMutableFragmentView<FSlotAssignmentFragment>();
 			for (int32 i = 0; i < NumEntities; ++i)
 			{
-				SlotsView[i].SlotIndex = NewAssignment[i];
-				SlotsView[i].Generation = Formation.Generation;
-				SlotsView[i].bFinalLocked = 0;
+				SlotsView[Perm[i]].SlotIndex = NewAssignment[i];
+				SlotsView[Perm[i]].Generation = Formation.Generation;
+				SlotsView[Perm[i]].bFinalLocked = 0;
 			}
 			Assignment = MoveTemp(NewAssignment);
 			Formation.AssignedGeneration = Formation.Generation;
@@ -735,7 +781,8 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 		const auto OwnerViews = Context.GetFragmentView<FOwnerUnitFragment>();
 		for (int32 i = 0; i < NumEntities; ++i)
 		{
-			const int32 Slot = Assignment[i];
+			const int32 Ei = InvPerm[i]; // canonical index (Assignment/EntityPosM space)
+			const int32 Slot = Assignment[Ei];
 			if (Slot < 0 || Slot >= Formation.NumSlots)
 			{
 				continue;
@@ -769,7 +816,7 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 			}
 			else if (bFallIn && bFanIn && HandoffDistM > 0.f)
 			{
-				const float DistFinalM = FVector2D::Distance(EntityPosM[i], FinalSlotPosM[Slot]);
+				const float DistFinalM = FVector2D::Distance(EntityPosM[Ei], FinalSlotPosM[Slot]);
 				AssignFrags[i].bFinalLocked = FUnitLocomotion::FallInHandoffLatch(
 					AssignFrags[i].bFinalLocked != 0, DistFinalM, HandoffDistM) ? 1 : 0;
 				const float Alpha = AssignFrags[i].bFinalLocked ? 1.f : AlphaUnit;
@@ -781,8 +828,8 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 			}
 			else if (bFanIn && FanInHystM > 0.f)
 			{
-				const float DistTravelM = FVector2D::Distance(EntityPosM[i], SlotPosM[Slot]);
-				const float DistFinalM = FVector2D::Distance(EntityPosM[i], FinalSlotPosM[Slot]);
+				const float DistTravelM = FVector2D::Distance(EntityPosM[Ei], SlotPosM[Slot]);
+				const float DistFinalM = FVector2D::Distance(EntityPosM[Ei], FinalSlotPosM[Slot]);
 				if (DistFinalM + FanInHystM < DistTravelM)
 				{
 					TargetPosM = FinalSlotPosM[Slot];
@@ -804,7 +851,7 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 			// dressing metrics the soak asserts on).
 			if (!bOfficerEntity)
 			{
-				const float ErrorM = FVector2D::Distance(EntityPosM[i], TargetPosM);
+				const float ErrorM = FVector2D::Distance(EntityPosM[Ei], TargetPosM);
 				MaxSlotError = FMath::Max(MaxSlotError, ErrorM);
 				SlotErrorSum += ErrorM;
 				++SlotErrorCount;
@@ -823,7 +870,7 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 				Line.To = FVector(Targets[i].TargetPos.X, Targets[i].TargetPos.Y, Line.From.Z);
 				// Magnitude-graded color: green near slot -> red far (measured
 				// against the target actually written, peel included).
-				const float ErrorM = FVector2D::Distance(EntityPosM[i], TargetPosM);
+				const float ErrorM = FVector2D::Distance(EntityPosM[Ei], TargetPosM);
 				const uint8 Magnitude = static_cast<uint8>(FMath::Clamp(ErrorM * 25.5f, 0.f, 255.f));
 				Line.Color = FColor(255, 255 - Magnitude, 0);
 				Debug->EnqueueOverlayLine(Line);

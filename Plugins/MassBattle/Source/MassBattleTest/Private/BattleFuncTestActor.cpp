@@ -5721,6 +5721,14 @@ namespace
 		TEXT("Battle.Combat.Clusters"),
 		TEXT("Battle.Combat.Tally"),
 		TEXT("Battle.Combat.Assign"),
+		// The morale pair (spec morale-and-gas section 4.8: "every
+		// determinism-gated scenario and the two-run gate set this to 1" --
+		// the gate predates the morale pass and never picked the pin up; the
+		// T6.1 flip (Enable default 1) then put the wall-clock morale GE tick
+		// inside the two-run equality). Enable is pinned explicitly so the
+		// gate tests the MORALE-ON world regardless of the default.
+		TEXT("Battle.Morale.Enable"),
+		TEXT("Battle.Morale.DeterministicTick"),
 	};
 }
 
@@ -5748,7 +5756,7 @@ void ADeterminismTwoRunTest::CompleteTest(EFunctionalTestResult TestResult, cons
 
 void ADeterminismTwoRunTest::SetCvars()
 {
-	for (int32 i = 0; i < 4; ++i)
+	for (int32 i = 0; i < 6; ++i)
 	{
 		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(DetCvars[i]))
 		{
@@ -5761,7 +5769,7 @@ void ADeterminismTwoRunTest::SetCvars()
 
 void ADeterminismTwoRunTest::RestoreCvars()
 {
-	for (int32 i = 0; i < 4; ++i)
+	for (int32 i = 0; i < 6; ++i)
 	{
 		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(DetCvars[i]))
 		{
@@ -5932,7 +5940,9 @@ void ADeterminismTwoRunTest::Tick(float DeltaSeconds)
 	{
 		if (TicksDone % 60 == 0)
 		{
-			Run1Hashes.Add(FBattleStateHash::Compute(World));
+			TArray<uint64> Sections;
+			Run1Hashes.Add(FBattleStateHash::Compute(World, &Sections));
+			Run1Sections.Add(Sections);
 		}
 		if (TicksDone >= 2400)
 		{
@@ -5950,13 +5960,17 @@ void ADeterminismTwoRunTest::Tick(float DeltaSeconds)
 	else if (Phase == EPhase::Run2)
 	{
 		static TArray<uint64> Run2Hashes;
+		static TArray<TArray<uint64>> Run2Sections;
 		if (TicksDone == 1)
 		{
 			Run2Hashes.Reset();
+			Run2Sections.Reset();
 		}
 		if (TicksDone % 60 == 0)
 		{
-			Run2Hashes.Add(FBattleStateHash::Compute(World));
+			TArray<uint64> Sections;
+			Run2Hashes.Add(FBattleStateHash::Compute(World, &Sections));
+			Run2Sections.Add(Sections);
 		}
 		if (TicksDone >= 2400)
 		{
@@ -5974,6 +5988,38 @@ void ADeterminismTwoRunTest::Tick(float DeltaSeconds)
 				TEXT("EXEC_RESULT DeterminismTwoRun Evidence samples=%d/%d mismatches=%d firstDivergence=%d"),
 				Run1Hashes.Num(), Run2Hashes.Num(),
 				FirstMismatch == INDEX_NONE ? 0 : Count - FirstMismatch, FirstMismatch);
+			// The RC8 divergence bisector: name the first section whose hash
+			// diverges at the first mismatching sample (1 bookkeeping, 2
+			// transforms, 3 archetype count, 4 shared stats, 5 formation,
+			// 6 garrison, 7 combat pairs, 8 ranged, 9 projectile pool,
+			// 10 morale).
+			if (FirstMismatch != INDEX_NONE
+				&& Run1Sections.IsValidIndex(FirstMismatch) && Run2Sections.IsValidIndex(FirstMismatch))
+			{
+				static constexpr const TCHAR* SectionNames[] = {
+					TEXT("bookkeeping"), TEXT("transforms"), TEXT("archetypes"), TEXT("stats"),
+					TEXT("formation"), TEXT("garrison"), TEXT("combat"), TEXT("ranged"),
+					TEXT("projectiles"), TEXT("morale"),
+				};
+				const TArray<uint64>& A = Run1Sections[FirstMismatch];
+				const TArray<uint64>& B = Run2Sections[FirstMismatch];
+				for (int32 S = 0; S < A.Num() && S < B.Num(); ++S)
+				{
+					const TCHAR* Name = S < 10 ? SectionNames[S] : TEXT("?");
+					if (A[S] != B[S])
+					{
+						UE_LOG(LogMassBattle, Display,
+							TEXT("EXEC_RESULT DeterminismTwoRun Section %d (%s) DIFF run1=%016llx run2=%016llx"),
+							S + 1, Name, A[S], B[S]);
+					}
+					else
+					{
+						UE_LOG(LogMassBattle, Display,
+							TEXT("EXEC_RESULT DeterminismTwoRun Section %d (%s) match %016llx"),
+							S + 1, Name, A[S]);
+					}
+				}
+			}
 			const bool bOk = Run1Hashes.Num() == Run2Hashes.Num() && FirstMismatch == INDEX_NONE;
 			CompleteTest(bOk ? EFunctionalTestResult::Succeeded : EFunctionalTestResult::Error,
 				FString::Printf(TEXT("samples=%d firstDivergence=%d"), Count, FirstMismatch));

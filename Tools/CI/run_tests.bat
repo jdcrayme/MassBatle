@@ -26,13 +26,20 @@ if "%TIER%"=="unit" (
     set MODE_FLAGS=
 ) else if "%TIER%"=="func" (
     set FILTER=Battle.Func
-    set MODE_FLAGS=-game
+    REM The TEST map is pinned explicitly (T6.1-prep, 2026-11-01): the demo
+    REM shell set GameDefaultMap to L_MassBattle_Demo01, and the unpinned
+    REM -game boot silently loaded the demo map -- the tests self-isolate
+    REM but the two-run determinism gate ran inside the demo GameMode's world
+    REM (its beat sequencer + session cvars between the two runs; measured:
+    REM the det_hex3 trace boot caught the demo's 12 MB_* units, not the
+    REM fixture).
+    set MODE_FLAGS=/Game/MassBattle/Test/Maps/L_MassBattle_T0_Functional -game
 ) else if "%TIER%"=="funcon" (
     REM Phase 2 flag-on tier: the whole func suite with the phase-2 movement
     REM cvars applied by the harness (-Phase2Flags param; the -ExecCmds path
     REM proved unreliable for multi-command chains in the -game process).
     set FILTER=Battle.Func
-    set MODE_FLAGS=-game -Phase2Flags
+    set MODE_FLAGS=/Game/MassBattle/Test/Maps/L_MassBattle_T0_Functional -game -Phase2Flags
 ) else (
     echo Unknown tier "%TIER%" -- use unit, func or funcon
     exit /b 2

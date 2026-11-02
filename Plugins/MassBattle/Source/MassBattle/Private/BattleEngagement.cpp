@@ -275,23 +275,19 @@ namespace FCombatSolver
 
 	const FAssignDefenderState* FindDefender(const TArray<FAssignDefenderState>& Defenders, FMassEntityHandle Entity)
 	{
-		int32 Lo = 0;
-		int32 Hi = Defenders.Num() - 1;
-		while (Lo <= Hi)
+		// Linear scan (T6.1-prep, 2026-11-01): the array's CANONICAL order is
+		// (unit handle, roster) now -- entity-handle binary search would be a
+		// different total order than the array's. The old handle-sorted array
+		// ordered the greedy consumers by MASS ENTITY HANDLE, which permutes
+		// across a battle reset (the destroy/respawn cycle shifts indexes and
+		// serials) -- the two-run equality's ring-target divergence seed
+		// (measured via the DetHex/DetRes traces, det_sec*.log). Linear cost:
+		// <= ~100 defenders x per-seeker calls, trivial at Phase-1 scale.
+		for (const FAssignDefenderState& D : Defenders)
 		{
-			const int32 Mid = (Lo + Hi) / 2;
-			if (Defenders[Mid].Entity == Entity)
+			if (D.Entity == Entity)
 			{
-				return &Defenders[Mid];
-			}
-			if (Defenders[Mid].Entity.Index < Entity.Index ||
-				(Defenders[Mid].Entity.Index == Entity.Index && Defenders[Mid].Entity.SerialNumber < Entity.SerialNumber))
-			{
-				Lo = Mid + 1;
-			}
-			else
-			{
-				Hi = Mid - 1;
+				return &D;
 			}
 		}
 		return nullptr;

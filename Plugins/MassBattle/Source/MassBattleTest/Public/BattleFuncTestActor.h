@@ -622,7 +622,7 @@ private:
 // sampled every 60 ticks; full reset between the runs; all hashes match.
 // ---------------------------------------------------------------------------
 UCLASS()
-class MASSBATTLETEST_API ADeterminismTwoRunTest : public AFunctionalTest
+	class MASSBATTLETEST_API ADeterminismTwoRunTest : public AFunctionalTest
 {
 	GENERATED_BODY()
 
@@ -639,11 +639,12 @@ public:
 private:
 	enum class EPhase : int32 { Run1, Run2, Done };
 	EPhase Phase = EPhase::Done;
-	int32 SavedCvars[4] = {};
+	int32 SavedCvars[6] = {};
 	int32 SavedRanged[4] = {};
 	int32 TicksDone = 0;
 	bool bNeedSpawn = false;
 	TArray<uint64> Run1Hashes;
+	TArray<TArray<uint64>> Run1Sections; // the RC8 bisector's per-sample section hashes
 	void SetCvars();
 	void RestoreCvars();
 	// Phase 3 (RC8): the mixed clash+volley fixture -- archers + infantry on

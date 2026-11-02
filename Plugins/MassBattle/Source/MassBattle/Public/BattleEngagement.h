@@ -202,6 +202,7 @@ namespace FCombatSolver
 		uint16 CoveredMask = 0;        // same-unit living-neighbor sectors
 		uint8 LaneIndex = 0;
 		uint8 bValidTarget = 1;        // alive + not garrisoned + not own unit
+		int32 RosterIndex = 0;         // the A13 canonical identity's roster slot (the canonical sort key)
 	};
 
 	/** Mirror of one engagement record (AssignedAttackers is the mutable

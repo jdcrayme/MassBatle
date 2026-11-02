@@ -116,6 +116,7 @@ void UAssignPairsProcessor::Execute(FMassEntityManager& EntityManager, FMassExec
 			FCombatSolver::FAssignDefenderState Def;
 			Def.Entity = Context.GetEntity(i);
 			Def.Unit = Owners[i].Owner;
+			Def.RosterIndex = Owners[i].RosterIndex;
 			const FVector P = Transforms[i].GetTransform().GetTranslation();
 			Def.PosM = FVector2D(P.X, P.Y) * 0.01f;
 			Def.Spacing = SpacingM;
@@ -131,11 +132,18 @@ void UAssignPairsProcessor::Execute(FMassEntityManager& EntityManager, FMassExec
 			Defenders.Add(Def);
 		}
 	});
-	// Handle-sorted (the seam binary-searches this array).
+	// CANONICALLY sorted (T6.1-prep, 2026-11-01): the array order feeds the
+	// pass's greedy consumers (the candidate scans' strict-< ties, the
+	// sector-row indexing), and the old MASS-ENTITY-HANDLE order permutes
+	// across a battle reset -- the two-run equality's divergence seed (the
+	// DetHex/DetRes trace dossier, det_sec*.log). The A13 canonical identity
+	// (unit handle + roster slot) is reset-stable. FindDefender scans
+	// linearly, so the array's order contract is the greedy's alone.
 	Defenders.Sort([](const FCombatSolver::FAssignDefenderState& A, const FCombatSolver::FAssignDefenderState& B)
 	{
-		if (A.Entity.Index != B.Entity.Index) { return A.Entity.Index < B.Entity.Index; }
-		return A.Entity.SerialNumber < B.Entity.SerialNumber;
+		if (A.Unit.Index != B.Unit.Index) { return A.Unit.Index < B.Unit.Index; }
+		if (A.Unit.Serial != B.Unit.Serial) { return A.Unit.Serial < B.Unit.Serial; }
+		return A.RosterIndex < B.RosterIndex;
 	});
 	// Coverage + covered masks from the tally pass's fresh stamps (misses read
 	// as coverage 0 -- a one-tick transient at first contact, logged design).
@@ -329,12 +337,32 @@ void UAssignPairsProcessor::Execute(FMassEntityManager& EntityManager, FMassExec
 		}
 	});
 
-	// Flatten seekers for the pass (chunk order preserved).
+	// Flatten seekers for the pass, then sort CANONICALLY (T6.1-prep,
+	// 2026-11-01): the chunk-order flatten fed the seam's shuffle (and any
+	// order-sensitive greedy) a RUN-DEPENDENT base order -- a permutation of
+	// a permuted array is still base-dependent, so the shuffle never made the
+	// pass deterministic across a battle reset. The A13 identity (unit handle
+	// + roster slot) is reset-stable. The write-back gathers by ENTITY KEY
+	// (below), so the array order is free to change.
 	TArray<FCombatSolver::FAssignSeekerState> Seekers;
 	Seekers.Reserve(64);
 	for (const TArray<FCombatSolver::FAssignSeekerState>& Chunk : BridgesByChunk)
 	{
 		Seekers.Append(Chunk);
+	}
+	Seekers.Sort([](const FCombatSolver::FAssignSeekerState& A, const FCombatSolver::FAssignSeekerState& B)
+	{
+		if (A.OwnerUnit.Index != B.OwnerUnit.Index) { return A.OwnerUnit.Index < B.OwnerUnit.Index; }
+		if (A.OwnerUnit.Serial != B.OwnerUnit.Serial) { return A.OwnerUnit.Serial < B.OwnerUnit.Serial; }
+		return A.RosterIndex < B.RosterIndex;
+	});
+	// Entity-keyed gather for the write-back: the mass entity handle is the
+	// seeker's identity in the fragment space.
+	TMap<FMassEntityHandle, int32> SeekerIndexByEntity;
+	SeekerIndexByEntity.Reserve(Seekers.Num());
+	for (int32 Idx = 0; Idx < Seekers.Num(); ++Idx)
+	{
+		SeekerIndexByEntity.Add(Seekers[Idx].Entity, Idx);
 	}
 
 	// Lane proportionality: attacker file k of NumFilesA targets defender lane
@@ -382,8 +410,6 @@ void UAssignPairsProcessor::Execute(FMassEntityManager& EntityManager, FMassExec
 	// ---- Write back: pair fragments + ring points (A12 press ring). ----
 	{
 		const bool bDebugOverlay = DebugSub && DebugSub->IsOverlayShown();
-		int32 SeekerCursor = 0; // cumulative SEEKER offset into the seam-mutated Seekers
-		int32 ChunkCursor = 0;  // chunk index into ChunkIndices (one entry per chunk)
 		SeekerQuery.ForEachEntityChunk(Context, [&](FMassExecutionContext& Context)
 		{
 			auto Pairs = Context.GetMutableFragmentView<FCombatPairFragment>();
@@ -392,32 +418,25 @@ void UAssignPairsProcessor::Execute(FMassEntityManager& EntityManager, FMassExec
 
 			auto Charges = Context.GetMutableFragmentView<FChargeFragment>();
 			const auto Velocities = Context.GetFragmentView<FMassVelocityFragment>();
-			// This chunk's slice of the SEAM-MUTATED Seekers array (the gather
-			// appended per chunk in order; BridgesByChunk holds pre-pass
-			// copies and must not be written back). TWO cursors, because the
-			// two arrays are indexed by different things -- conflating them is
-			// the 2026-10-30 melt bug's root: ChunkCursor walks ChunkIndices
-			// (one entry PER CHUNK), SeekerCursor walks Seekers (one entry PER
-			// SEEKER -- the cumulative count of earlier chunks' seekers). The
-			// shipped code advanced ONE cursor per chunk and used it for both
-			// lookups: every chunk after the first read the wrong Slice and
-			// the wrong states -- with unequal per-chunk seeker counts the
-			// states cross unit lines (the melt fixtures' friendly-fire kills,
-			// PROBE_WB_MISALIGN dossier in Tools/CI/probe_s4d.log), and with
-			// the offset fixed but the chunk lookup still cursor-shared, the
-			// later chunks' rows fell out of bounds and their seekers were
-			// never written back at all (the ordered unit silently lost every
-			// fresh pair -- PROBE_WB owner counts, Tools/CI/probe_full.log).
-			const TArray<int32>& ChunkRows = ChunkCursor < ChunkIndices.Num() ? ChunkIndices[ChunkCursor] : TArray<int32>();
-			const int32 ChunkSeekerCount = FMath::Min(ChunkRows.Num(), Seekers.Num() - SeekerCursor);
-			const int32 ChunkSeekerBase = SeekerCursor;
-			++ChunkCursor;
-			SeekerCursor += ChunkSeekerCount;
-
-			for (int32 Row = 0; Row < ChunkSeekerCount; ++Row)
+			// The SEAM-MUTATED Seekers gather back through the ENTITY KEY
+			// (T6.1-prep, 2026-11-01): the old TWO-CURSOR walk assumed the
+			// write-back query visits chunks in the collect query's order AND
+			// that Seekers stayed in chunk-flatten order -- both assumptions
+			// broke under the canonical Seekers sort (and the cursor sharing
+			// was the 2026-10-30 melt bug's root: ChunkCursor walked
+			// ChunkIndices, SeekerCursor walked Seekers; conflating them
+			// crossed unit lines -- PROBE_WB_MISALIGN dossier in
+			// Tools/CI/probe_s4d.log, PROBE_WB in Tools/CI/probe_full.log).
+			// The entity handle is the seeker's identity in fragment space;
+			// the map gather is order-free.
+			for (int32 i = 0; i < Context.GetNumEntities(); ++i)
 			{
-				const int32 i = ChunkRows[Row];
-				const FCombatSolver::FAssignSeekerState& S = Seekers[ChunkSeekerBase + Row];
+				const int32* SeekerIdx = SeekerIndexByEntity.Find(Context.GetEntity(i));
+				if (!SeekerIdx)
+				{
+					continue; // not a seeker this tick (no combat intent)
+				}
+				const FCombatSolver::FAssignSeekerState& S = Seekers[*SeekerIdx];
 				FCombatPairFragment& Out = Pairs[i];
 				const FMassEntityHandle PrevTarget = Out.Target;
 				Out.Target = S.Target;
