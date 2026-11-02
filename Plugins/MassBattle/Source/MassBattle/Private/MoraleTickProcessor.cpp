@@ -83,11 +83,28 @@ void UMoraleTickProcessor::Execute(FMassEntityManager& EntityManager, FMassExecu
 
 	// Cadence accumulator (registry-stored, the CombatClusterCooldown
 	// pattern): the per-frame cost is one compare. All work rides the tick.
+	// EMPTY-WORLD FIRES STAY PRIMED (task 1.S3, 2026-11-02): a fire with no
+	// units sets the cooldown back to 0 instead of consuming a period. The
+	// old consume-on-empty made the cadence depend on WHERE the battle reset
+	// landed within the frame: ResetBattleState zeroes the accumulator
+	// mid-frame, the same frame's pass then fired on the emptied world and
+	// re-armed 0.35, and the next fixture inherited a one-tick-shifted
+	// phase. Measured: the two-run gate's runs fired the morale passes at
+	// 1+21k vs 21k (det_trace_s3f.log), a tick-identical kill at t=693 fell
+	// into different pass windows, and the morale cascade (rout vs no-rout)
+	// forked the kill streams at t=700 -- the DeterminismTwoRun residue.
+	// With the primed form the first fire lands on the first POPULATED tick
+	// after any reset, symmetric regardless of pipeline order.
 	const float DT = Context.GetDeltaTimeSeconds();
 	float Cooldown = Registry->GetMoraleTickCooldown() - DT;
 	if (Cooldown > 0.f)
 	{
 		Registry->SetMoraleTickCooldown(Cooldown);
+		return;
+	}
+	if (Registry->GetUnitCount() == 0)
+	{
+		Registry->SetMoraleTickCooldown(0.f); // stay primed: fire on the first populated tick
 		return;
 	}
 	const float TickDt = FMath::Max(FMoraleCVars::TickPeriod(), KINDA_SMALL_NUMBER);
@@ -229,6 +246,28 @@ void UMoraleTickProcessor::TickMorale(FMassEntityManager& EM, FMassExecutionCont
 			{
 				++AuraActiveCount;
 			}
+			// DET trace (task 1.S3): the per-unit morale surface -- value +
+			// every weighted input, run-tagged, one line per unit per morale
+			// pass (the pass cadence is ~21 game ticks, so the volume is
+			// bounded). The 2026-11-02 fork: run 1's unit 3 crossed the break
+			// at the 4th kill while run 2's did not -- this line names WHICH
+			// input diverged first (game thread; reliable file order).
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT DetMor run=%d t=%d U=%u:%u M=%.3f spike=%.3f shock=%.3f ex=%.3f odds=%.2f arc=%d rf=%d aura=%.2f win=%.2f cas=%.3f rout=%d live=%d"),
+				BattleDet::RunTag(), BattleDet::Tick(),
+				Body.Unit.Index, Body.Unit.Serial,
+				State->LastMoraleValue,
+				State->FreshCasualtySpike,
+				Registry->GetTeamGeneralDeathShock(Body.TeamId),
+				State->ExertionIntegral,
+				Inputs->LocalOdds,
+				FMath::CountBits(static_cast<uint32>(Inputs->ArcExposureMask)),
+				Inputs->RoutingFriendsNearby,
+				Inputs->GeneralAuraBonus,
+				Inputs->WinningLocally,
+				Inputs->CasualtyFraction,
+				static_cast<int32>(State->RoutState),
+				Body.LiveCount);
 		}
 
 		// Servo flee flag (the Flee movement state's source; A12: a movement
