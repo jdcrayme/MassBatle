@@ -24,10 +24,17 @@ Start (any shell; binds 127.0.0.1 only, headless):
 
     set JENKINS_HOME=E:\Tools\jenkins\home
     E:\Tools\jenkins\jdk-21.0.12.1+1\bin\java.exe -Djava.awt.headless=true ^
-      -Djenkins.install.runSetupWizard=false -Xmx512m ^
+      -Djenkins.install.runSetupWizard=false ^
+      -Dhudson.plugins.git.GitSCM.ALLOW_LOCAL_CHECKOUT=true -Xmx512m ^
       -jar E:\Tools\jenkins\jenkins.war --httpPort=8080 --httpListenAddress=127.0.0.1
 
 Stop: kill the `java.exe -jar jenkins.war` process (no service is registered).
+
+The `ALLOW_LOCAL_CHECKOUT` property is REQUIRED since the 2026-11-02 boot
+(task-1 session-3's gate trigger, build #4): the job's SCM remote is the
+local `file:///E:/Unreal Projects/MassBattle`, and the git plugin's
+local-directory guard aborts every checkout without it (5-second FAILURE
+at the Checkout stage, before UBT). Earlier boots predate the guard.
 
 Optional: a Windows Task Scheduler "at logon" entry running the start line keeps
 Jenkins alive across reboots so the `H 2 * * *` nightly cron always fires. This

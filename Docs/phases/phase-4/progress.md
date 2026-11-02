@@ -379,6 +379,15 @@
 - [H-4] NOT executed (spec docs read-only without explicit authorization):
   the proposed B.4/B.5 wording patch is recorded in the plan doc's §9 for
   the owner.
+- [gate] Jenkins `massbattle-gate` green: the host was DOWN at session
+  start (the portable install, no at-logon entry) -- started per
+  `Tools/CI/JENKINS.md`. Build #4 FAILED in 5 s at Checkout: the git
+  plugin's local-directory guard rejects the job's `file:///` remote
+  without `-Dhudson.plugins.git.GitSCM.ALLOW_LOCAL_CHECKOUT=true` (a
+  pre-existing config gap; earlier boots predate the guard). Restarted
+  with the property (the JENKINS.md start line corrected in place -- AGENTS
+  §4), re-triggered: **build #5 SUCCESS** (checkout -> UBT editor build ->
+  run_tests.bat unit, all green).
 - Commits: the code rides two commits (the hash/bisector/guard/telemetry
   set, then the morale cadence fix that flips the gate green -- file
   coupling disclosed per AGENTS §3); the records ride the third.
