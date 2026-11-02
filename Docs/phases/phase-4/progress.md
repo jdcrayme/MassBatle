@@ -10,6 +10,44 @@
 
 ## Discrepancies (dated, newest first)
 
+- **2026-11-02 (Task 1 hunt, session 3 -- the gate is GREEN; the residue had
+  two layers)** -- the session plan
+  (`Docs/phases/phase-4/task1-hunt-archetype-census.md`, executed with the
+  recommended H-1/H-2/H-3; H-4 remains an owner call). Layer 1 confirmed
+  the session-2 entry point's artifact model EXACTLY (probe
+  `det_census.log`: run 1 sampled the archetype count 4->6->8 -- the death
+  variants, +2 per first kill of a composition family; run 2 constant 8 at
+  all 40 samples; sections 1-2 matching): the cumulative
+  `DebugGetArchetypesCount` term violated the hash's own no-non-sim-state
+  contract and was retired for the LIVE COMPOSITION CENSUS (per-entity
+  presence bitset over the 20-type `kCensusTypes` list, one home =
+  the `CensusBits<Ts...>` argument list; count demoted to the permanent
+  `Det2RunCensus` gate telemetry). Layer 2: the falsifier row fired anyway
+  -- samples 31-40 kept diverging with equal counts, and the per-section
+  bisector (now 10 TRUE per-section hashes; the old 6 cumulative-prefix
+  hashes mislabeled sections 4-10) pinned a REAL live drift at the first
+  kill window (t720). The instrumented hunt (Battle.Det.RunTag/Tick cvars
+  + DetPair/DetRoll/DetRngRoll/DetMor canonical traces; logs
+  `det_census*.log`, `det_trace_s3*.log`): kills #1-4 TICK-IDENTICAL
+  (681/682/693/694), then run 1's unit 3 BROKE (morale -0.093 at its t=694
+  pass -> rout -> its kills stop) while run 2's t=693 pass still read
+  +0.954 and kept killing at t=700-712. ROOT CAUSE: the morale pass's
+  cadence accumulator is registry state that `ResetBattleState` zeroes
+  mid-frame -- the same frame's pass then fired on the emptied world and
+  RE-ARMED 0.35, so run 2 inherited a one-tick-shifted phase (21k vs
+  1+21k) and the tick-identical kill #3 straddled the boundary. FIX: an
+  empty-world fire STAYS PRIMED (cooldown -> 0; fire on the first
+  populated tick) -- reset-ordering-immune (`MoraleTickProcessor.cpp`).
+  Gate: `DeterminismTwoRun PASS samples=40 mismatches=0` isolated
+  (`det_fix1.log`) AND in-gate; unit 85/85 (new
+  `Battle.Unit.StateHash.CensusGuard`: exec-kill flips the census slice;
+  an extra throwaway kill between identical mini-battles leaves it equal);
+  func 25/27 = exactly S4_WidthOverride + S5_Mob (signatures unchanged).
+  Owner-facing residuals: H-4 (the B.4/B.5 wording patch, proposed in the
+  record §9); the phase-3 dossier re-read (its two-run signature is
+  consistent with the same morale-phase straddle, now fixed); the morale
+  goldens are cadence-sensitive in principle -- unit tier held this time.
+
 - **2026-11-01 (Task 1 blocker hunt, session 2 -- three canonical-order fixes
   landed, the residue narrowed)** -- the DeterminismTwoRun hunt on `main`
   (`4ace397`). THREE real defects fixed: (1) the func gate's map pin -- the
@@ -296,6 +334,54 @@
   (morale bars/aura rings/flee arrows) are PR-14's editor-session item with
   the counters in place; WinningLocally's kills half has no feed (the
   resolution pass runs worker-side -- KillWindow stays 0, disclosed).
+
+## Task-1 hunt, session 3 (2026-11-02) -- the section-3 residue closed
+
+- [1.S3-a] F-table re-verified on the working tree @ `c4ebf97` (all rows
+  held; one plan-fact correction: `OutSectionHashes` received SIX
+  cumulative-prefix hashes, not 10 -- the test's 10-name array mislabeled
+  4-6). Probe landed (`Det2RunCensus` pre-run + both sampling sites) ->
+  run isolated: model CONFIRMED, all signature rows hit
+  (`det_census.log`: pre-run 4; run 1 = 4->6@t720->8@t1800; run 2 = const
+  8; sections 1-2 match). -> evidence in the discrepancy entry above.
+- [1.S3-c] Census landed (H-1 option A): `BattleStateHash.cpp` section 3
+  folds the per-entity 64-bit presence bitset over the 20-type
+  `CensusBits<Ts...>` list (Route A composition + trait tags + both death
+  tags; one home = the template argument list); Shipping-safe, no debug
+  dependency; the count stays a metric (the census line + DumpMetrics +
+  the soak line). Header contract restored ("no non-sim state" now true).
+  -> build green; compile-checked.
+- [1.S3-b] Per-section bisector landed (H-2): each section accumulates its
+  OWN byte slice (main stream byte-identical; 10 sections, names 1..10 now
+  true); per-sample `Det2RunSec` telemetry added. -> the sample-0 cascade
+  artifact gone (`det_census2.log`: sections 4/6 MATCH while neighbors
+  DIFF -- independent signal at last).
+- [1.S3-e] Guard test landed: `Battle.Unit.StateHash.CensusGuard`
+  (liveness: an exec-path kill flips the census slice; history-independence:
+  an extra throwaway kill between identical mini-battles leaves the census
+  equal; monotone-count soft assertions documented in-file). -> unit tier
+  **85/85** (`last_run/unit.log`, CensusGuard Success).
+- [1.S3-d] The hatch executed (falsifier row 4 fired): instrumentation
+  (`Battle.Det.RunTag`/`Battle.Det.Tick` + DetPair/DetRoll/DetRngRoll/
+  DetMor, opt-in, canonical identities) -> kills #1-4 tick-identical
+  (681/682/693/694); morale pass phases 1+21k vs 21k; the straddle at the
+  t=693 kill -> run 1's unit 3 broke at its t=694 pass, run 2's didn't ->
+  kill streams forked at t=700. ROOT CAUSE + FIX: the empty-world morale
+  fire consumed/re-armed a period after the mid-frame reset -- now STAYS
+  PRIMED (`MoraleTickProcessor.cpp`). -> **DeterminismTwoRun PASS 40/40
+  mismatches=0** isolated (`det_fix1.log`) AND in-gate (`last_run/func.log`:
+  PASS samples=40 firstDivergence=-1); func tier **25/27** = exactly
+  S4_WidthOverride + S5_Mob (independent sessions, untouched); per-commit
+  gate green (unit run exit 0; the func summarize's report-vs-parse note is
+  the succeededWithWarnings bucket, counts agree at 25/27). Evidence logs:
+  `det_census.log`, `det_census2.log`, `det_trace_s3*.log`, `det_fix1.log`
+  (untracked, like the det_* set).
+- [H-4] NOT executed (spec docs read-only without explicit authorization):
+  the proposed B.4/B.5 wording patch is recorded in the plan doc's §9 for
+  the owner.
+- Commits: the code rides two commits (the hash/bisector/guard/telemetry
+  set, then the morale cadence fix that flips the gate green -- file
+  coupling disclosed per AGENTS §3); the records ride the third.
 
 ## PR-13 -- the four morale scenario bodies (T4.3-T4.6)
 
