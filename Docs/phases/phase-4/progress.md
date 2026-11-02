@@ -10,6 +10,34 @@
 
 ## Discrepancies (dated, newest first)
 
+- **2026-11-03 (T4.7 LANDED -- the two-run gate covers the full morale loop;
+  the phase-3 dossier closed)** -- the PR-15 deferred item landed
+  (`aa7e17d`): its recorded landing condition ("it lands with Task 1's
+  disposition", pr15.3) was met by the green base. The fixture gains the
+  general + the script unit (the row-1 sergeants, Disciplined stamped
+  through the registry seam) + the impetuous row, and the Tick drives six
+  scripted deaths at the S7 cadence; the Evidence line gains
+  routs/rallies/moraleTicks. Result: **DeterminismTwoRun PASS 40/40
+  mismatches=0 routs=10 rallies=2** isolated (`det_t47e.log`) AND in-gate
+  (`last_run/func.log`); unit 85/85; func 25/27 = exactly the known pair.
+  Three measured lessons rode the fixture iterations (full detail in the
+  commit): the aura fold reads the FORMATION ANCHOR, which a rout-flee
+  does not move (the rally geometry must sit on the ANCHOR, not the flee
+  path); the RoutingFriends cascade drag (-~1.2/routing neighbor inside
+  the cascade radius) must be designed out of a rally window; and the
+  rally roll's attempt counter increments on every Routing pass, so the
+  deterministic CombatRoll01 sequence positions the first hit -- the
+  Disciplined factor pulls it inside the window (replicated offline, and
+  the measured MoraleRally Roll=0.258 matched the computation exactly).
+  **The phase-3 det_* dossier is CLOSED**: its signatures are explained
+  and fixed by `4ace397` (the slot-assigner chunk order) + `b939037` (the
+  morale cadence straddle); the mixed two-run gate is green; the dossier
+  logs are untracked pre-fix artifacts -- no re-run owed. Remaining for
+  the 4a close: Task 2 (the staged movement-soak dress gate), Task 8's
+  staged-nightly remainder + the baselines, Task 9's B.7 entry, the
+  report; owner-gated: H-4, the B-1..B-8 4b approvals, the cadence-watch
+  line authorization (the closure pack items).
+
 - **2026-11-02 (Task 1 hunt, session 3 -- the gate is GREEN; the residue had
   two layers)** -- the session plan
   (`Docs/phases/phase-4/task1-hunt-archetype-census.md`, executed with the
