@@ -10,6 +10,34 @@
 
 ## Discrepancies (dated, newest first)
 
+- **2026-11-01 (Task 1 blocker hunt, session 2 -- three canonical-order fixes
+  landed, the residue narrowed)** -- the DeterminismTwoRun hunt on `main`
+  (`4ace397`). THREE real defects fixed: (1) the func gate's map pin -- the
+  demo shell's GameDefaultMap change made the unpinned -game gate silently
+  load L_MassBattle_Demo01 (the two-run gate ran inside the demo GameMode's
+  world; the tests self-isolate, but the gate's world was wrong since PR-1);
+  (2) the two-run gate never pinned the morale tick (the spec 4.8 text
+  prescribes it; the T6.1 flip put the wall-clock GE inside the equality);
+  (3) TWO canonical-order defects: the slot assigner bid in CHUNK order
+  (tied bids swapped roster slots 8/11 between runs -- the phase-3 dossier's
+  entities-8/11 signature explained) and the assign stage's Defenders/
+  Seekers arrays were mass-handle/chunk ordered (the ring-target divergence;
+  the write-back now gathers entity-keyed, replacing the two-cursor walk).
+  Diagnostic infrastructure built and reverted: the tagged hex-float servo/
+  resolver traces (det_hex*.log/det_sec*.log) + the SECTION BISECTOR wired
+  into the test permanently (the hash's OutSectionHashes; on mismatch it
+  names the first diverging section). Current DeterminismTwoRun state:
+  sections 1 bookkeeping + 2 transforms MATCH (the fixes verified); the
+  residue = section 3 ARCHETYPE COUNT (some tag-set membership differs per
+  run) cascading into the shared fragments -- the next hunt's entry point
+  (probe: per-archetype instance counts under WITH_MASSENTITY_DEBUG).
+  S4_WidthOverride ("S4 refront assertions failed") and S5_Mob ("no pull-down
+  (240 s; exposed=5 waiters=66)") signatures UNCHANGED -- independent
+  mechanisms, their own sessions. Tiers: unit 84/84; func 24/27 = the three
+  known. Tooling: UE worker-thread log interleaving defeats file-order log
+  segmentation -- cross-run traces need an explicit run tag + a per-entity
+  tick counter (the playbook carries the Git Bash MSYS note already).
+
 - **2026-11-01 (T6.1 flip landed + the demo re-clock)** -- the owner signed
   off the audited family; `t61-morale-threshold-audit` fast-forwarded to
   `main` (`a0c5362`) + the spec tables rode the flip commit (`8e83f4e`:
