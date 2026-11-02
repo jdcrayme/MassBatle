@@ -5892,8 +5892,71 @@ void ADeterminismTwoRunTest::SpawnMixedFixture()
 	Registry->IssueAttackUnitOrder(InfB, InfA);
 	Registry->IssueAttackUnitOrder(ArchA, InfB);
 	Registry->IssueAttackUnitOrder(ArchB, InfA);
+	ScriptUnit = ArchA;
+
+	// T4.7 extension (the PR-15 shape, landed now that Task 1 closed green --
+	// the morale-cadence root cause b939037): the fixture gains the GENERAL
+	// (the aura + officer surface) and the IMPETUOUS row (the MC9
+	// auto-charge; the discipline stamped through the registry seam -- the
+	// ToggleBehaviors posture, the fixture has no impetuous EDU token). The
+	// scripted break/rally driver (the Tick below): six deaths on the SCRIPT
+	// UNIT (the row-1 sergeants, base 6, 8 soldiers -- the shape that
+	// provably breaks under the audited family) push it below the break
+	// point; the flee carries it away and the rally must fire under the
+	// aura. THE GEOMETRY IS THE RALLY MATH, measured twice (det_t47b/c.log):
+	// (1) the aura fold reads the FORMATION ANCHOR, which a rout-flee does
+	// NOT move -- the soldiers fled 38 m west while the fold's distance held
+	// at 38.4 m (aura 0.72) regardless of where the general sat; the general
+	// therefore goes ON the script unit's ANCHOR (the constant-distance
+	// quirk works for us: the aura holds ~1.8 through the whole cycle).
+	// (2) The ceiling is base 6 - casualties(0.625 x -8 = -5) + aura - drags,
+	// and the RoutingFriends cascade drag (-~1.2 per routing neighbor inside
+	// the cascade radius) must be zero: the script unit spawns NORTH of the
+	// battle, beyond the cascade radius of every other router (archA's
+	// organic rout, the clash units). Ceiling ~2.6 vs the rally threshold
+	// 1.5 -- the crossing lands mid-window. All additions ride the
+	// fixed-order/transform discipline and the per-run reseed; no new cvars
+	// (the gate's morale pin carries Enable+DeterministicTick already).
+	AUnitActor* GenA = MoraleSpawnActor(World, 1, 8, FVector2D(-105.f, 88.f), 0.f, 0, 1, true);
+	AUnitActor* ScriptA = MoraleSpawnActor(World, 1, 8, FVector2D(-100.f, 90.f), 0.f, 0);
+	AUnitActor* ImpA = MoraleSpawnActor(World, 0, 8, FVector2D(-25.f, -25.f), 0.f, 0);
+	if (ImpA)
+	{
+		if (FUnitRuntimeState* State = Registry->FindMutableUnitState(ImpA->GetUnitHandle()))
+		{
+			State->Discipline = EBattleDiscipline::Impetuous;
+		}
+	}
+	if (ScriptA)
+	{
+		// The rally WINDOW needs the Disciplined rally factor: the roll
+		// sequence is the deterministic CombatRoll01(unit, attempts) and the
+		// attempt counter runs from the BREAK (the roll block increments on
+		// every Routing pass, eligible or not). At the Normal factor the
+		// chance is 0.20 and the unit's fixed sequence first dips under it
+		// at attempt 104 -- tick ~3037, outside the 2400-tick window
+		// (measured: rallies=0 across three geometries). Disciplined lifts
+		// the chance to 0.26 and the sequence's first hit lands at attempt
+		// 40 -> tick ~1693 (replicated offline against the BattleHashFamily
+		// constants; S7's "the sergeants row is the disciplined one" is the
+		// same intent -- this fixture's EDU row parse carries no token, so
+		// the registry seam stamps it, the ToggleBehaviors posture).
+		if (FUnitRuntimeState* State = Registry->FindMutableUnitState(ScriptA->GetUnitHandle()))
+		{
+			State->Discipline = EBattleDiscipline::Disciplined;
+		}
+	}
+	if (ScriptA)
+	{
+		ScriptUnit = ScriptA->GetUnitHandle();
+	}
+	if (!GenA || !ImpA || !ScriptA)
+	{
+		UE_LOG(LogMassBattle, Error, TEXT("EXEC_RESULT DeterminismTwoRun spawn FAIL T4.7 morale actors general=%d script=%d impetuous=%d"),
+			GenA != nullptr, ScriptA != nullptr, ImpA != nullptr);
+	}
 	UE_LOG(LogMassBattle, Display,
-		TEXT("EXEC_RESULT DeterminismTwoRun fixture inf=24+24 archers=16+16 teams 0/1"));
+		TEXT("EXEC_RESULT DeterminismTwoRun fixture inf=24+24 archers=16+16 teams 0/1 + T4.7 morale actors general=1 script=sergeants impetuous=1"));
 }
 
 void ADeterminismTwoRunTest::DestroyFixture()
@@ -5991,6 +6054,26 @@ void ADeterminismTwoRunTest::Tick(float DeltaSeconds)
 		bNeedSpawn = false;
 	}
 
+	// The T4.7 scripted break/rally driver: six scripted deaths on the
+	// scripted unit (archA, the front of its live roster) at the S7 cadence
+	// (one per 12 ticks from t=760). By then the volley phase is live and
+	// the scripted deaths push the levy below the audited break point; the
+	// flee carries it west into the general's aura and the rally fires under
+	// it. TicksDone-driven: BOTH runs replay the identical schedule, and the
+	// morale cadence is reset-ordering-immune (the session-3 fix), so the
+	// deaths land inside the same pass windows in both runs.
+	if (TicksDone >= 760 && TicksDone <= 820 && TicksDone % 12 == 4)
+	{
+		if (UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>())
+		{
+			const TArray<FMassEntityHandle>* Roster = Registry->FindRoster(ScriptUnit);
+			if (ScriptUnit.IsValid() && Roster && Roster->Num() > 0)
+			{
+				KillRosterEntity(World, ScriptUnit, 0); // soldiers only (front of the live roster)
+			}
+		}
+	}
+
 	if (Phase == EPhase::Run1)
 	{
 		if (TicksDone % 60 == 0)
@@ -6048,10 +6131,20 @@ void ADeterminismTwoRunTest::Tick(float DeltaSeconds)
 					break;
 				}
 			}
+			int32 RoutsSeen = 0;
+			int32 RalliesSeen = 0;
+			int32 MoraleTicksSeen = 0;
+			if (UBattleDebugSubsystem* Diag = World->GetSubsystem<UBattleDebugSubsystem>())
+			{
+				RoutsSeen = Diag->GetRouts(); // run1+run2 sums (ResetDiagnostics at StartTest)
+				RalliesSeen = Diag->GetRallies();
+				MoraleTicksSeen = Diag->GetMoraleTicks();
+			}
 			UE_LOG(LogMassBattle, Display,
-				TEXT("EXEC_RESULT DeterminismTwoRun Evidence samples=%d/%d mismatches=%d firstDivergence=%d"),
+				TEXT("EXEC_RESULT DeterminismTwoRun Evidence samples=%d/%d mismatches=%d firstDivergence=%d routs=%d rallies=%d moraleTicks=%d"),
 				Run1Hashes.Num(), Run2Hashes.Num(),
-				FirstMismatch == INDEX_NONE ? 0 : Count - FirstMismatch, FirstMismatch);
+				FirstMismatch == INDEX_NONE ? 0 : Count - FirstMismatch, FirstMismatch,
+				RoutsSeen, RalliesSeen, MoraleTicksSeen);
 			// The RC8 divergence bisector: name the first section whose hash
 			// diverges at the first mismatching sample. Section hashes are
 			// each section's OWN bytes (task 1.S3-b: 1 bookkeeping, 2

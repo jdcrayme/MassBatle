@@ -643,6 +643,7 @@ private:
 	int32 SavedRanged[4] = {};
 	int32 TicksDone = 0;
 	bool bNeedSpawn = false;
+	FUnitHandle ScriptUnit; // T4.7: the scripted-break unit (archA; re-captured per spawn)
 	TArray<uint64> Run1Hashes;
 	TArray<TArray<uint64>> Run1Sections; // the RC8 bisector's per-sample section hashes
 	void SetCvars();
