@@ -82,6 +82,17 @@ namespace
 		Spec.UnitName = Stats.TypeName;
 		return UBattleSpawnLibrary::SpawnUnit(World, Spec, Stats);
 	}
+
+	/** The session-cumulative archetype count (debug-only engine API; 0 in
+	 *  Shipping). METRIC only since task 1.S3-c -- never an equality term. */
+	int32 ArchetypeCountMetric(UMassEntitySubsystem* EntitySubsystem)
+	{
+#if WITH_MASSENTITY_DEBUG
+		return EntitySubsystem ? EntitySubsystem->GetMutableEntityManager().DebugGetArchetypesCount() : 0;
+#else
+		return 0;
+#endif
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -858,6 +869,120 @@ bool FCombat_HashTerms::RunTest(const FString& Parameters)
 		Mutable->bGuardMode = bOldGuard;
 		TestEqual(TEXT("guard toggle revert restores hash"), FBattleStateHash::Compute(World), HashM);
 	}
+
+	World->DestroyWorld(false);
+	return true;
+}
+
+// ---------------------------------------------------------------------------
+// Task 1.S3-e: the census guard (unit tier; the section-3 artifact killer).
+// The retired hash term was DebugGetArchetypesCount() -- session-cumulative
+// process history (archetypes are created on demand, never destroyed), so
+// run 2 of any in-process comparison diverged from run 1 by construction
+// (measured 2026-11-02, det_census.log: run 1 sampled 4->6->8, run 2
+// constant 8). The census term (BattleStateHash section 3) is live state
+// only. Two assertions:
+//   1. LIVENESS: a kill through the exec path (BattleExec::KillEntity, the
+//      F4.3 site) migrates the entity's composition (FDeadTag, ADR-15
+//      regular tag) -- the census slice must change on the flush. (The
+//      full hash changes too, but bDead was already hashed in section 2;
+//      the CENSUS slice changing is the guard.)
+//   2. HISTORY-INDEPENDENCE: the same mini-battle twice in one process,
+//      battle 2 preceded by a throwaway kill seeding an extra death-variant
+//      archetype between the battles -- the census must stay EQUAL. This
+//      fails on any reintroduced cumulative term in the equality.
+// The cumulative count is asserted ONLY for monotonicity (archetypes are
+// never destroyed within the process -- the F1 mechanism itself); its
+// equality across battles is NOT asserted, because that equality is
+// exactly the disease.
+// ---------------------------------------------------------------------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FStateHash_CensusGuard,
+	"Battle.Unit.StateHash.CensusGuard",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FStateHash_CensusGuard::RunTest(const FString& Parameters)
+{
+	UWorld* World = MakeCombatTestWorld();
+	UUnitRegistrySubsystem* Registry = World->GetSubsystem<UUnitRegistrySubsystem>();
+	UMassEntitySubsystem* EntitySubsystem = World->GetSubsystem<UMassEntitySubsystem>();
+	if (!TestNotNull(TEXT("registry"), Registry) || !TestNotNull(TEXT("entity subsystem"), EntitySubsystem))
+	{
+		World->DestroyWorld(false);
+		return false;
+	}
+
+	TArray<FEduUnit> Rows;
+	if (!LoadCombatFixture(Rows) || Rows.Num() < 3)
+	{
+		AddError(TEXT("EDU fixture unavailable (need >= 3 rows)"));
+		World->DestroyWorld(false);
+		return false;
+	}
+
+	// -- Assertion 1: liveness. --
+	const FBattleSpawnResult Unit = SpawnRow(World, Rows[0]);
+	if (!TestTrue(TEXT("spawned"), Unit.Unit.IsValid()))
+	{
+		World->DestroyWorld(false);
+		return false;
+	}
+	TArray<uint64> SecBefore;
+	FBattleStateHash::Compute(World, &SecBefore);
+	if (!TestTrue(TEXT("sections present"), SecBefore.Num() >= 3))
+	{
+		World->DestroyWorld(false);
+		return false;
+	}
+	const int32 PreCount = ArchetypeCountMetric(EntitySubsystem);
+
+	BattleExec::KillEntity({ FString::Printf(TEXT("%u"), Unit.Unit.Index), TEXT("0") }, World);
+
+	TArray<uint64> SecAfter;
+	FBattleStateHash::Compute(World, &SecAfter);
+	TestNotEqual(TEXT("census changes on exec-path kill"), SecAfter[2], SecBefore[2]);
+	const int32 PostCount = ArchetypeCountMetric(EntitySubsystem);
+	TestTrue(TEXT("archetype count monotone (never destroyed in-process)"), PostCount >= PreCount);
+	AddInfo(FString::Printf(TEXT("CensusGuard liveness: archetype count %d -> %d across the kill"), PreCount, PostCount));
+
+	// -- Assertion 2: history independence. --
+	Registry->ResetBattleState();
+	const FBattleSpawnResult B1 = SpawnRow(World, Rows[0]);
+	if (!TestTrue(TEXT("battle 1 spawned"), B1.Unit.IsValid()))
+	{
+		World->DestroyWorld(false);
+		return false;
+	}
+	TArray<uint64> Sec1;
+	FBattleStateHash::Compute(World, &Sec1);
+	Registry->ResetBattleState();
+
+	// The sacrificial kill: a DIFFERENT composition row (the fixture's
+	// archer row), killed through the same exec path, then torn down. If
+	// this death-variant composition is fresh in the process, the archetype
+	// count grows here -- the exact asymmetry that broke the retired term.
+	// (If an earlier gate test already created it, the count holds -- the
+	// census assertion below is order-independent either way.)
+	const FBattleSpawnResult Sac = SpawnRow(World, Rows[2]);
+	if (TestTrue(TEXT("sacrificial spawned"), Sac.Unit.IsValid()))
+	{
+		BattleExec::KillEntity({ FString::Printf(TEXT("%u"), Sac.Unit.Index), TEXT("0") }, World);
+	}
+	const int32 SacrificedCount = ArchetypeCountMetric(EntitySubsystem);
+	TestTrue(TEXT("archetype count monotone across the sacrificial kill"), SacrificedCount >= PostCount);
+	Registry->ResetBattleState();
+
+	const FBattleSpawnResult B2 = SpawnRow(World, Rows[0]);
+	if (!TestTrue(TEXT("battle 2 spawned"), B2.Unit.IsValid()))
+	{
+		World->DestroyWorld(false);
+		return false;
+	}
+	TArray<uint64> Sec2;
+	FBattleStateHash::Compute(World, &Sec2);
+	TestEqual(TEXT("census equal across battles despite the extra process history"), Sec2[2], Sec1[2]);
+	AddInfo(FString::Printf(TEXT("CensusGuard history: count %d at battle 1 vs %d after the sacrificial kill; census %s"),
+		PostCount, SacrificedCount, Sec2[2] == Sec1[2] ? TEXT("EQUAL") : TEXT("DIFF")));
 
 	World->DestroyWorld(false);
 	return true;

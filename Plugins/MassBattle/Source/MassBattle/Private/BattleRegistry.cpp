@@ -7,6 +7,7 @@
 #include "BattleRangedFragments.h"
 #include "BattleRngRegistry.h"
 #include "BattleSave.h"
+#include "BattleDebugSubsystem.h" // BattleDet::Tick (the DET trace stamps)
 #include "MassBattleModule.h"
 #include "BattleExecCommands.h"
 #include "HAL/IConsoleManager.h"
@@ -162,14 +163,15 @@ const TArray<FMassEntityHandle>* UUnitRegistrySubsystem::FindRoster(FUnitHandle 
 	return State ? &State->Roster : nullptr;
 }
 
-void UUnitRegistrySubsystem::HandleUnitDeath(FUnitHandle Unit, FMassEntityHandle Entity, int32 RosterIndex)
-{
-	UE_MT_SCOPED_WRITE_ACCESS(AccessDetector);
-	if (FUnitRuntimeState* State = Units.Find(Unit))
+	void UUnitRegistrySubsystem::HandleUnitDeath(FUnitHandle Unit, FMassEntityHandle Entity, int32 RosterIndex)
 	{
-		const int32 Removed = State->Roster.RemoveSingle(Entity);
-		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT RosterDeath Unit=%u:%u Entity=%u:%u RosterIndex=%d Removed=%d Size=%d"),
-		       Unit.Index, Unit.Serial, Entity.Index, Entity.SerialNumber, RosterIndex, Removed, State->Roster.Num());
+		UE_MT_SCOPED_WRITE_ACCESS(AccessDetector);
+		if (FUnitRuntimeState* State = Units.Find(Unit))
+		{
+			const int32 Removed = State->Roster.RemoveSingle(Entity);
+			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT RosterDeath Unit=%u:%u Entity=%u:%u RosterIndex=%d Removed=%d Size=%d T=%d"),
+			       Unit.Index, Unit.Serial, Entity.Index, Entity.SerialNumber, RosterIndex, Removed, State->Roster.Num(),
+			       BattleDet::Tick());
 		// Phase 2 (F2): the single registry pair-cleanup hook. The dead
 		// entity's scratch entries drop here so the next fresh-tally pass
 		// never counts a corpse; inbound pair fragments release through the

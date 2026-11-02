@@ -5730,6 +5730,51 @@ namespace
 		TEXT("Battle.Morale.Enable"),
 		TEXT("Battle.Morale.DeterministicTick"),
 	};
+
+	// Task 1.S3-a probe -> permanent telemetry: the session-cumulative
+	// archetype count at the two-run sampling sites. The count is process
+	// history (archetypes are created on demand and never destroyed) -- the
+	// 2026-11-02 probe confirmed it was the section-3 residue (run 1 sampled
+	// 4->6->8, run 2 constant 8, sections 1-2 matching; det_census.log), and
+	// the census fix demoted it out of the equality hash. The count now
+	// lives here ONLY as the gate's count telemetry (the B.4 unbounded-
+	// growth watch: this line + Battle.DumpMetrics + the nightly soak).
+	int32 Det2RunArchetypeCount(UWorld* World)
+	{
+#if WITH_MASSENTITY_DEBUG
+		UMassEntitySubsystem* EntitySubsystem = World ? World->GetSubsystem<UMassEntitySubsystem>() : nullptr;
+		return EntitySubsystem ? EntitySubsystem->GetMutableEntityManager().DebugGetArchetypesCount() : 0;
+#else
+		return 0;
+#endif
+	}
+
+	// The DET trace run tag (Battle.Det.RunTag): 1 during run 1, 2 during
+	// run 2, 0 otherwise -- the cross-run log comparison surface (the
+	// playbook's explicit-run-tag rule; worker threads interleave file
+	// order, so every trace line carries its own tag).
+	void SetDetRunTag(int32 Tag)
+	{
+		if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Det.RunTag")))
+		{
+			C->Set(Tag, ECVF_SetByCode);
+		}
+	}
+
+	// The DET trace game tick: stamped every tick so the trace lines align
+	// EXACTLY across the two runs (the morale-pass slots only bracket to 21).
+	void SetDetTick(int32 TickValue)
+	{
+		static IConsoleVariable* C = nullptr;
+		if (!C)
+		{
+			C = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Det.Tick"));
+		}
+		if (C)
+		{
+			C->Set(TickValue, ECVF_SetByCode);
+		}
+	}
 }
 
 ADeterminismTwoRunTest::ADeterminismTwoRunTest()
@@ -5748,6 +5793,8 @@ void ADeterminismTwoRunTest::BeginTest()
 void ADeterminismTwoRunTest::CompleteTest(EFunctionalTestResult TestResult, const FString& Message)
 {
 	RestoreCvars();
+	SetDetRunTag(0);
+	SetDetTick(0);
 	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT DeterminismTwoRun %s %s"),
 		TestResult == EFunctionalTestResult::Succeeded ? TEXT("PASS") : TEXT("FAIL"), *Message);
 	Result = TestResult;
@@ -5910,6 +5957,13 @@ void ADeterminismTwoRunTest::StartTest()
 	Phase = EPhase::Run1;
 	TicksDone = 0;
 	bNeedSpawn = true;
+	SetDetRunTag(1);
+	// The pre-run count: how many death-variant archetypes the earlier gate
+	// tests already created (the cross-test contamination measure -- the
+	// full-gate number must exceed the isolated number if the artifact model
+	// holds). Note the warm-up above created the RANGED compositions, not the
+	// death ones (no kill happens in it).
+	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT Det2RunCensus pre-run count=%d"), Det2RunArchetypeCount(World));
 	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT DeterminismTwoRun root=20261027 run1 begin"));
 }
 
@@ -5930,6 +5984,7 @@ void ADeterminismTwoRunTest::Tick(float DeltaSeconds)
 	// One engine tick = one fixed 1/60 step under the test-mode contract
 	// (ApplyTestMode's fixed delta); the scenario just counts them.
 	++TicksDone;
+	SetDetTick(TicksDone);
 	if (bNeedSpawn && TicksDone == 1)
 	{
 		SpawnMixedFixture();
@@ -5941,8 +5996,12 @@ void ADeterminismTwoRunTest::Tick(float DeltaSeconds)
 		if (TicksDone % 60 == 0)
 		{
 			TArray<uint64> Sections;
-			Run1Hashes.Add(FBattleStateHash::Compute(World, &Sections));
+			const uint64 Hash = FBattleStateHash::Compute(World, &Sections);
+			Run1Hashes.Add(Hash);
 			Run1Sections.Add(Sections);
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT Det2RunCensus run=1 tick=%d count=%d hash=%016llx"),
+				TicksDone, Det2RunArchetypeCount(World), Hash);
 		}
 		if (TicksDone >= 2400)
 		{
@@ -5954,6 +6013,7 @@ void ADeterminismTwoRunTest::Tick(float DeltaSeconds)
 			Phase = EPhase::Run2;
 			TicksDone = 0;
 			bNeedSpawn = true;
+			SetDetRunTag(2);
 			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT DeterminismTwoRun run2 begin"));
 		}
 	}
@@ -5969,8 +6029,12 @@ void ADeterminismTwoRunTest::Tick(float DeltaSeconds)
 		if (TicksDone % 60 == 0)
 		{
 			TArray<uint64> Sections;
-			Run2Hashes.Add(FBattleStateHash::Compute(World, &Sections));
+			const uint64 Hash = FBattleStateHash::Compute(World, &Sections);
+			Run2Hashes.Add(Hash);
 			Run2Sections.Add(Sections);
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT Det2RunCensus run=2 tick=%d count=%d hash=%016llx"),
+				TicksDone, Det2RunArchetypeCount(World), Hash);
 		}
 		if (TicksDone >= 2400)
 		{
@@ -5989,15 +6053,16 @@ void ADeterminismTwoRunTest::Tick(float DeltaSeconds)
 				Run1Hashes.Num(), Run2Hashes.Num(),
 				FirstMismatch == INDEX_NONE ? 0 : Count - FirstMismatch, FirstMismatch);
 			// The RC8 divergence bisector: name the first section whose hash
-			// diverges at the first mismatching sample (1 bookkeeping, 2
-			// transforms, 3 archetype count, 4 shared stats, 5 formation,
+			// diverges at the first mismatching sample. Section hashes are
+			// each section's OWN bytes (task 1.S3-b: 1 bookkeeping, 2
+			// transforms, 3 composition census, 4 shared stats, 5 formation,
 			// 6 garrison, 7 combat pairs, 8 ranged, 9 projectile pool,
-			// 10 morale).
+			// 10 morale) -- a DIFF line is independent evidence, no cascade.
 			if (FirstMismatch != INDEX_NONE
 				&& Run1Sections.IsValidIndex(FirstMismatch) && Run2Sections.IsValidIndex(FirstMismatch))
 			{
 				static constexpr const TCHAR* SectionNames[] = {
-					TEXT("bookkeeping"), TEXT("transforms"), TEXT("archetypes"), TEXT("stats"),
+					TEXT("bookkeeping"), TEXT("transforms"), TEXT("census"), TEXT("stats"),
 					TEXT("formation"), TEXT("garrison"), TEXT("combat"), TEXT("ranged"),
 					TEXT("projectiles"), TEXT("morale"),
 				};
@@ -6019,6 +6084,38 @@ void ADeterminismTwoRunTest::Tick(float DeltaSeconds)
 							S + 1, Name, A[S]);
 					}
 				}
+			}
+			// Per-sample section-diff telemetry: which sections diverge at
+			// EVERY sampled tick, not just the first mismatch -- a residue
+			// that re-converges (or shifts section) mid-run is invisible to
+			// the first-mismatch dump above (the 2026-11-02 hunt: samples
+			// 31-40 kept diverging on full hashes while the census counts
+			// had already re-converged; only a per-sample map shows where).
+			for (int32 i = 0; i < Count; ++i)
+			{
+				if (!Run1Sections.IsValidIndex(i) || !Run2Sections.IsValidIndex(i))
+				{
+					continue;
+				}
+				if (Run1Hashes[i] == Run2Hashes[i])
+				{
+					UE_LOG(LogMassBattle, Display,
+						TEXT("EXEC_RESULT Det2RunSec sample=%d t=%d ok"), i, (i + 1) * 60);
+					continue;
+				}
+				FString Diff;
+				const TArray<uint64>& SA = Run1Sections[i];
+				const TArray<uint64>& SB = Run2Sections[i];
+				for (int32 S = 0; S < SA.Num() && S < SB.Num(); ++S)
+				{
+					if (SA[S] != SB[S])
+					{
+						Diff += Diff.IsEmpty() ? FString::Printf(TEXT("%d"), S + 1) : FString::Printf(TEXT(",%d"), S + 1);
+					}
+				}
+				UE_LOG(LogMassBattle, Display,
+					TEXT("EXEC_RESULT Det2RunSec sample=%d t=%d diff=%s"), i, (i + 1) * 60,
+					Diff.IsEmpty() ? TEXT("hash-only(sections equal)") : *Diff);
 			}
 			const bool bOk = Run1Hashes.Num() == Run2Hashes.Num() && FirstMismatch == INDEX_NONE;
 			CompleteTest(bOk ? EFunctionalTestResult::Succeeded : EFunctionalTestResult::Error,

@@ -276,6 +276,29 @@ void RunProjectileStepPass(UWorld* World, float DeltaSeconds)
 			Slot, VictimEntry.Entity.Index, VictimEntry.Entity.SerialNumber,
 			Pool.RangedAttack[Slot], Defense, P, Roll, bLanded ? 1 : 0, Sector);
 
+		// DET trace (task 1.S3 residue hunt): canonical shooter/victim
+		// identities + the shooter's roll count per impact, run-tagged --
+		// the cross-run diff surface (Battle.Det.RunTag != 0).
+		if (BattleDet::RunTag() != 0)
+		{
+			// The shooter may be DEAD by impact (an arrow in flight outlives
+			// its shooter): IsEntityValid first -- a view on a destroyed
+			// handle asserts on an invalid archetype (the s3b/s3c boots
+			// crashed here, 2026-11-02).
+			const FOwnerUnitFragment* ShooterOwner = EM.IsEntityValid(Pool.ShooterEntity[Slot])
+				? FMassEntityView(EM, Pool.ShooterEntity[Slot]).GetFragmentDataPtr<FOwnerUnitFragment>()
+				: nullptr;
+			const FOwnerUnitFragment* VictimOwner = VictimView.GetFragmentDataPtr<FOwnerUnitFragment>();
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT DetRngRoll run=%d S=%u.%d V=%u.%d rc=%d P=%.3f Roll=%.3f Landed=%d"),
+				BattleDet::RunTag(),
+				ShooterOwner ? ShooterOwner->Owner.Index : 0u,
+				ShooterOwner ? static_cast<uint32>(ShooterOwner->RosterIndex) : 0u,
+				VictimOwner ? VictimOwner->Owner.Index : 0u,
+				VictimOwner ? static_cast<uint32>(VictimOwner->RosterIndex) : 0u,
+				static_cast<int32>(Pool.ShooterRollCount[Slot]), P, Roll, bLanded ? 1 : 0);
+		}
+
 		// Team-blind hits still COUNT as friendly (the RC4 impact-point rule's
 		// observability half).
 		const FUnitSpawnSpec* VictimSpec = Registry->FindUnitSpec(VictimEntry.Unit);

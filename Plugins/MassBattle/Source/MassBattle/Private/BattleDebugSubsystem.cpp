@@ -29,6 +29,34 @@ namespace
 		BattleDebugEnabled,
 		TEXT("1 = debug subsystem records B.4 metrics"),
 		ECVF_Default);
+
+	// The determinism-trace run tag (header comment: why canonical ids).
+	TAutoConsoleVariable<int32> GDetRunTag(
+		TEXT("Battle.Det.RunTag"),
+		0,
+		TEXT("Determinism trace run tag (0 = off): nonzero = the combat/ranged roll paths emit EXEC_RESULT DetRoll/DetRngRoll trace lines at Display with canonical owner.roster identities and the per-pair roll count."),
+		ECVF_Default);
+	// The determinism-trace game tick: the two-run test stamps its TicksDone
+	// here every tick so every trace line carries the exact sim tick (the
+	// cross-run alignment surface; 0 outside the gate).
+	TAutoConsoleVariable<int32> GDetTick(
+		TEXT("Battle.Det.Tick"),
+		0,
+		TEXT("Determinism trace game tick (stamped by the two-run test each tick; read by the DET trace lines)."),
+		ECVF_Default);
+}
+
+namespace BattleDet
+{
+	int32 RunTag()
+	{
+		return GDetRunTag.GetValueOnAnyThread();
+	}
+
+	int32 Tick()
+	{
+		return GDetTick.GetValueOnAnyThread();
+	}
 }
 
 void UBattleDebugSubsystem::Initialize(FSubsystemCollectionBase& Collection)

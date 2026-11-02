@@ -3,6 +3,8 @@
 #include "BattleCombatFragments.h"
 #include "BattleRegistry.h" // FCombatTallyTable (plain scratch struct)
 #include "BattleMelee.h"
+#include "BattleDebugSubsystem.h" // BattleDet::RunTag (the DET trace)
+#include "MassBattleModule.h" // LogMassBattle (the DET trace)
 #include "HAL/IConsoleManager.h"
 
 #include "MassCommonFragments.h" // FTransformFragment (knockback victim write)
@@ -719,6 +721,21 @@ namespace FCombatSolver
 			S.State = static_cast<uint8>(ECombatPairState::Pressing);
 			S.AttackTimer = FMeleeMath::StaggeredPhaseOffset(
 				BattleCanonicalEntityKey(S.OwnerUnit, S.RosterIndex), Interval);
+			// DET trace (task 1.S3): the canonical pair-up surface -- this
+			// pass runs on the game thread, so the file order is reliable.
+			// The lane columns + the chosen distance are the greedy's
+			// decision inputs at the fork; phase is the fresh pair's timer.
+			if (BattleDet::RunTag() != 0)
+			{
+				UE_LOG(LogMassBattle, Display,
+					TEXT("EXEC_RESULT DetPair run=%d t=%d A=%u.%d D=%u.%d lane=%d/%d dist=%.2f phase=%.3f"),
+					BattleDet::RunTag(), BattleDet::Tick(),
+					S.OwnerUnit.Index, static_cast<uint32>(S.RosterIndex),
+					Chosen->Unit.Index, static_cast<uint32>(Chosen->RosterIndex),
+					static_cast<int32>(S.LaneIndex), static_cast<int32>(Chosen->LaneIndex),
+					FMath::Sqrt(FMath::Max(0.f, ChosenDistSq)),
+					S.AttackTimer);
+			}
 		}
 	}
 }

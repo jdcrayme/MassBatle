@@ -10,7 +10,53 @@
 #include "MassEntityManager.h"
 #include "MassEntityView.h"
 #include "MassCommonFragments.h"
+#include "MassMovementFragments.h"
 #include "Engine/World.h"
+
+namespace
+{
+	// Presence probe for the census: tags answer HasTag, fragments
+	// GetFragmentDataPtr -- one idiom for the mixed kCensusTypes list (the
+	// two idioms the hash already uses).
+	template<typename T>
+	bool CensusHasType(FMassEntityView& View)
+	{
+		if constexpr (TIsDerivedFrom<T, FMassTag>::IsDerived)
+		{
+			return View.HasTag<T>();
+		}
+		else
+		{
+			return View.GetFragmentDataPtr<T>() != nullptr;
+		}
+	}
+
+	// The census bitset (task 1.S3-c, owner decision H-1 option A): one bit
+	// per type, the ARGUMENT ORDER below is kCensusTypes[] -- this template
+	// argument list is the ONE HOME of the census type list (AGENTS §7); a
+	// type's bit index is its argument position. Maintenance rule (the phase
+	// checklist): any new fragment/tag that can join a battle composition
+	// extends this list (the §5 guard test watches the death path).
+	// Fixed width (one U64 per entity) keeps the byte stream position-stable
+	// when a composition is absent (the zero-fill precedent).
+	template<typename... Ts>
+	uint64 CensusBits(FMassEntityView& View)
+	{
+		static_assert(sizeof...(Ts) <= 64, "census bitset overflows 64 bits -- widen the fold");
+		uint64 Bits = 0;
+		int32 Bit = 0;
+		auto Fold = [&Bits, &Bit](const bool bPresent)
+		{
+			if (bPresent)
+			{
+				Bits |= (1ull << Bit);
+			}
+			++Bit;
+		};
+		(Fold(CensusHasType<Ts>(View)), ...);
+		return Bits;
+	}
+}
 
 int64 FBattleStateHash::Quantize2(float Value)
 {
@@ -30,30 +76,56 @@ uint64 FBattleStateHash::Compute(UWorld* World, TArray<uint64>* OutSectionHashes
 
 	// Deterministic byte stream: every term appended in a fixed order.
 	TArray<uint8> Bytes;
-	auto Append = [&Bytes](const void* Data, int32 Size)
+	// Section machinery (task 1.S3-b, owner decision H-2): each section
+	// hashes its OWN byte slice into OutSectionHashes. The old EndSection
+	// hashed the cumulative PREFIX -- one diverging section forced every
+	// later section hash to differ (the bisector cascade; measured
+	// 2026-11-02, det_census.log sample 0: sections 4-6 DIFF purely as the
+	// prefix of the section-3 count term, zero independent signal). The
+	// MAIN byte stream is unchanged -- every term still appends to Bytes in
+	// the same fixed order -- but sections 4-8 interleave per unit inside
+	// the sorted walk, so each section accumulates its own slice and the
+	// hashes are per-section content only. Indices stay stable at 1..10
+	// (the bisector's names keep their meaning; 4-8 gain hashes they never
+	// had). No goldens are stored anywhere -- the bisector only prints.
+	TArray<uint8> SectionBytes[10];
+	int32 CurrentSection = 0;
+	auto Append = [&Bytes, &SectionBytes, &CurrentSection](const void* Data, int32 Size)
 	{
 		Bytes.Append(static_cast<const uint8*>(Data), Size);
+		if (CurrentSection >= 1 && CurrentSection <= 10)
+		{
+			SectionBytes[CurrentSection - 1].Append(static_cast<const uint8*>(Data), Size);
+		}
 	};
 	auto AppendU64 = [&Append](uint64 V)
 	{
 		Append(&V, sizeof(V));
 	};
-	// Section boundaries: when bisecting, each section's bytes are hashed
-	// into OutSectionHashes at its end (the RC8 divergence bisector).
-	auto EndSection = [OutSectionHashes, &Bytes]()
+	auto SetSection = [&CurrentSection](const int32 Section)
+	{
+		CurrentSection = Section;
+	};
+	auto EndSection = [OutSectionHashes, &SectionBytes](const int32 Section)
 	{
 		if (OutSectionHashes)
 		{
-			OutSectionHashes->Add(CityHash64(reinterpret_cast<const char*>(Bytes.GetData()),
-				static_cast<uint32>(Bytes.Num())));
+			const TArray<uint8>& Slice = SectionBytes[Section - 1];
+			OutSectionHashes->Add(CityHash64(reinterpret_cast<const char*>(Slice.GetData()),
+				static_cast<uint32>(Slice.Num())));
 		}
 	};
 
 	// 1. Registry bookkeeping (sorted handles -> serials -> roster sizes;
 	// dirty flags excluded -- transient pipeline state, audit M4).
+	SetSection(1);
 	uint64 Bookkeeping = Registry->ComputeBookkeepingHash();
 	AppendU64(Bookkeeping);
-	EndSection();
+	EndSection(1);
+
+	// 2. Per-unit entity state, in roster order: HP (quantized 1e-2), dead flag,
+	// transform (quantized 1 cm; yaw at 0.1 deg -- phase-1 ground rule 7).
+	SetSection(2);
 
 	// 2. Per-unit entity state, in roster order: HP (quantized 1e-2), dead flag,
 	// transform (quantized 1 cm; yaw at 0.1 deg -- phase-1 ground rule 7).
@@ -88,18 +160,51 @@ uint64 FBattleStateHash::Compute(UWorld* World, TArray<uint64>* OutSectionHashes
 		}
 	}
 
-	EndSection();
-	// 3. Archetype count (unbounded-growth watch, B.4). Debug-only engine API:
-	// absent in Shipping (WITH_MASSENTITY_DEBUG off) -- folds 0 there, keeping
-	// the term position-stable without shipping the debug build.
-	const int32 ArchetypeCount =
-#if WITH_MASSENTITY_DEBUG
-		EntityManager.DebugGetArchetypesCount();
-#else
-		0;
-#endif
-	AppendU64(static_cast<uint64>(ArchetypeCount));
-	EndSection();
+	EndSection(2);
+	// 3. The live composition census (task 1.S3-c, owner decision H-1 option
+	// A) -- the retired term here was DebugGetArchetypesCount(), the B.4
+	// unbounded-growth watch. That count is a SESSION-CUMULATIVE, process-
+	// history counter (archetypes are created on demand and never destroyed
+	// within the process -- the repo's own warm-up comment proved it,
+	// BattleFuncTestActor SpawnMixedFixture), so under PERFECT determinism
+	// run 2's count carries run 1's whole history and the term diverges at
+	// every sample between run 1's first and last first-time composition
+	// creation -- measured 2026-11-02 (det_census.log): run 1 sampled
+	// 4->6->8 (the death-variant milestones), run 2 constant 8 at every
+	// sample, sections 1-2 matching at the first diverging sample. The count
+	// also violated this file's own header contract (no non-sim state). The
+	// replacement folds per entity, over the SAME canonical sorted-roster
+	// walk, a fixed-width presence bitset over kCensusTypes (the census
+	// template list above) -- symmetric across runs by construction, live
+	// state only, Shipping-safe (no WITH_MASSENTITY_DEBUG dependency). The
+	// cumulative count stays a METRIC: Battle.DumpMetrics + the gate's
+	// Det2RunCensus telemetry line.
+	SetSection(3);
+	for (const FUnitHandle& Handle : Registry->GetSortedHandles())
+	{
+		const TArray<FMassEntityHandle>* Roster = Registry->FindRoster(Handle);
+		if (!Roster)
+		{
+			continue;
+		}
+		for (const FMassEntityHandle& Entity : *Roster)
+		{
+			FMassEntityView View(EntityManager, Entity);
+			AppendU64(CensusBits<
+				// Route A spawn composition (BattleSpawnLibrary order).
+				FOwnerUnitFragment, FLoadoutFragment, FBaseStatsFragment,
+				FHealthFragment, FTransformFragment, FMassVelocityFragment,
+				FSlotAssignmentFragment, FSlotTargetFragment,
+				FMovementStateFragment, FServoStateFragment,
+				FCombatIntentFragment, FCombatPairFragment, FChargeFragment,
+				FRangedStateFragment,
+				// Trait tags.
+				FInfantryTag, FCavalryTag, FMeleeTag, FBowTag,
+				// The death path's only runtime composition mutators (F4).
+				FDeadTag, FDeadSignaledTag>(View));
+		}
+	}
+	EndSection(3);
 
 	// 4. Per-unit shared stat values (quantized), in the same sorted order.
 	for (const FUnitHandle& Handle : Registry->GetSortedHandles())
@@ -110,6 +215,7 @@ uint64 FBattleStateHash::Compute(UWorld* World, TArray<uint64>* OutSectionHashes
 			continue;
 		}
 		const FMassEntityView View(EntityManager, (*Roster)[0]);
+		SetSection(4);
 		if (const FUnitStatsSharedFragment* Stats = EntityManager.GetSharedFragmentDataPtr<FUnitStatsSharedFragment>((*Roster)[0]))
 		{
 			AppendU64(static_cast<uint64>(Quantize2(Stats->SpeedMult)));
@@ -119,6 +225,7 @@ uint64 FBattleStateHash::Compute(UWorld* World, TArray<uint64>* OutSectionHashes
 		}
 		// 5. Formation movement state (phase-1 ground rule 7): anchor at 1 cm,
 		// facing at 0.1 deg, speed limit + spacing scale at 1e-2.
+		SetSection(5);
 		if (const FUnitFormationSharedFragment* Formation = EntityManager.GetSharedFragmentDataPtr<FUnitFormationSharedFragment>((*Roster)[0]))
 		{
 			AppendU64(static_cast<uint64>(FMath::RoundToDouble(static_cast<double>(Formation->AnchorPos.X))));
@@ -127,6 +234,7 @@ uint64 FBattleStateHash::Compute(UWorld* World, TArray<uint64>* OutSectionHashes
 			AppendU64(static_cast<uint64>(Quantize2(Formation->SpeedLimit)));
 			AppendU64(static_cast<uint64>(Quantize2(Formation->SpacingScale)));
 			AppendU64(static_cast<uint64>(Formation->Generation));
+			SetSection(6);
 			// 6. Garrison terms (spec §3.3, F9/R-G6): appended AFTER the
 			// formation terms, position-stable, same sorted-handle pass. The
 			// booked-range mirror contents are derivable from these terms +
@@ -148,6 +256,7 @@ uint64 FBattleStateHash::Compute(UWorld* World, TArray<uint64>* OutSectionHashes
 		for (const FMassEntityHandle& Entity : *Roster)
 		{
 			const FMassEntityView EntityView(EntityManager, Entity);
+			SetSection(7);
 			if (const FCombatPairFragment* Pair = EntityView.GetFragmentDataPtr<FCombatPairFragment>())
 			{
 				// The pair target hashes as its CANONICAL reference --
@@ -210,6 +319,7 @@ uint64 FBattleStateHash::Compute(UWorld* World, TArray<uint64>* OutSectionHashes
 			// are spawn-immutable and excluded (the base-stats precedent).
 			// Fixed term count with zero-fill when the fragment is absent
 			// (melee compositions) keeps the stream position-stable.
+			SetSection(8);
 			if (const FRangedStateFragment* Ranged = EntityView.GetFragmentDataPtr<FRangedStateFragment>())
 			{
 				AppendU64(static_cast<uint64>(static_cast<int16>(Ranged->AmmoCount)));
@@ -224,6 +334,14 @@ uint64 FBattleStateHash::Compute(UWorld* World, TArray<uint64>* OutSectionHashes
 			}
 		}
 	}
+	// Sections 4-8 were interleaved per unit above (stats/formation/garrison
+	// once per unit, then combat + ranged per entity); their buffers are
+	// complete only after the walk -- finalize them in index order here.
+	EndSection(4);
+	EndSection(5);
+	EndSection(6);
+	EndSection(7);
+	EndSection(8);
 
 	// 9. Projectile pool block (spec ranged-stack §3.4, RC8): the live count,
 	//    then per live entry in INDEX order (deterministic by construction --
@@ -236,8 +354,8 @@ uint64 FBattleStateHash::Compute(UWorld* World, TArray<uint64>* OutSectionHashes
 	const FBattleProjectilePool& Pool = ProjectileSubsystem
 		? ProjectileSubsystem->GetPool()
 		: FBattleProjectilePool::EmptyPool();
+	SetSection(9);
 	AppendU64(static_cast<uint64>(Pool.GetLiveCount()));
-	EndSection();
 	for (int32 Slot = 0; Slot < Pool.GetCapacity(); ++Slot)
 	{
 		if (!Pool.IsLive(Slot))
@@ -260,7 +378,8 @@ uint64 FBattleStateHash::Compute(UWorld* World, TArray<uint64>* OutSectionHashes
 	//     at 1e-2, bGuardMode as uint8. The tick stamp is pipeline state
 	//     (excluded, the dirty-flag precedent); discipline/officer identity
 	//     are spawn-immutable (excluded, the base-stats precedent).
-	EndSection();
+	EndSection(9);
+	SetSection(10);
 	for (const FUnitHandle& Handle : Registry->GetSortedHandles())
 	{
 		const FUnitRuntimeState* State = Registry->FindUnitState(Handle);
@@ -277,6 +396,6 @@ uint64 FBattleStateHash::Compute(UWorld* World, TArray<uint64>* OutSectionHashes
 		AppendU64(State->bGuardMode ? 1u : 0u);
 	}
 
-	EndSection();
+	EndSection(10);
 	return CityHash64(reinterpret_cast<const char*>(Bytes.GetData()), static_cast<uint32>(Bytes.Num()));
 }

@@ -56,11 +56,17 @@ void UCombatResolutionProcessor::Execute(FMassEntityManager& EntityManager, FMas
 	const float Interval = FMath::Max(0.01f, FCombatCVars::AttackInterval());
 	const float Recovery = FMeleeMath::RecoveryWindow(Interval);
 
-	ResolutionQuery.ForEachEntityChunk(Context, [DT, SectorCount, Interval, Recovery, Debug](FMassExecutionContext& Context)
+		ResolutionQuery.ForEachEntityChunk(Context, [DT, SectorCount, Interval, Recovery, Debug](FMassExecutionContext& Context)
 	{
 		auto Pairs = Context.GetMutableFragmentView<FCombatPairFragment>();
 		const auto Stats = Context.GetFragmentView<FBaseStatsFragment>();
 		const auto Owners = Context.GetFragmentView<FOwnerUnitFragment>();
+		// DET trace batch (task 1.S3): one line per chunk per tick -- the
+		// worker's Display volume gets DROPPED under pressure (measured: 13
+		// of ~100 strikes logged, det_trace_s3b.log), a per-chunk line keeps
+		// the strike order intact at a fraction of the drop exposure.
+		const bool bDetTrace = BattleDet::RunTag() != 0;
+		FString DetStrikes;
 
 		for (int32 i = 0; i < Context.GetNumEntities(); ++i)
 		{
@@ -113,6 +119,22 @@ void UCombatResolutionProcessor::Execute(FMassEntityManager& EntityManager, FMas
 				++Pair.RollCount;
 				const bool bLanded = Roll < P * FMath::Max(0.f, Stats[i].Lethality);
 
+				// DET trace (task 1.S3 residue hunt): canonical attacker id +
+				// roll count per strike, appended to the chunk batch. The
+				// target stays a RAW handle index: this pass is worker-side
+				// (fragment-only accesses, arch §4 row 10) and a cross-entity
+				// FMassEntityView here is a data race -- measured: the first
+				// tagged boot crashed in run 2 (det_trace_s3.log, 2026-11-02).
+				// The mass-entity serial permutes across a battle reset; align
+				// the T column by INDEX across runs. Format:
+				// A<unit>.<roster>><targetslot>#<rc>:<landed>(<roll>/<P>)
+				if (bDetTrace)
+				{
+					DetStrikes += FString::Printf(TEXT("A%u.%d>%u#%d:%d(%.3f/%.3f) "),
+						Owners[i].Owner.Index, Owners[i].RosterIndex, Pair.Target.Index,
+						Pair.RollCount, bLanded ? 1 : 0, Roll, P);
+				}
+
 				if (Debug)
 				{
 					Debug->RecordCombatRoll(bLanded);
@@ -142,10 +164,11 @@ void UCombatResolutionProcessor::Execute(FMassEntityManager& EntityManager, FMas
 							Debug->RecordDeathByArc(Sector, SectorCount);
 						}
 						UE_LOG(LogMassBattle, Display,
-							TEXT("EXEC_RESULT CombatKill Attacker=%u:%u Unit=%u:%u Target=%u:%u Sector=%d Charge=%.1f"),
+							TEXT("EXEC_RESULT CombatKill Attacker=%u:%u Unit=%u:%u Target=%u:%u Sector=%d Charge=%.1f T=%d"),
 							Context.GetEntity(i).Index, Context.GetEntity(i).SerialNumber,
 							Owners[i].Owner.Index, Owners[i].Owner.Serial,
-							Pair.Target.Index, Pair.Target.SerialNumber, Sector, Pair.ChargeBonusRemaining);
+							Pair.Target.Index, Pair.Target.SerialNumber, Sector, Pair.ChargeBonusRemaining,
+							BattleDet::Tick());
 					}
 				}
 
@@ -168,6 +191,12 @@ void UCombatResolutionProcessor::Execute(FMassEntityManager& EntityManager, FMas
 			default:
 				break;
 			}
+		}
+		if (bDetTrace && !DetStrikes.IsEmpty())
+		{
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT DetRoll run=%d t=%d chunk=%u strikes: %s"),
+				BattleDet::RunTag(), BattleDet::Tick(), Context.GetEntity(0).Index, *DetStrikes);
 		}
 	});
 }

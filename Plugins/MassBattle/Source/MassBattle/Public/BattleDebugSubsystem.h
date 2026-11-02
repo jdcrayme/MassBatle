@@ -11,6 +11,19 @@
 #include "BattleTypes.h"
 #include "BattleDebugSubsystem.generated.h"
 
+/** Determinism-trace run tag (Battle.Det.RunTag). When a session tags its
+ *  runs 1/2, the combat + ranged roll paths emit their DET trace lines at
+ *  Display level with CANONICAL identities (owner unit + roster slot --
+ *  mass-entity handles permute across a battle reset: the 2026-11-02 hunt
+ *  measured run 1 serials=3 vs run 2 serials=5) so cross-run log
+ *  comparisons survive worker-thread interleaving (the playbook's
+ *  explicit-run-tag rule). */
+namespace BattleDet
+{
+	MASSBATTLE_API int32 RunTag();
+	MASSBATTLE_API int32 Tick();
+}
+
 /** Per-frame metrics in the B.4 instrumented set (drawn in Phase 2; dumped
  *  via Battle.DumpMetrics now). */
 USTRUCT()
