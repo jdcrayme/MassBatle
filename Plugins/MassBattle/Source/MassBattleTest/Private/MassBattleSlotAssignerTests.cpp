@@ -53,7 +53,7 @@ bool FSlots_AssignmentBijection::RunTest(const FString& Parameters)
 			EntityPos.Add(FVector2D(Stream.FRandRange(-5.f, 25.f), Stream.FRandRange(-3.f, 5.f)));
 		}
 		TArray<int32> Out;
-		FSlotAssigner::Assign(EntityPos, SlotPos, NumFiles, {}, 2, Out);
+		FSlotAssigner::Assign(EntityPos, SlotPos, NumFiles, {}, 2, 0.f, Out);
 
 		TestEqual(FString::Printf(TEXT("trial %d: one assignment per entity"), Trial), Out.Num(), NumSlots);
 		TSet<int32> Used;
@@ -119,7 +119,7 @@ bool FSlots_FileDisplacementBound::RunTest(const FString& Parameters)
 	}
 
 	TArray<int32> Out;
-	FSlotAssigner::Assign(EntityPos, SlotPos, NumFiles, Previous, 2, Out);
+	FSlotAssigner::Assign(EntityPos, SlotPos, NumFiles, Previous, 2, 0.f, Out);
 
 	// The far-from-home entity cannot claim file 6 (bound): it must land
 	// within 2 files of its previous file 0.
@@ -148,7 +148,7 @@ bool FSlots_FileDisplacementBound::RunTest(const FString& Parameters)
 	for (FVector2D& P : SlotPosCm) { P *= 0.01f; }
 	for (FVector2D& P : EntityPosCm) { P *= 0.01f; }
 	TArray<int32> OutCm;
-	FSlotAssigner::Assign(EntityPosCm, SlotPosCm, NumFiles, Previous, 2, OutCm);
+	FSlotAssigner::Assign(EntityPosCm, SlotPosCm, NumFiles, Previous, 2, 0.f, OutCm);
 	bool bSame = true;
 	for (int32 E = 0; E < NumSlots; ++E)
 	{
@@ -330,8 +330,8 @@ bool FSlots_BatchedReflowIdempotent::RunTest(const FString& Parameters)
 			Slots.Add(FVector2D((i % 6) * 1.2f, (i / 6) * 1.2f));
 		}
 		TArray<int32> First, Second;
-		FSlotAssigner::Assign(Positions, Slots, 6, TArray<int32>(), 2, First);
-		FSlotAssigner::Assign(Positions, Slots, 6, First, 2, Second);
+		FSlotAssigner::Assign(Positions, Slots, 6, TArray<int32>(), 2, 0.f, First);
+		FSlotAssigner::Assign(Positions, Slots, 6, First, 2, 0.f, Second);
 		TestEqual(TEXT("assign-twice: same length"), Second.Num(), First.Num());
 		bool bIdentical = true;
 		for (int32 i = 0; i < First.Num(); ++i)

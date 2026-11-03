@@ -112,6 +112,15 @@ namespace
 		5.f,
 		TEXT("Facing-vs-tangent divergence (deg) above which the wheel frame engages (below it the path-frame projection resumes -- the curved-rank following)."),
 		ECVF_Default);
+	// Task 2, the owner's swarm ruling: the incumbency claim bound for the
+	// interval reflow's assigner (the rationale at the assigner's pass 0).
+	// Default = DressBreak (1.8): dressed-enough soldiers hold their files;
+	// only the torn minority re-sorts. 0 = the old from-scratch greedy.
+	TAutoConsoleVariable<float> GBattleMovementAssignIncumbencyM(
+		TEXT("Battle.Movement.AssignIncumbencyM"),
+		1.8f,
+		TEXT("Interval-reflow incumbency claim bound (m): an entity within this distance of its previous slot keeps it (anti-churn, the swarm fix). 0 = the from-scratch greedy."),
+		ECVF_Default);
 
 	// Phase 2 B3 (F-7): march stickiness -- on a dressed march the 0.5 s
 	// interval reflow + predictive swaps are churn, not information. While a
@@ -633,6 +642,7 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 		// crossing-free, so the arrival is already orientation-optimal.
 		// Pure function of state (totals over canonical indices): two-run
 		// safe. Middle rank of an odd-depth block self-pairs (zero tear).
+		const auto OwnerViews = Context.GetFragmentView<FOwnerUnitFragment>();
 		{
 			const int32 NumRanksMirror = FMath::Max(1,
 				FMath::CeilToInt(static_cast<float>(Formation.NumSlots) / Formation.NumFiles));
@@ -680,6 +690,21 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 				bWantMirrored = bCurrentlyMirrored
 					? (MirrorTotal <= DirectTotal * 1.3)  // stay mirrored while not clearly worse
 					: (MirrorTotal < DirectTotal * 0.7);  // flip only on a clear win
+			}
+			// Task 2 swarm diagnosis: a flip MID-MARCH inverts every rank's
+			// targets at once -- mass crossings, the owner's "swarming within
+			// the formation when it moves". Log every flip (rare by
+			// hysteresis design; if the log fills, the hysteresis is pulsing
+			// under the wheel's continuously-changing geometry and the
+			// evaluation scope needs the fix).
+			if (bWantMirrored != bCurrentlyMirrored)
+			{
+				UE_LOG(LogMassBattle, Display,
+					TEXT("EXEC_RESULT RankMirrorFlip run=%d A=%u.%d direct=%.1f mirrored=%.1f scored=%d nowMirrored=%d"),
+					BattleDet::RunTag(),
+					OwnerViews.Num() > 0 ? OwnerViews[0].Owner.Index : 0u,
+					OwnerViews.Num() > 0 ? static_cast<uint32>(OwnerViews[0].RosterIndex) : 0u,
+					DirectTotal, MirrorTotal, Scored, bWantMirrored ? 1 : 0);
 			}
 			if (bWantMirrored)
 			{
@@ -783,7 +808,7 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 					? Formation.NumSlots
 					: GBattleMovementMaxFileDisplacement.GetValueOnAnyThread();
 				FSlotAssigner::Assign(EntityPosM, SlotPosM, Formation.NumFiles, Assignment,
-					MaxDisplacement, NewAssignment);
+					MaxDisplacement, GBattleMovementAssignIncumbencyM.GetValueOnAnyThread(), NewAssignment);
 
 				// Predictive swaps (optional policy, arch §8.4): crossing servo
 				// projections within ~1 s swap slot indices. Skipped while filing
@@ -879,6 +904,30 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 			// touched again before). Phase 2 C3: handoff latches die with the
 			// old assignment.
 			TArrayView<FSlotAssignmentFragment> SlotsView = Context.GetMutableFragmentView<FSlotAssignmentFragment>();
+			// Task 2 swarm diagnosis: the per-reflow CHURN -- how many
+			// entities changed slots this reflow. A dressed march should
+			// churn ZERO (march stickiness suppresses the interval reflow);
+			// churn on an undressed march = the re-sorting the owner reads
+			// as swarming. Logged per reflow that changed anything.
+			{
+				int32 ChurnCount = 0;
+				for (int32 i = 0; i < NumEntities; ++i)
+				{
+					if (Assignment.IsValidIndex(i) && Assignment[i] != NewAssignment[i])
+					{
+						++ChurnCount;
+					}
+				}
+				if (ChurnCount > 0)
+				{
+					UE_LOG(LogMassBattle, Display,
+						TEXT("EXEC_RESULT ReflowChurn run=%d A=%u.%d changed=%d of %d redecision=%d"),
+						BattleDet::RunTag(),
+						OwnerViews.Num() > 0 ? OwnerViews[0].Owner.Index : 0u,
+						OwnerViews.Num() > 0 ? static_cast<uint32>(OwnerViews[0].RosterIndex) : 0u,
+						ChurnCount, NumEntities, bLayoutRedecision ? 1 : 0);
+				}
+			}
 			for (int32 i = 0; i < NumEntities; ++i)
 			{
 				SlotsView[Perm[i]].SlotIndex = NewAssignment[i];
@@ -932,7 +981,6 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 			bOfficerOverride = OfficerBase != INDEX_NONE && OfficerTotal > 0;
 		}
 		const auto BaseStatsView = Context.GetFragmentView<FBaseStatsFragment>();
-		const auto OwnerViews = Context.GetFragmentView<FOwnerUnitFragment>();
 		for (int32 i = 0; i < NumEntities; ++i)
 		{
 			const int32 Ei = InvPerm[i]; // canonical index (Assignment/EntityPosM space)

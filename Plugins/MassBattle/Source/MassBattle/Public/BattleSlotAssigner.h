@@ -19,10 +19,19 @@ namespace FSlotAssigner
 	 *  vacant entry of SlotPositions. PreviousAssignment (may be empty on
 	 *  first dress): candidates farther than MaxFileDisplacement files from
 	 *  the entity's previous file are skipped unless nothing else is vacant.
+	 *  IncumbencyClaimM (Task 2, the owner's swarm ruling 2026-11-03): an
+	 *  entity within this distance of its PREVIOUS slot claims it outright
+	 *  (pass 0, roster order) -- the interval reflow's from-scratch greedy
+	 *  re-dealt the whole block every 0.5 s (measured: 7015 churn events of
+	 *  2-31 of ~48 slots per reflow -- the march the owner read as
+	 *  swarming). The torn minority (beyond the claim bound) still re-sorts
+	 *  freely; casualties + vacancy diffusion + evictions run after, on the
+	 *  claimed bijection, unchanged. 0 = the old from-scratch greedy (the
+	 *  unit-test goldens pass 0 to preserve their asserted semantics).
 	 *  OutAssignment[EntityIdx] = SlotIdx -- a bijection over the slot set. */
 	MASSBATTLE_API void Assign(const TArray<FVector2D>& EntityPositions, const TArray<FVector2D>& SlotPositions,
 		int32 NumFiles, const TArray<int32>& PreviousAssignment, int32 MaxFileDisplacement,
-		TArray<int32>& OutAssignment);
+		float IncumbencyClaimM, TArray<int32>& OutAssignment);
 
 	/** Phase 2 C2 (F-1/F-2): crossing-free final assignment by sort matching
 	 *  -- the i-th front-most entity takes the i-th front-most slot. Order

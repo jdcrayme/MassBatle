@@ -20,7 +20,7 @@ namespace FSlotAssigner
 {
 	void Assign(const TArray<FVector2D>& EntityPositions, const TArray<FVector2D>& SlotPositions,
 		int32 NumFiles, const TArray<int32>& PreviousAssignment, int32 MaxFileDisplacement,
-		TArray<int32>& OutAssignment)
+		float IncumbencyClaimM, TArray<int32>& OutAssignment)
 	{
 		const int32 NumEntities = EntityPositions.Num();
 		const int32 NumSlots = SlotPositions.Num();
@@ -34,6 +34,33 @@ namespace FSlotAssigner
 		SlotTaken.Init(false, NumSlots);
 
 		auto FileOf = [NumFiles](int32 Slot) { return NumFiles > 0 ? Slot % NumFiles : Slot; };
+
+		// Pass 0 (Task 2, the owner's swarm ruling 2026-11-03): incumbency
+		// claims -- roster order, an entity within IncumbencyClaimM of its
+		// PREVIOUS slot keeps it. The from-scratch greedy re-dealt the whole
+		// block every 0.5 s reflow (roster-order nearest-VACANT bidding: an
+		// earlier-roster entity routinely takes a later entity's slot by a
+		// margin, cascading 2-31 slot changes per reflow -- the march the
+		// owner read as swarming). With the claim, a marching block holds its
+		// files and only the torn minority (beyond the claim bound) re-sorts;
+		// casualties, vacancy diffusion and evictions run after, on the
+		// claimed bijection, unchanged. Deterministic (roster order + pure
+		// distance tests); 0 disables (the unit-test goldens pass 0).
+		if (IncumbencyClaimM > 0.f)
+		{
+			const float ClaimSq = FMath::Square(IncumbencyClaimM);
+			for (int32 E = 0; E < NumEntities; ++E)
+			{
+				if (PreviousAssignment.IsValidIndex(E) && PreviousAssignment[E] != INDEX_NONE
+					&& PreviousAssignment[E] >= 0 && PreviousAssignment[E] < NumSlots
+					&& !SlotTaken[PreviousAssignment[E]]
+					&& FVector2D::DistSquared(EntityPositions[E], SlotPositions[PreviousAssignment[E]]) <= ClaimSq)
+				{
+					OutAssignment[E] = PreviousAssignment[E];
+					SlotTaken[PreviousAssignment[E]] = true;
+				}
+			}
+		}
 
 		// Entities bid in roster order -- deterministic.
 		for (int32 E = 0; E < NumEntities; ++E)
