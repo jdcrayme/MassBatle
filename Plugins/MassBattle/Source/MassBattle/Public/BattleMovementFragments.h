@@ -188,6 +188,19 @@ struct FUnitFormationSharedFragment : public FMassSharedFragment
 	 *  Steering state, never hashed. */
 	UPROPERTY() uint8 bRankMirrored = 0;
 
+	/** Task 2 fix (the staged smoke's MTAccessDetector crash, 2026-11-03):
+	 *  the officer window MIRROR -- stamped game-thread by the locomotion
+	 *  from the registry state; the resolve's officer override reads THIS
+	 *  instead of FindUnitState. The resolve's worker-side scoped read
+	 *  raced the game-thread morale writes (live since the T6.1 Enable
+	 *  flip) under the MTAccessDetector check mode -- the detector fires
+	 *  on ANY read/write overlap, scoped or not. One frame of latency, the
+	 *  ReflowCooldown channel contract. Never hashed (a mirror of
+	 *  registry bookkeeping; the two-run-safety is unchanged -- the mirror
+	 *  is a deterministic function of the same state both runs compute). */
+	UPROPERTY() int32 OfficerRosterBaseMirror = INDEX_NONE;
+	UPROPERTY() int32 OfficerCountMirror = 0;
+
 	/** Morph decisions taken in the CURRENT traversal (audit H2/H5: the
 	 *  no-thrash contract is per order serial; reset with PassLocked on a new
 	 *  order, asserted <= 1 by S3). Diagnostic counter, never hashed. */

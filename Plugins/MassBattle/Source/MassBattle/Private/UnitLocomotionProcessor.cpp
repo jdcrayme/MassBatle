@@ -261,6 +261,16 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 		{
 			return;
 		}
+		// Task 2 fix: the officer-window mirror stamp (game thread; the
+		// resolve's worker-side FindUnitState read raced the morale writes
+		// under the MTAccessDetector check mode -- the staged smoke crash).
+		// The mirror rides the fragment's one-frame-latency channel; the
+		// resolve's officer override reads it instead of the registry.
+		if (const FUnitRuntimeState* UnitStateMirror = Registry->FindUnitState(Unit))
+		{
+			Formation.OfficerRosterBaseMirror = UnitStateMirror->OfficerRosterBase;
+			Formation.OfficerCountMirror = UnitStateMirror->OfficerCount;
+		}
 		// Phase 2 (A4, arch §6.2 layering): an attack order is the unit-AI
 		// layer's intent to close with the target unit -- the movement layer
 		// executes it as a march to the target's CURRENT anchor. Synthesized

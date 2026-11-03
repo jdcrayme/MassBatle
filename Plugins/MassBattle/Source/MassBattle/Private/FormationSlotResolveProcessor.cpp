@@ -921,14 +921,14 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 		int32 OfficerTotal = 0;
 		if (bOfficerOverride)
 		{
-			if (UUnitRegistrySubsystem* RegState = Context.GetWorld()->GetSubsystem<UUnitRegistrySubsystem>())
-			{
-				if (const FUnitRuntimeState* UnitState = RegState->FindUnitState(Formation.OwnerUnit))
-				{
-					OfficerBase = UnitState->OfficerRosterBase;
-					OfficerTotal = UnitState->OfficerCount;
-				}
-			}
+			// Task 2 fix: the officer window rides the FRAGMENT MIRROR
+			// (stamped game-thread by the locomotion) -- the worker-side
+			// FindUnitState read here raced the game-thread morale writes
+			// under the MTAccessDetector check mode (the staged smoke
+			// crash, 2026-11-03). One frame of latency, the documented
+			// ReflowCooldown channel contract.
+			OfficerBase = Formation.OfficerRosterBaseMirror;
+			OfficerTotal = Formation.OfficerCountMirror;
 			bOfficerOverride = OfficerBase != INDEX_NONE && OfficerTotal > 0;
 		}
 		const auto BaseStatsView = Context.GetFragmentView<FBaseStatsFragment>();
