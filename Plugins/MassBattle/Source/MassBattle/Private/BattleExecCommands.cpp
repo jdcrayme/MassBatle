@@ -475,7 +475,15 @@ namespace BattleExec
 		const float Facing = Args.Num() > 3 ? FCString::Atof(*Args[3]) : 0.f;
 		const float Speed = Args.Num() > 4 ? FCString::Atof(*Args[4]) : 0.f;
 		const int32 Files = Args.Num() > 5 ? FCString::Atoi(*Args[5]) : 0;
-		const bool bOk = Registry->IssueMoveOrder(Matched, AnchorCm, Facing, Speed, Files);
+		// Task 4b.1 (B-2): the player surface routes through the latency queue
+		// (the direct Issue* path stays the AUTO-order surface).
+		FUnitOrder Queued;
+		Queued.Type = FUnitOrder::EType::Move;
+		Queued.AnchorPos = AnchorCm;
+		Queued.FacingYaw = Facing;
+		Queued.CommandedSpeed = Speed;
+		Queued.CommandedFiles = Files;
+		const bool bOk = Registry->QueuePlayerOrder(Matched, Queued);
 		UE_LOG(LogMassBattle, Display,
 		       TEXT("EXEC_RESULT OrderMove %s Unit=%u:%u Anchor=(%.1f,%.1f)m Facing=%.1f Speed=%.2f Files=%d"),
 		       bOk ? TEXT("OK") : TEXT("FAIL"), Matched.Index, Matched.Serial, AnchorCm.X * 0.01f, AnchorCm.Y * 0.01f, Facing, Speed, Files);
@@ -504,7 +512,10 @@ namespace BattleExec
 			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT OrderStop FAIL NoSuchUnit Index=%d"), UnitIndex);
 			return;
 		}
-		const bool bOk = Registry->IssueStopOrder(Matched);
+		// Task 4b.1: the player surface routes through the latency queue.
+		FUnitOrder Queued;
+		Queued.Type = FUnitOrder::EType::Stop;
+		const bool bOk = Registry->QueuePlayerOrder(Matched, Queued);
 		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT OrderStop %s Unit=%u:%u"),
 		       bOk ? TEXT("OK") : TEXT("FAIL"), Matched.Index, Matched.Serial);
 	}
@@ -611,7 +622,11 @@ namespace BattleExec
 			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT OrderGarrison FAIL NoSuchUnit Index=%d"), UnitIndex);
 			return;
 		}
-		const bool bOk = Registry->IssueGarrisonOrder(Matched, StructureId);
+		// Task 4b.1: the player surface routes through the latency queue.
+		FUnitOrder Queued;
+		Queued.Type = FUnitOrder::EType::Garrison;
+		Queued.StructureId = StructureId;
+		const bool bOk = Registry->QueuePlayerOrder(Matched, Queued);
 		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT OrderGarrison %s Unit=%u:%u Structure=%u"),
 			bOk ? TEXT("OK") : TEXT("FAIL"), Matched.Index, Matched.Serial, StructureId);
 	}
@@ -639,7 +654,10 @@ namespace BattleExec
 			UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT OrderExitGarrison FAIL NoSuchUnit Index=%d"), UnitIndex);
 			return;
 		}
-		const bool bOk = Registry->IssueExitGarrisonOrder(Matched);
+		// Task 4b.1: the player surface routes through the latency queue.
+		FUnitOrder Queued;
+		Queued.Type = FUnitOrder::EType::ExitGarrison;
+		const bool bOk = Registry->QueuePlayerOrder(Matched, Queued);
 		UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT OrderExitGarrison %s Unit=%u:%u"),
 			bOk ? TEXT("OK") : TEXT("FAIL"), Matched.Index, Matched.Serial);
 	}
@@ -680,7 +698,11 @@ void OrderAttackUnit(const TArray<FString>& Args, UWorld* World)
 			FCString::Atoi(*Args[0]), FCString::Atoi(*Args[1]));
 		return;
 	}
-	const bool bOk = Registry->IssueAttackUnitOrder(Matched, Target);
+	// Task 4b.1: the player surface routes through the latency queue.
+	FUnitOrder Queued;
+	Queued.Type = FUnitOrder::EType::AttackUnit;
+	Queued.TargetUnit = Target;
+	const bool bOk = Registry->QueuePlayerOrder(Matched, Queued);
 	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT OrderAttackUnit %s Unit=%u:%u Target=%u:%u"),
 		bOk ? TEXT("OK") : TEXT("FAIL"), Matched.Index, Matched.Serial, Target.Index, Target.Serial);
 }
@@ -703,7 +725,13 @@ void OrderAttackMove(const TArray<FString>& Args, UWorld* World)
 	const FVector2D AnchorCm(FCString::Atof(*Args[1]) * 100.f, FCString::Atof(*Args[2]) * 100.f);
 	const float Facing = Args.Num() > 3 ? FCString::Atof(*Args[3]) : 0.f;
 	const float Speed = Args.Num() > 4 ? FCString::Atof(*Args[4]) : 0.f;
-	const bool bOk = Registry->IssueAttackMoveOrder(Matched, AnchorCm, Facing, Speed);
+	// Task 4b.1: the player surface routes through the latency queue.
+	FUnitOrder Queued;
+	Queued.Type = FUnitOrder::EType::AttackMove;
+	Queued.AnchorPos = AnchorCm;
+	Queued.FacingYaw = Facing;
+	Queued.CommandedSpeed = Speed;
+	const bool bOk = Registry->QueuePlayerOrder(Matched, Queued);
 	UE_LOG(LogMassBattle, Display,
 		TEXT("EXEC_RESULT OrderAttackMove %s Unit=%u:%u Anchor=(%.1f,%.1f)m Facing=%.1f Speed=%.2f"),
 		bOk ? TEXT("OK") : TEXT("FAIL"), Matched.Index, Matched.Serial, AnchorCm.X * 0.01f, AnchorCm.Y * 0.01f, Facing, Speed);

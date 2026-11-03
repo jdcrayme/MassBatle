@@ -273,6 +273,27 @@ struct FUnitRuntimeState
 	uint32 AutoRetreatSerial = 0;
 	FUnitHandle RetreatingFireTarget;
 
+	/** Task 4b.1 (B-3/B-4): the latency queue -- ONE pending player order
+	 *  (B-4's last-order-wins means the slot never overflows). TRANSIENT by
+	 *  design (the B-3 ruling): cleared on save capture, absent on restore,
+	 *  cleared with the battle (ResetBattleState zeroes the whole Units map)
+	 *  -- no save schema v4. ReleaseTickAbsolute is the registry SimTick at
+	 *  which the release pass applies the order through the EXISTING issue
+	 *  functions (no second apply implementation); IssueSerial is the
+	 *  OrderSerial bumped AT ISSUE (B-4) so the RC7 guard sees the player's
+	 *  intent immediately (a flee/retreat supersedes at issue, the queued
+	 *  order supersedes reflexes at release). Hashed (bookkeeping): live
+	 *  sim state, symmetric by construction, and flags-off (latency 0)
+	 *  keeps it constant-zero -- the identity holds. */
+	struct FPendingOrder
+	{
+		uint8 bValid = 0;
+		FUnitOrder Order;
+		uint32 ReleaseTickAbsolute = 0;
+		uint32 IssueSerial = 0;
+	};
+	FPendingOrder PendingPlayerOrder;
+
 	// PR-4 (audit A-2 root): locomotion's per-unit tick bookkeeping, registry
 	// per-unit state instead of function-local static maps -- cleared with the
 	// battle (ResetBattleState resets the whole Units map) and per-world

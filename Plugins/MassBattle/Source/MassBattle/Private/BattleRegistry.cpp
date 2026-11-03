@@ -19,6 +19,14 @@
 
 namespace
 {
+	// Task 4b.1 (B-1): the player-order latency, in sim ticks. The tuning
+	// home; 0 = the direct apply (byte-identical identity, ground rule 3).
+	// The EDU per-row mapping lands when the owner picks the key (B-1).
+	TAutoConsoleVariable<int32> GBattleOrderLatencyTicks(
+		TEXT("Battle.Order.LatencyTicks"),
+		0,
+		TEXT("Player-order latency in sim ticks (the OrderLatency queue; 0 = the direct apply). Auto-orders never delay (B-2)."),
+		ECVF_Default);
 	// Battle-scale scratch caps (EC9: preallocated at Initialize, grown at
 	// battle start only). Tally/coverage are keyed per-DEFENDER entity; the
 	// 2x2400-entity target leaves headroom in 8192 slots.
@@ -989,6 +997,24 @@ uint32 UUnitRegistrySubsystem::ComputeBookkeepingHash() const
 		const int32 RosterSize = State ? State->Roster.Num() : -1;
 		Hash = HashCombine(Hash, ::GetTypeHash(Handle));
 		Hash = HashCombine(Hash, ::GetTypeHash(RosterSize));
+		// Task 4b.1: the latency queue -- live sim state (a pending order's
+		// release timing + payload are part of the commanded future). Both
+		// runs replay identical schedules, so the folds align per sample;
+		// flags-off (latency 0) keeps the state invalid = one zero term.
+		const FUnitRuntimeState::FPendingOrder* Pending = State ? &State->PendingPlayerOrder : nullptr;
+		const uint8 bPending = (Pending && Pending->bValid) ? 1 : 0;
+		Hash = HashCombine(Hash, ::GetTypeHash(bPending));
+		if (bPending)
+		{
+			Hash = HashCombine(Hash, ::GetTypeHash(Pending->ReleaseTickAbsolute));
+			Hash = HashCombine(Hash, ::GetTypeHash(static_cast<uint32>(Pending->Order.Type)));
+			// FVector2D has no GetTypeHash: fold the cm-quantized coordinates
+			// (the order anchors are whole cm; symmetric rounding stays
+			// deterministic for identical floats).
+			Hash = HashCombine(Hash, ::GetTypeHash(FMath::RoundToInt32(Pending->Order.AnchorPos.X)));
+			Hash = HashCombine(Hash, ::GetTypeHash(FMath::RoundToInt32(Pending->Order.AnchorPos.Y)));
+			Hash = HashCombine(Hash, ::GetTypeHash(Pending->Order.TargetUnit));
+		}
 	}
 	Hash = HashCombine(Hash, ::GetTypeHash(FreeIndices.Num()));
 	return Hash;
@@ -1109,6 +1135,116 @@ bool UUnitRegistrySubsystem::IssueAttackMoveOrder(FUnitHandle Handle, const FVec
 	Order.TargetUnit = TargetHandle;
 	++State->OrderSerial;
 	return true;
+}
+
+// -- Task 4b.1: the OrderLatency queue (B-1..B-4) --
+
+bool UUnitRegistrySubsystem::ApplyOrderDirect(FUnitHandle Handle, const FUnitOrder& Order)
+{
+	// The release path (and the latency-0 identity) dispatch into the
+	// EXISTING issue functions -- no second apply implementation (the brief's
+	// Task 1 step 1); each takes its own write scope and runs its own
+	// validation + no-op check (a stale garrison target etc. rejects here,
+	// which DROPS the queued order -- the R-C1 death case).
+	switch (Order.Type)
+	{
+	case FUnitOrder::EType::Move:
+		return IssueMoveOrder(Handle, Order.AnchorPos, Order.FacingYaw, Order.CommandedSpeed, Order.CommandedFiles);
+	case FUnitOrder::EType::Stop:
+		return IssueStopOrder(Handle);
+	case FUnitOrder::EType::Garrison:
+		return IssueGarrisonOrder(Handle, Order.StructureId);
+	case FUnitOrder::EType::ExitGarrison:
+		return IssueExitGarrisonOrder(Handle);
+	case FUnitOrder::EType::AttackMove:
+		return IssueAttackMoveOrder(Handle, Order.AnchorPos, Order.FacingYaw, Order.CommandedSpeed, Order.TargetUnit);
+	case FUnitOrder::EType::AttackUnit:
+		return IssueAttackUnitOrder(Handle, Order.TargetUnit);
+	default:
+		return false;
+	}
+}
+
+bool UUnitRegistrySubsystem::QueuePlayerOrder(FUnitHandle Handle, const FUnitOrder& Order)
+{
+	const int32 LatencyTicks = GBattleOrderLatencyTicks.GetValueOnGameThread();
+	if (LatencyTicks <= 0)
+	{
+		// Identity (ground rule 3): latency 0 applies directly -- byte-
+		// identical serial bump + order state (the B-2 surface splits here:
+		// the DIRECT Issue* functions remain the auto-order path).
+		return ApplyOrderDirect(Handle, Order);
+	}
+	UE_MT_SCOPED_WRITE_ACCESS(AccessDetector);
+	FUnitRuntimeState* State = Handle.IsValid() ? Units.Find(Handle) : nullptr;
+	if (!State)
+	{
+		return false;
+	}
+	// B-4: the serial bumps AT ISSUE -- the RC7 guard sees the player's
+	// intent immediately (a flee/retreat superseded at issue logs its
+	// cancel); reflexes issued during the delay act now, and the queued
+	// order supersedes them at release. The apply at release bumps AGAIN
+	// (the issue functions own their serial) -- nothing keys on exact gaps.
+	++State->OrderSerial;
+	FUnitRuntimeState::FPendingOrder& Pending = State->PendingPlayerOrder;
+	Pending.bValid = 1;
+	Pending.Order = Order;
+	Pending.ReleaseTickAbsolute = SimTickCount + static_cast<uint32>(LatencyTicks);
+	Pending.IssueSerial = State->OrderSerial;
+	UE_LOG(LogMassBattle, Display,
+		TEXT("EXEC_RESULT OrderQueued Unit=%u:%u type=%d releaseTick=%u serial=%u"),
+		Handle.Index, Handle.Serial, static_cast<int32>(Order.Type),
+		Pending.ReleaseTickAbsolute, Pending.IssueSerial);
+	return true;
+}
+
+void UUnitRegistrySubsystem::AdvanceSimTick()
+{
+	++SimTickCount;
+}
+
+void UUnitRegistrySubsystem::ReleaseQueuedOrders()
+{
+	// Game thread (the release processor / the test). NO held scope: the
+	// apply dispatches into the Issue* functions, which scope themselves
+	// (the audit-M7 discipline -- a held write scope here would nest).
+	// The due list rides a function-local static (EC9: allocated once,
+	// reset per call -- no per-tick allocation, ground rule 4).
+	static TArray<FUnitHandle> DueScratch;
+	DueScratch.Reset();
+	for (TPair<FUnitHandle, FUnitRuntimeState>& Pair : Units)
+	{
+		if (Pair.Value.PendingPlayerOrder.bValid
+			&& Pair.Value.PendingPlayerOrder.ReleaseTickAbsolute <= SimTickCount)
+		{
+			DueScratch.Add(Pair.Key);
+		}
+	}
+	// B-4: release in sorted-handle order.
+	DueScratch.Sort([](const FUnitHandle& A, const FUnitHandle& B)
+	{
+		if (A.Index != B.Index)
+		{
+			return A.Index < B.Index;
+		}
+		return A.Serial < B.Serial;
+	});
+	for (const FUnitHandle& Handle : DueScratch)
+	{
+		FUnitRuntimeState* State = Units.Find(Handle);
+		if (!State || !State->PendingPlayerOrder.bValid)
+		{
+			continue;
+		}
+		const FUnitOrder Order = State->PendingPlayerOrder.Order;
+		State->PendingPlayerOrder = FUnitRuntimeState::FPendingOrder(); // cleared before the apply
+		const bool bApplied = ApplyOrderDirect(Handle, Order);
+		UE_LOG(LogMassBattle, Display,
+			TEXT("EXEC_RESULT OrderRelease Unit=%u:%u type=%d applied=%d tick=%u"),
+			Handle.Index, Handle.Serial, static_cast<int32>(Order.Type),
+			bApplied ? 1 : 0, SimTickCount);
+	}
 }
 
 // -- Phase 2 engagement records + scratch (spec §3.2) --
@@ -1302,6 +1438,11 @@ void UUnitRegistrySubsystem::ResetBattleState()
 	TeamGeneralDeathShock.Reset();
 	MoraleInputsScratch.Reset();
 	MoraleTickCooldown = 0.f;
+	// Task 4b.1 (F10): the sim tick counter zeroes with the battle -- the
+	// queue's release ticks are absolute against it, and the queue itself
+	// lives on the per-unit states (cleared above with the whole map). No
+	// accumulator survives a reset: reset-ordering-immune by construction.
+	SimTickCount = 0;
 	UE_LOG(LogMassBattle, Display, TEXT("EXEC_RESULT ResetBattleState ok"));
 }
 

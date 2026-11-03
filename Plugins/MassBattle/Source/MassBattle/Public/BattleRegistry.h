@@ -480,6 +480,27 @@ public:
 	const FUnitOrder* FindOrder(FUnitHandle Handle) const;
 	uint32 GetOrderSerial(FUnitHandle Handle) const;
 
+	// -- Task 4b.1: the OrderLatency queue (B-1..B-4; game thread) --
+
+	/** The PLAYER-order entry (B-2): the ONLY surface that routes through
+	 *  the latency queue. Latency 0 (`Battle.Order.LatencyTicks`) applies
+	 *  the order DIRECTLY through the matching Issue* function (byte-
+	 *  identical identity); latency > 0 queues it -- the OrderSerial bumps
+	 *  AT ISSUE (B-4), the apply happens at the release tick by
+	 *  ReleaseQueuedOrders (sorted-handle order, through the EXISTING issue
+	 *  functions). A second player order replaces the queued one (last
+	 *  order wins, B-4). Returns false on a stale handle / a rejected
+	 *  direct apply. */
+	bool QueuePlayerOrder(FUnitHandle Handle, const FUnitOrder& Order);
+	/** Advance the sim tick (the release processor calls once per tick,
+	 *  BEFORE the sweep). Reset with the battle (F10: no accumulator -- the
+	 *  release ticks are absolute, IssueTick + Latency). */
+	void AdvanceSimTick();
+	/** Release every due pending player order (the release processor, per
+	 *  tick; also the unit-test entry). Sorted-handle order (B-4). */
+	void ReleaseQueuedOrders();
+	uint32 GetSimTickCount() const { return SimTickCount; }
+
 	// -- Phase 2 attack order surface (brief A4, task 2; game thread) --
 
 	/** Order the unit to attack a specific enemy unit. A9 guard: garrisoned /
@@ -579,6 +600,11 @@ private:
 	// Phase 1+ worker reads: UE_MT_SCOPED_READ_ACCESS(AccessDetector);
 	UE_MT_DECLARE_RW_ACCESS_DETECTOR(AccessDetector);
 
+	/** Task 4b.1: the release path's dispatch into the EXISTING issue
+	 *  functions (the queue's latency-0 identity + the release sweep both
+	 *  apply through this -- no second apply implementation). */
+	bool ApplyOrderDirect(FUnitHandle Handle, const FUnitOrder& Order);
+
 	/** Live units only; freed slots move to FreeIndices. */
 	TMap<FUnitHandle, FUnitRuntimeState> Units;
 
@@ -627,4 +653,9 @@ private:
 
 	/** Morale tick cadence accumulator (game thread only). */
 	float MoraleTickCooldown = 0.f;
+
+	/** Task 4b.1: the sim tick counter (the release processor advances it
+	 *  once per tick; the queue's release ticks are absolute against it --
+	 *  F10: no accumulator, zeroed with the battle). */
+	uint32 SimTickCount = 0;
 };

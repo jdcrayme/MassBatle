@@ -322,6 +322,19 @@ namespace
 				{
 					Flags.Apply();
 				}
+				// Task 4b.1: the latency harness param (the -Phase2Flags
+				// lesson: the -game process cannot take multi-command
+				// -ExecCmds chains, so the cvar rides the command line).
+				{
+					int32 LatencyTicks = 0;
+					if (FParse::Value(FCommandLine::Get(), TEXT("OrderLatencyTicks="), LatencyTicks))
+					{
+						if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Order.LatencyTicks")))
+						{
+							C->Set(LatencyTicks, ECVF_SetByCode);
+						}
+					}
+				}
 				return false;
 			}
 
