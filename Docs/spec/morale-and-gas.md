@@ -297,9 +297,9 @@ The 4a/4b split (owner decision 2026-10-31): 4a ships the gated scope (T4.1-T4.8
 | Future | Seam |
 |--------|------|
 | `OrderLatency` (4b) | the order APIs gain a delay queue keyed on the attribute; the parked-order machinery (A7) is the precedent for parked-but-countdown state |
-| `TerrorAura` (4b) | the aura input's mirror against enemy envelopes; the EDU `frighten_*` tokens join FromEdu with the same loud-map posture |
+| `TerrorAura` (**LANDED 4b, 2026-11-03**) | the aura input's mirror against enemy envelopes (`FMoraleWeights::TerrorAura = -1`, the fold scans the nearest enemy frightener); the EDU `frighten_foot`/`frighten_mounted` tokens joined FromEdu with the same loud-map posture; the per-kind shaping cvars `Battle.Morale.TerrorAura{Foot,Mounted}{Base,RadiusM}` (Base 0 = the identity) |
 | Fatigue rest/recovery | `AccumulateExertion` takes the rate block; a negative-rest rate is a table row, not a mechanism change |
-| Climate/terrain fatigue (`stat_heat`, TerrainPenalty) | the `FatigueRateScale` slot + a ground/heightfield material lookup at the cluster cadence |
+| Climate/terrain fatigue (`stat_heat`, TerrainPenalty) | the `FatigueRateScale` slot (**the EDU half LANDED 4b, 2026-11-03**: `hardy`->0.85 / `very_hardy`->0.7 via `ClimateFatigueRateScale`; `stat_heat` and the ground/heightfield material lookup stay Phase 5 with the weather/terrain system) |
 | WeatherRain | writes `RangedAttackMod` + range scale (the ranged spec's section 10 row, unchanged) |
 | Per-entity morale variance (stragglers break first) | the FSM stays unit-level; a variance term would stamp intent fragments at the assign pass -- explicitly not this design |
 | Morale-visible UI (Phase 5) | `GetUnitMoraleState` + the overlay rows are the read surface; representation never reads the registry directly |

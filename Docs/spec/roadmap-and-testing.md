@@ -137,6 +137,10 @@ Standing rule from Phase 0 onward: pure-math seam audit at every code review (B.
 | T4.6 | Functional | Toggle behaviors | guard / fire-at-will / skirmish alter behavior as specified; impetuous pursue overrides orders |
 | T4.7 | Functional | Full-battle determinism | two-run hash equality on a mixed battle including morale and effects |
 | T4.8 [new] | Unit | Morale staleness bound | under load, Morale value age never exceeds one morale-tick period [E3] |
+| T4b.1 [4b] | Unit | Order queue | release on the tick boundary after the latency; serial-at-issue; last order wins; auto-orders undelayed; reset-ordering immunity (`Battle.Unit.Order.Queue`) |
+| T4b.2 [4b] | Unit | Terror drain | the term isolated at its weight; the falloff shape; the foot/mounted split (`Battle.Unit.Morale.Terror`) |
+| T4b.3 [4b] | Unit | Climate rate | hardy/very_hardy rate goldens; the band table unchanged (`Battle.Unit.Morale.RateScale`) |
+| T4b.4 [4b] | Functional | 4b determinism | the two-run equality incl. the queued releases + the terror terms + the rate scales under the pin |
 
 ### Phase 5 — Representation
 

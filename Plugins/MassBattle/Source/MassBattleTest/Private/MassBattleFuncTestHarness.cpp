@@ -335,6 +335,18 @@ namespace
 						}
 					}
 				}
+				// Task 4b.2: the terror Base rides the same param family (the two-run
+				// fixture's mounted frightener general drains the enemy side).
+				{
+					float TerrorBase = 0.f;
+					if (FParse::Value(FCommandLine::Get(), TEXT("TerrorMountedBase="), TerrorBase))
+					{
+						if (IConsoleVariable* C = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Morale.TerrorAuraMountedBase")))
+						{
+							C->Set(TerrorBase, ECVF_SetByCode);
+						}
+					}
+				}
 				return false;
 			}
 

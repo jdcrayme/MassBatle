@@ -298,6 +298,7 @@ bool AUnitActor::SpawnEntities(FBattleSpawnResult& OutResult, FString& OutError)
 		// Phase 4a (spec morale-and-gas section 3.3): the authoring passthrough.
 		Spec.OfficerCount = OfficerCount;
 		Spec.bIsGeneral = bIsGeneral;
+		Spec.bFrightenMounted = bFrightenMounted;
 		// Phase 1: the formation anchor spawns at the actor's transform (cm;
 		// facing from the actor yaw) -- units no longer stack at the origin.
 		Spec.SpawnPos = FVector2D(GetActorLocation().X, GetActorLocation().Y);

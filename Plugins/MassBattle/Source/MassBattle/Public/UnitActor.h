@@ -152,6 +152,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Battle")
 	bool bIsGeneral = false;
 
+	// Task 4b.2: the frighten flag (the spawn-time spec injection, the
+	// bIsGeneral pattern -- the EDU rows carry the tokens; fixtures inject).
+	bool bFrightenMounted = false;
+
 	UPROPERTY(VisibleAnywhere, Category = "Battle") TObjectPtr<UBattleAbilitySystemComponent> AbilitySystem;
 	UPROPERTY(VisibleAnywhere, Category = "Battle") TObjectPtr<UUnitAttributeSet> AttributeSet;
 

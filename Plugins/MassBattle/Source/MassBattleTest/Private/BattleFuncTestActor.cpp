@@ -5020,7 +5020,7 @@ namespace
 	/** AUnitActor spawn with the morale authoring passthrough (officers +
 	 *  the general flag); SpawnEntities inside. Null on failure. */
 	AUnitActor* MoraleSpawnActor(UWorld* World, int32 EduRow, int32 Count, const FVector2D& PosM,
-		float YawDeg, uint8 TeamId, int32 OfficerCount = 0, bool bIsGeneral = false)
+		float YawDeg, uint8 TeamId, int32 OfficerCount = 0, bool bIsGeneral = false, bool bFrightenMounted = false)
 	{
 		FActorSpawnParameters Params;
 		Params.ObjectFlags |= RF_Transient;
@@ -5033,6 +5033,7 @@ namespace
 			Unit->TeamId = TeamId;
 			Unit->OfficerCount = OfficerCount;
 			Unit->bIsGeneral = bIsGeneral;
+			Unit->bFrightenMounted = bFrightenMounted;
 			FBattleSpawnResult R;
 			FString E;
 			if (!Unit->SpawnEntities(R, E))
@@ -5887,11 +5888,20 @@ void ADeterminismTwoRunTest::SpawnMixedFixture()
 			else { ArchB = Actor->GetUnitHandle(); }
 		}
 	}
-	// Mutual attack orders (both sides advance + volley).
-	Registry->IssueAttackUnitOrder(InfA, InfB);
-	Registry->IssueAttackUnitOrder(InfB, InfA);
-	Registry->IssueAttackUnitOrder(ArchA, InfB);
-	Registry->IssueAttackUnitOrder(ArchB, InfA);
+	// Mutual attack orders (both sides advance + volley). Task 4b: they
+	// route through the QUEUE (the player surface; with the harness latency
+	// pinned the queued-state hashing + the release land inside the
+	// equality -- the releases land pre-clash, symmetric across the runs).
+	FUnitOrder Q;
+	Q.Type = FUnitOrder::EType::AttackUnit;
+	Q.TargetUnit = InfB;
+	Registry->QueuePlayerOrder(InfA, Q);
+	Q.TargetUnit = InfA;
+	Registry->QueuePlayerOrder(InfB, Q);
+	Q.TargetUnit = InfB;
+	Registry->QueuePlayerOrder(ArchA, Q);
+	Q.TargetUnit = InfA;
+	Registry->QueuePlayerOrder(ArchB, Q);
 	ScriptUnit = ArchA;
 
 	// T4.7 extension (the PR-15 shape, landed now that Task 1 closed green --
@@ -5917,7 +5927,10 @@ void ADeterminismTwoRunTest::SpawnMixedFixture()
 	// 1.5 -- the crossing lands mid-window. All additions ride the
 	// fixed-order/transform discipline and the per-run reseed; no new cvars
 	// (the gate's morale pin carries Enable+DeterministicTick already).
-	AUnitActor* GenA = MoraleSpawnActor(World, 1, 8, FVector2D(-105.f, 88.f), 0.f, 0, 1, true);
+	// Task 4b: the general is MOUNTED-FRIGHTENING (the fear mirror's two-run
+	// coverage: the enemy side drains near him, symmetric across the runs;
+	// the script unit's rally cycle is untouched -- the terror hits enemies).
+	AUnitActor* GenA = MoraleSpawnActor(World, 1, 8, FVector2D(-105.f, 88.f), 0.f, 0, 1, true, true);
 	AUnitActor* ScriptA = MoraleSpawnActor(World, 1, 8, FVector2D(-100.f, 90.f), 0.f, 0);
 	AUnitActor* ImpA = MoraleSpawnActor(World, 0, 8, FVector2D(-25.f, -25.f), 0.f, 0);
 	if (ImpA)
