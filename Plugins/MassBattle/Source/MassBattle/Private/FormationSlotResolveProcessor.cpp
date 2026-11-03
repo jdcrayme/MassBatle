@@ -16,6 +16,7 @@
 #include "MassCommonFragments.h"
 #include "MassMovementFragments.h"
 #include "HAL/IConsoleManager.h"
+#include "Misc/Parse.h"
 
 namespace
 {
@@ -85,6 +86,17 @@ namespace
 		TEXT("Battle.Movement.FanInHysteresis"),
 		0.3f,
 		TEXT("Fan-in peel hysteresis deadband, m; the destination slot must be closer by this much (<= 0 disables the peel)."),
+		ECVF_Default);
+
+	// Task 2 dress hunt: the resolve-instant offender trace (the soak's ~5 s
+	// sampler under-measures -- see the field branch's DressOffender emit).
+	// Opt-in via this cvar or the bare -SoakDressTrace command-line param
+	// (the -Phase2Flags precedent; the packaged-game -ExecCmds quoting
+	// proved shell-fragile).
+	TAutoConsoleVariable<int32> GBattleMovementSoakDressTrace(
+		TEXT("Battle.Movement.SoakDressTrace"),
+		0,
+		TEXT("1 = FormationSlotResolve names the over-6m worst soldier at the resolve instant (unit.roster, slot, both positions) -- the dress-gate hunt trace (Task 2)."),
 		ECVF_Default);
 
 	// Phase 2 B3 (F-7): march stickiness -- on a dressed march the 0.5 s
@@ -758,6 +770,16 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 		float MaxSlotError = 0.f;
 		float SlotErrorSum = 0.f;
 		int32 SlotErrorCount = 0;
+		// Task 2 dress hunt: the worst offender AT the resolve instant (the
+		// soak's ~5 s sampler under-measures -- the servo partially closes
+		// the transient before it samples; three instrumented runs missed the
+		// 27-33 m peaks entirely). Opt-in via the SoakDressTrace cvar/param;
+		// owner identity rides this lambda's own OwnerViews (worker-safe).
+		int32 FieldWorstI = INDEX_NONE;
+		int32 FieldWorstSlot = INDEX_NONE;
+		float FieldWorstErrorM = 0.f;
+		const bool bFieldDressTrace = GBattleMovementSoakDressTrace.GetValueOnAnyThread() != 0
+			|| FParse::Param(FCommandLine::Get(), TEXT("SoakDressTrace"));
 		// Phase 4a (PR-12, A5): the officer override inputs -- one registry
 		// read per chunk (worker-safe scoped read inside FindUnitState).
 		// Gated on Battle.Morale.Enable (flags-off identity: officers keep
@@ -855,6 +877,12 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 				MaxSlotError = FMath::Max(MaxSlotError, ErrorM);
 				SlotErrorSum += ErrorM;
 				++SlotErrorCount;
+				if (bFieldDressTrace && ErrorM > FieldWorstErrorM)
+				{
+					FieldWorstErrorM = ErrorM;
+					FieldWorstI = i;
+					FieldWorstSlot = Slot;
+				}
 			}
 			// Garrison filing (spec §6): TargetZ interpolates along the path
 			// at the entity's rank arc; field movement stays at ground Z.
@@ -940,5 +968,24 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 		// channel contract as ReflowCooldown).
 		Formation.MaxSlotErrorM = MaxSlotError;
 		Formation.MeanSlotErrorM = SlotErrorCount > 0 ? SlotErrorSum / SlotErrorCount : 0.f;
+		// Task 2 dress hunt: name the worst offender at the resolve instant.
+		// THROTTLED: the first unthrottled run logged 227k lines -- under the
+		// soak's march traffic EVERY unit breaches for most of the soak (the
+		// rear clusters lose ground during marches; the offender population
+		// is all eight units). Every 64th breach resolve keeps the evidence
+		// sampling the windows without the fire hose.
+		static std::atomic<uint32> DressBreachCount{0};
+		if (bFieldDressTrace && MaxSlotError > 6.f && FieldWorstI >= 0
+			&& (DressBreachCount.fetch_add(1) % 64) == 0)
+		{
+			const int32 EiW = InvPerm[FieldWorstI];
+			UE_LOG(LogMassBattle, Display,
+				TEXT("EXEC_RESULT DressOffender A=%u.%d slot=%d err=%.2f pos=(%.2f,%.2f) tgt=(%.2f,%.2f) ent=%u:%u"),
+				OwnerViews[EiW].Owner.Index, static_cast<uint32>(OwnerViews[EiW].RosterIndex),
+				FieldWorstSlot, FieldWorstErrorM,
+				EntityPosM[EiW].X, EntityPosM[EiW].Y,
+				Targets[FieldWorstI].TargetPos.X * 0.01f, Targets[FieldWorstI].TargetPos.Y * 0.01f,
+				Context.GetEntity(FieldWorstI).Index, Context.GetEntity(FieldWorstI).SerialNumber);
+		}
 	});
 }

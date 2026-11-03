@@ -47,6 +47,8 @@ namespace
 		600.f,
 		TEXT("Soak duration in game seconds (default 600 = the T1.8 gate)."),
 		ECVF_Default);
+	// The dress trace cvar (Battle.Movement.SoakDressTrace) lives beside the
+	// resolve that emits it: FormationSlotResolveProcessor (one home).
 
 	TArray<FEduUnit> LoadFixture()
 	{
@@ -437,9 +439,16 @@ void UBattleMovementSoakController::OnTick(float TimeDelta)
 					++SeparationViolations;
 				}
 			}
-			// Audit M16: track the worst deep-stuck sample.
-			MaxDuringStuckDeep = FMath::Max(MaxDuringStuckDeep, DuringStuckDeepThisSample);
-			// Progress evidence every ~60 s (12 samples), not per sample.
+				// Audit M16: track the worst deep-stuck sample.
+				MaxDuringStuckDeep = FMath::Max(MaxDuringStuckDeep, DuringStuckDeepThisSample);
+				// Task 2 dress hunt note: the per-soldier sample-time trace
+				// lived here for one iteration and was REMOVED -- it
+				// under-measures (the servo partially closes the resolve
+				// instant's transient before the ~5 s sample looks; three
+				// runs missed the 27-33 m peaks) and it referenced the gate
+				// bound out of scope. The trace lives at the resolve, in
+				// FormationSlotResolveProcessor (EXEC_RESULT DressOffender).
+				// Progress evidence every ~60 s (12 samples), not per sample.
 			if (Samples % 12 == 0)
 			{
 				UE_LOG(LogGauntlet, Display, TEXT("GAUNTLET BattleMovementSoak progress t=%.0fs violations=%d deepStuck=%d"),

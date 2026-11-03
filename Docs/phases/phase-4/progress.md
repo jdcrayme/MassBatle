@@ -10,6 +10,33 @@
 
 ## Discrepancies (dated, newest first)
 
+- **2026-11-03 (Task 2 dress gate -- the hunt's evidence step landed; the
+  finding is a DESIGN QUESTION, not a local bug)** -- the staged nightly's
+  `dressErr=30.25/6.0m(phase2=1)` reproduced three times (the stale staged
+  exe 32.27, the re-staged build 32.99, the editor path 27.37 -- the soak
+  is wall-clock statistical, not seeded-deterministic, so the bound is
+  breached robustly but the value wanders). Instrumentation journey: a
+  per-soldier sample-time trace lived for one iteration and was REMOVED --
+  it under-measures (the servo partially closes the resolve instant's
+  transient before the ~5 s sample looks; three runs missed the peaks);
+  the trace now lives at the RESOLVE itself
+  (`FormationSlotResolveProcessor`, `EXEC_RESULT DressOffender`, opt-in
+  via `Battle.Movement.SoakDressTrace` or the bare `-SoakDressTrace` param
+  -- the packaged-game `-ExecCmds` quoting proved shell-fragile; the
+  throttle = every 64th breach resolve, the first unthrottled run logged
+  227k lines). **The attribution reframes the failure: ALL EIGHT units
+  breach the 6 m bound for most of the soak** (~6k offender resolves each;
+  the worst ~30 m = rear clusters losing ground during marches -- the
+  offenders MOVE, they just cannot catch the anchor). The bound is D2's
+  own phase-2 contract ("worst sample gates the march bound"), so this is
+  not a servo bug with a local fix -- it is the march-discipline tuning
+  (straggler pace / march speed vs catch-up cap / the traffic severity)
+  OR a bound-semantics decision (during-march vs the T1.8 settled-state
+  judgment). OWNER QUESTION recorded; next session picks the disposition
+  (tune within the contract vs recalibrate the bound) -- phase-2
+  territory per the phase-3 stash attribution. Instrumentation committed
+  as evidence tooling.
+
 - **2026-11-03 (T4.7 LANDED -- the two-run gate covers the full morale loop;
   the phase-3 dossier closed)** -- the PR-15 deferred item landed
   (`aa7e17d`): its recorded landing condition ("it lands with Task 1's
