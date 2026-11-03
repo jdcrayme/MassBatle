@@ -7,10 +7,10 @@
     "os": "Windows 10 Home 19045"
   },
   "engineCL": 58902052,
-  "date": "2026-10-29T14:33:28",
+  "date": "2026-11-03T13:45:30",
   "metrics": {
     "smoke_test_duration_s": {
-      "value": 21.678,
+      "value": 21.643,
       "unit": "s",
       "tolerance": 0.5
     },
@@ -18,6 +18,26 @@
       "value": 47.4,
       "unit": "us",
       "tolerance": 0.5
+    },
+    "soak_stuck_final": {
+      "value": 0,
+      "unit": "count",
+      "tolerance": 0.0
+    },
+    "soak_separation_final": {
+      "value": 0,
+      "unit": "count",
+      "tolerance": 0.0
+    },
+    "soak_archetypes": {
+      "value": 12,
+      "unit": "count",
+      "tolerance": 0.0
+    },
+    "soak_archetypes_spawn": {
+      "value": 8,
+      "unit": "count",
+      "tolerance": 0.0
     }
   }
 }
