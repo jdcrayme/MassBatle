@@ -248,6 +248,17 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 	// speed significantly higher than the unit movement speed).
 	const float SeekSpeedScale = GBattleMovementSeekSpeedScale.GetValueOnAnyThread();
 	const float SeekErrorGateM = GBattleMovementSeekErrorGate.GetValueOnAnyThread();
+	// Task 2 dress hunt: the deep-offender servo trace gate (the cvar lives
+	// beside the resolve that also emits -- the ServoProcessor cross-TU
+	// pattern: FindConsoleVariable cached; the param is the shell-robust
+	// switch -- the -Phase2Flags precedent).
+	static IConsoleVariable* DressTraceCvar = nullptr;
+	if (!DressTraceCvar)
+	{
+		DressTraceCvar = IConsoleManager::Get().FindConsoleVariable(TEXT("Battle.Movement.SoakDressTrace"));
+	}
+	const bool bSoakDressTrace = (DressTraceCvar && DressTraceCvar->GetInt() != 0)
+		|| FParse::Param(FCommandLine::Get(), TEXT("SoakDressTrace"));
 
 	// ---- Unit-vs-unit OBB contact (arch §8.6, Phase 1 scale: 8 units) ----
 	// One body per unit from the formation fragment; pairs resolved to
@@ -383,7 +394,7 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 	}
 
 	const IConsoleVariable* WalkCvar = WalkSpeedCvar;
-	ServoQuery.ForEachEntityChunk(Context, [DT, MaxAccel, bFeedForward, bMemberClamp, bFallInServo, StuckReawardLevel, SeekSpeedScale, SeekErrorGateM, Debug, &Snapshot, &ShoveVel, &ShoveW, &HandleToSnapshot, &BlockPartners, WalkCvar](FMassExecutionContext& Context)
+	ServoQuery.ForEachEntityChunk(Context, [DT, MaxAccel, bFeedForward, bMemberClamp, bFallInServo, StuckReawardLevel, SeekSpeedScale, SeekErrorGateM, bSoakDressTrace, Debug, &Snapshot, &ShoveVel, &ShoveW, &HandleToSnapshot, &BlockPartners, WalkCvar](FMassExecutionContext& Context)
 	{
 		const FUnitFormationSharedFragment& Formation = *Context.GetSharedFragmentPtr<FUnitFormationSharedFragment>();
 		const FUnitStatsSharedFragment* Stats = Context.GetSharedFragmentPtr<FUnitStatsSharedFragment>();
@@ -699,6 +710,23 @@ void UServoProcessor::Execute(FMassEntityManager& EntityManager, FMassExecutionC
 			// result to the servo ceiling.
 			NewVelM = NewVelM.GetClampedToMaxSize(ServoCeilM);
 			Velocities[i].Value = FVector(NewVelM.X, NewVelM.Y, 0.f) * 100.f;
+
+			// Task 2 dress hunt: the deep-offender servo trace -- what holds a
+			// 10 m+-off soldier in place? Movement state, ladder, shove weight,
+			// actual vs commanded velocity vs ceiling. Throttled (every 128th
+			// deep resolve; the resolve side's unthrottled run logged 227k
+			// lines). Opt-in via Battle.Movement.SoakDressTrace / -SoakDressTrace.
+			static std::atomic<uint32> ServoOffenderCount{0};
+			if (bSoakDressTrace && SlotErrM > 10.f
+				&& (ServoOffenderCount.fetch_add(1) % 128) == 0)
+			{
+				UE_LOG(LogMassBattle, Display,
+					TEXT("EXEC_RESULT ServoOffender ent=%u:%u err=%.2f state=%d ladder=%d shoveW=%.2f vOld=%.2f vNew=%.2f ceil=%.2f pos=(%.1f,%.1f) tgt=(%.1f,%.1f)"),
+					Context.GetEntity(i).Index, Context.GetEntity(i).SerialNumber,
+					SlotErrM, static_cast<int32>(State), ServoStates[i].LadderLevel,
+					ServoStates[i].DisplacementWeight, OldVelM.Size(), NewVelM.Size(), ServoCeilM,
+					PosM.X, PosM.Y, SlotPosM.X, SlotPosM.Y);
+			}
 
 			// Ladder bookkeeping (§8.5): slow + away from slot escalates.
 			const float SpeedM = NewVelM.Size();

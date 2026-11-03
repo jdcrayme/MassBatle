@@ -573,6 +573,97 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 			}
 		}
 
+		// ---- Task 2 tune (owner 2026-11-03, "hold formation better"): the
+		// about-face rank mirror. On a heading change the path-frame grid
+		// re-lays MIRRORED under each soldier's sticky file-locked slot --
+		// rear-rank soldiers inherit targets up to the block diagonal away
+		// (measured, det_t47-era trace + the staged soak: the 26-33 m dress
+		// peaks are roster ranks 26-41 of 48; ~24 tears per soak, one per
+		// traffic turn; each drains at walk speed only). The M2TW about-face
+		// instead inverts RANKS AS WHOLE RANKS (files keep their lateral
+		// positions): each soldier's new slot lands at (or near) its old
+		// physical position and the tear never opens. The resolve evaluates
+		// the direct vs rank-mirrored layout cost against the live positions
+		// under the CURRENT (file-locked) assignment and keeps the cheaper,
+		// with a 30%-win hysteresis stored per formation (bRankMirrored --
+		// steering state, never hashed; the flip needs a clear win either way
+		// so a near-crossover layout cannot churn). The FINAL layout is
+		// untouched: AssignFinal re-sorts onto the arrival frame
+		// crossing-free, so the arrival is already orientation-optimal.
+		// Pure function of state (totals over canonical indices): two-run
+		// safe. Middle rank of an odd-depth block self-pairs (zero tear).
+		{
+			const int32 NumRanksMirror = FMath::Max(1,
+				FMath::CeilToInt(static_cast<float>(Formation.NumSlots) / Formation.NumFiles));
+			const auto RankMirror = [NumRanksMirror, NumFiles = Formation.NumFiles](int32 SlotIdx)
+			{
+				const int32 Rank = SlotIdx / NumFiles;
+				const int32 File = SlotIdx % NumFiles;
+				return (NumRanksMirror - 1 - Rank) * NumFiles + File;
+			};
+			double DirectTotal = 0.0;
+			double MirrorTotal = 0.0;
+			int32 Scored = 0;
+			// Partial last rank: NumSlots % NumFiles can leave the mirrored
+			// index past the array (50 slots x 12 files -> rank 4 holds only
+			// 2 files; mirror index 59 > 49). A slot whose mirror does not
+			// exist is SKIPPED (stays direct) -- the crash teacher, 2026-11-03.
+			const auto RankMirrorValid = [&](int32 SlotIdx, int32& OutMirrored)
+			{
+				const int32 Rank = SlotIdx / Formation.NumFiles;
+				const int32 File = SlotIdx % Formation.NumFiles;
+				const int32 Mirrored = (NumRanksMirror - 1 - Rank) * Formation.NumFiles + File;
+				const bool bValid = Mirrored >= 0 && Mirrored < Formation.NumSlots;
+				if (bValid)
+				{
+					OutMirrored = Mirrored;
+				}
+				return bValid;
+			};
+			for (int32 i = 0; i < NumEntities; ++i)
+			{
+				const int32 Slot = Assignment[i];
+				int32 Mirrored = INDEX_NONE;
+				if (Slot < 0 || Slot >= Formation.NumSlots || !RankMirrorValid(Slot, Mirrored))
+				{
+					continue;
+				}
+				DirectTotal += FVector2D::Distance(EntityPosM[i], SlotPosM[Slot]);
+				MirrorTotal += FVector2D::Distance(EntityPosM[i], SlotPosM[Mirrored]);
+				++Scored;
+			}
+			const bool bCurrentlyMirrored = Formation.bRankMirrored != 0;
+			bool bWantMirrored = bCurrentlyMirrored;
+			if (Scored > 0)
+			{
+				bWantMirrored = bCurrentlyMirrored
+					? (MirrorTotal <= DirectTotal * 1.3)  // stay mirrored while not clearly worse
+					: (MirrorTotal < DirectTotal * 0.7);  // flip only on a clear win
+			}
+			if (bWantMirrored)
+			{
+				// In-place pair swap: the mirror is an involution on the valid
+				// pairs, so swapping each (Slot, Mirror(Slot)) pair once leaves
+				// SlotPosM[s] = BasePos[Mirror(s)] for every mirrorable slot
+				// (the odd-depth middle rank self-pairs and stays).
+				for (int32 Slot = 0; Slot < Formation.NumSlots; ++Slot)
+				{
+					int32 Mirrored = INDEX_NONE;
+					if (!RankMirrorValid(Slot, Mirrored) || Mirrored <= Slot)
+					{
+						continue;
+					}
+					Swap(SlotPosM[Slot], SlotPosM[Mirrored]);
+					Swap(SlotYaw[Slot], SlotYaw[Mirrored]);
+				}
+				Formation.bRankMirrored = 1;
+			}
+			else
+			{
+				Formation.bRankMirrored = 0;
+			}
+		}
+
 		FReflowScheduler Scheduler;
 		Scheduler.IntervalSeconds = 0.5f;
 		Scheduler.Cooldown = Formation.ReflowCooldown;

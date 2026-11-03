@@ -175,6 +175,19 @@ struct FUnitFormationSharedFragment : public FMassSharedFragment
 	 *  current pass -- no re-decision mid-corridor (no thrash). */
 	UPROPERTY() uint8 PassLocked = 0;
 
+	/** Task 2 tune (owner 2026-11-03, "hold formation better"): the march
+	 *  layout's rank orientation. On a heading change the path-frame grid
+	 *  re-lays MIRRORED under each soldier's sticky file -- rear-rank
+	 *  soldiers inherit slots up to the block diagonal away (measured: the
+	 *  staged soak's 26-33 m dress peaks; the offenders are roster ranks
+	 *  26-41 of 48). The resolve evaluates direct vs rank-mirrored march
+	 *  layout cost against the live positions and keeps the cheaper one
+	 *  (the M2TW about-face: ranks invert as whole ranks, files stay files).
+	 *  1 = the layout currently mirrors the path frame. Hysteresis state
+	 *  (the flip needs a 30% cost win either way -- no per-resolve churn).
+	 *  Steering state, never hashed. */
+	UPROPERTY() uint8 bRankMirrored = 0;
+
 	/** Morph decisions taken in the CURRENT traversal (audit H2/H5: the
 	 *  no-thrash contract is per order serial; reset with PassLocked on a new
 	 *  order, asserted <= 1 by S3). Diagnostic counter, never hashed. */

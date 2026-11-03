@@ -101,6 +101,18 @@ namespace
 		0.2f,
 		TEXT("Straggler pace throttle per meter of tear beyond DressBreak (phase 2 B2)."),
 		ECVF_Default);
+	// Task 2 tune hybrid: the SEVERE max-error gate + floor (the minority-
+	// tear anchor cap; the full rationale at the pace application site).
+	TAutoConsoleVariable<float> GBattleMovementPaceSevereGate(
+		TEXT("Battle.Movement.PaceSevereGateM"),
+		5.4f,
+		TEXT("Max slot error (m) where the severe-tear anchor cap engages (3x DressBreak; Task 2 hybrid)."),
+		ECVF_Default);
+	TAutoConsoleVariable<float> GBattleMovementPaceSevereFloor(
+		TEXT("Battle.Movement.PaceSevereFloor"),
+		0.5f,
+		TEXT("Anchor pace floor while the severe-tear cap is engaged (0.5x walk; Task 2 hybrid)."),
+		ECVF_Default);
 
 	// Audit H2: the T1.7 pass decision commits when the constriction is this
 	// close to the anchor (the lead rank at the mouth) -- not on first sight
@@ -1043,10 +1055,31 @@ void UUnitLocomotionProcessor::Execute(FMassEntityManager& EntityManager, FMassE
 				// dress and burn the march budgets in stop-wait-crawl cycles.
 				// A drag or choke queue moves the BLOCK -- the mean crosses
 				// DressBreak only then; edge-file re-front walks do not.
-				const float PaceFactor = FUnitLocomotion::StragglerPaceFactor(
+				const float DressBreakM = GBattleMovementDressBreak.GetValueOnGameThread();
+				float PaceFactor = FUnitLocomotion::StragglerPaceFactor(
 					Formation.MeanSlotErrorM,
-					GBattleMovementDressBreak.GetValueOnGameThread(),
+					DressBreakM,
 					GBattleMovementPaceGain.GetValueOnGameThread());
+				// Task 2 tune hybrid (owner 2026-11-03, "hold formation better"):
+				// the mean-based term alone lets a MINORITY tear ride forever --
+				// a rear cluster 10-25 m off with a dressed block keeps the mean
+				// under DressBreak, the anchor marches at full pace, and the
+				// cluster chases at walk without ever closing (measured: the
+				// staged soak's chronic 10-25 m tail, all eight units; the
+				// mirror fix removed the turn tears, this removes the drag).
+				// SEVERE max-error (>= PaceSevereGateM) caps the anchor at no
+				// less than PaceSevereFloor (0.5x -- NOT the 0.25 stop-wait-
+				// crawl floor the errata warned about): the cluster closes at
+				// (seek-boosted walk - half-pace anchor) instead of treading
+				// water, and the cap releases the moment the cluster re-dresses.
+				const float SevereGateM = GBattleMovementPaceSevereGate.GetValueOnGameThread();
+				if (Formation.MaxSlotErrorM > SevereGateM)
+				{
+					const float SevereFloor = GBattleMovementPaceSevereFloor.GetValueOnGameThread();
+					const float MaxFactor = FMath::Clamp(
+						1.f - 0.06f * (Formation.MaxSlotErrorM - SevereGateM), SevereFloor, 1.f);
+					PaceFactor = FMath::Min(PaceFactor, MaxFactor);
+				}
 				CurrentLimit *= PaceFactor;
 				// Phase 2 D2 observability: one line per throttle engagement and
 				// per recovery (event rate, game thread). PR-4 (audit A-2 root):
