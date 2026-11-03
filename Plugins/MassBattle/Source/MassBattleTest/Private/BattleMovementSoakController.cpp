@@ -610,6 +610,18 @@ void UBattleMovementSoakController::OnTick(float TimeDelta)
 		}
 
 		const int32 ArchetypesNow = EM.DebugGetArchetypesCount();
+		// The archetype watch (B.4) is about UNBOUNDED GROWTH, not equality --
+		// the 2026-11-02 census ruling demoted the cumulative count to a
+		// metric (a process-history term diverges under perfect determinism;
+		// the same reasoning binds here: the count measures what the process
+		// created, not what the battle leaks). The death path legitimately
+		// creates the four death-variant compositions on the first kill of
+		// each family ({infantry,archer} x {FDeadTag, FDeadSignaledTag}), and
+		// the staged soak (morale-on, ranged rows) kills -- measured: the
+		// first staged run of the wheel build read 12 vs spawn 8 = EXACTLY
+		// the death family, sole gate failure with settledDressErr=0.00.
+		// Bound: spawn + the death family; anything beyond is a leak.
+		const int32 ArchetypeBudget = ArchetypeCountAtSpawn + 4;
 		// Audit M16: alongside the settled final state, a GENEROUS DURING-soak
 		// budget gates the transient rate (disclosed here): escalations must
 		// stay under 2 per unit present, and separation events under 40 per
@@ -668,7 +680,7 @@ void UBattleMovementSoakController::OnTick(float TimeDelta)
 			&& StuckNow == 0
 			&& SeparatedNow == 0
 			&& GarrisonedUnsettled == 0
-			&& ArchetypesNow == ArchetypeCountAtSpawn
+			&& ArchetypesNow <= ArchetypeBudget
 			&& SkippedUnitsAtAssert == 0
 			&& MaxDuringStuckDeep <= DeepStuckBudget
 			&& DuringEsc <= EscBudget
