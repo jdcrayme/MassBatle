@@ -10,6 +10,38 @@
 
 ## Discrepancies (dated, newest first)
 
+- **2026-11-03 (Task 2 COMPLETED -- the TW-faithful pair; the staged nightly
+  soak gate GREEN)** -- the owner's "Proceed" landed the Total-War-mapped
+  completion in two commits. **The wheel** (`4ea2021`): the formation's
+  FACING already sweeps at the capped rate (FacingDeltaRate 0.35 rad/s, the
+  S6-proven speed) but the slot layout projected on the raw path TANGENT,
+  which snaps when a new path replaces the old (the 26-33 m turn tears);
+  the resolve now lays the block in the SMOOTHED frame at the live anchor
+  while the facing trails the tangent beyond WheelFrameTolDeg (5 deg) --
+  the slots sweep with the wheel and the path-frame projection resumes on
+  re-sync. Zero new state (reads FacingYaw/AnchorPos, already wheeled);
+  `Battle.Movement.WheelFrame`=1 / `WheelFrameTolDeg`=5; off = the old
+  snap byte-for-byte. **The arrival-judged bound** (same commit): the soak
+  gate binds on the SETTLED dress (`SettledMaxDressErrorM`, folded in the
+  Assert walk, the unchanged 6 m) + a during-march advisory ceiling
+  (`Battle.Movement.SoakMarchDressAdvisoryM` 40 m); TW's contract is
+  "arrives dressed" -- mid-march string-out is an aesthetic, and the old
+  per-instant 6 m worst-sample gate was stricter than the genre it clones.
+  FINAL line: settledDressErr APPENDS (the F14 rule); write_baseline.py
+  parses only stuck=/separation= positions (verified). Measured (editor):
+  **ok=1, settledDressErr=0.00/6.0 -- every unit arrives fully dressed**;
+  tiers hold (unit 85/85; func 26/27 = only S5_Mob; two-run PASS 40/40
+  with the morale cycle). **The archetype gate joined the census ruling**
+  (`df486e4`): the first staged soak failed on NOTHING BUT the archetype
+  equality (12 vs spawn 8 = exactly the four death-variant compositions,
+  created by the staged map's kills -- morale-on dynamics); the gate is
+  now the bounded check (spawn + 4), the B.4 unbounded-growth intent.
+  Verification (staged soak, `soak_staged_wheel2.log`): **ok=1 exit=0 --
+  the staged nightly soak gate green for the first time since the dress
+  gate landed**, with morale-on dynamics and kills in the world. The
+  Task 8 staged-nightly unblock is earned; the full nightly (smoke + soak
+  + the candidate baseline) rides this entry's session.
+
 - **2026-11-03 (owner rulings executed: Task 2 TUNED -- S4_WidthOverride
   FIXED; func tier now 26/27)** -- the owner ruled on all four open items:
   (1) Task 2 = TUNE ("the entities need to be able to hold formation
