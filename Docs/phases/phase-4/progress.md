@@ -10,6 +10,40 @@
 
 ## Discrepancies (dated, newest first)
 
+- **2026-11-03 (owner rulings executed: Task 2 TUNED -- S4_WidthOverride
+  FIXED; func tier now 26/27)** -- the owner ruled on all four open items:
+  (1) Task 2 = TUNE ("the entities need to be able to hold formation
+  better"); (2) H-4 approved (the B.4/B.5 wording patch applied to the
+  roadmap the same day, disclosed per the A7 pattern); (3) the 4b
+  skeleton's B-1..B-8 approved (the rows mark in place at the 4b freeze);
+  (4) the cadence-watch line approved (lands in the 4a report section 5 +
+  the roadmap B.7 entry at the 4a close). The tune, two mechanisms + one
+  trace, landed as one commit: **the about-face rank mirror** (on a
+  heading change the path-frame grid re-lays mirrored under each
+  soldier's file-locked slot; the resolve now evaluates direct vs
+  rank-mirrored layout cost and keeps the cheaper, 30%-win hysteresis in
+  `bRankMirrored` per formation; partial last ranks skip non-mirrorable
+  slots -- the first landing crashed on the 50x12 partial-rank overshoot,
+  fixed with a validity guard) and **the severe-tear anchor cap** (max
+  error >= 5.4 m caps the anchor at >= 0.5x pace -- the mean-based
+  throttle's minority-tear blind spot: a rear cluster torn while the
+  block stays dressed never slowed the anchor, measured as the chronic
+  10-25 m tail). Measured: the soak dressErr 30-33 -> **23.75** worst
+  sample; servo stress collapsed (escalations 2231 -> 208, maxDeepStuck
+  127 -> 10); **S4_WidthOverride now PASSES** (failing since phase 2/3 --
+  the mirror picks the cheaper orientation exactly on the re-front tear;
+  func 25/27 -> **26/27**, only S5_Mob remains, signature unchanged);
+  unit 85/85; DeterminismTwoRun PASS 40/40 with the morale cycle (the
+  mirror is a pure function of state -- two-run safe). REMAINING owner
+  question recorded: the 6 m worst-sample bound still breaches (23.75) --
+  the residual is the order-change layout rotation itself plus
+  cross-traffic wedges; closing it needs a layout-morph mechanism (a
+  phase-2-sized feature) or the bound-semantics call (during-march
+  advisory vs the settled-state judgment). Traces/evidence:
+  `soak_dress_trace.log`, `soak_dress_trace_ed.log`, `soak_dress_trace2.log`
+  (the unthrottled 227k-line run), `soak_dress_mirror3.log`,
+  `soak_dress_hybrid.log`, `soak_servo_trace.log`.
+
 - **2026-11-03 (Task 2 dress gate -- the hunt's evidence step landed; the
   finding is a DESIGN QUESTION, not a local bug)** -- the staged nightly's
   `dressErr=30.25/6.0m(phase2=1)` reproduced three times (the stale staged

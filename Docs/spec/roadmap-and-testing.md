@@ -285,11 +285,11 @@ Every phase ships in capsules/gray-box on a flat heightfield tile first, then on
 
 ### B.4 Metrics to instrument
 
-Pair churn/sec and re-pair latency (ticks) · stuck events per 10 min · separation events · per-processor ms (target: pairing < 0.5 ms game thread @ 1k in contact) · archetype count (watch for unbounded growth) · custom-data writes/frame · actor spawn/despawn churn · concurrent VFX/audio voices · entity counts per band.
+Pair churn/sec and re-pair latency (ticks) · stuck events per 10 min · separation events · per-processor ms (target: pairing < 0.5 ms game thread @ 1k in contact) · live composition census in the state-hash equality (the kCensusTypes presence bitset, BattleStateHash section 3) · cumulative archetype count as a metric only (Det2RunCensus telemetry + Battle.DumpMetrics + the nightly soak archetypes=N line; watch for unbounded growth) · custom-data writes/frame · actor spawn/despawn churn · concurrent VFX/audio voices · entity counts per band.
 
 ### B.5 Determinism (hooks only, per ADR-11)
 
-Seeded RNG registry (one stream per system, seeded per battle). A compile-time flag switches pairing/shuffle to index-sorted iteration with per-entity jitter. Optional post-M2: sim-state hash per tick compared across two runs of the same seed — cheap insurance that no hidden wall-clock or iteration-order dependency exists. Claims are scoped to **same-binary, same-machine** runs; cross-machine/compiler floating-point reordering (FMA contraction, fast-math) can diverge hashes without a real defect and is out of scope under ADR-11's hooks-only posture [R9].
+Seeded RNG registry (one stream per system, seeded per battle). A compile-time flag switches pairing/shuffle to index-sorted iteration with per-entity jitter. Optional post-M2: sim-state hash per tick compared across two runs of the same seed — cheap insurance that no hidden wall-clock or iteration-order dependency exists. The equality folds LIVE sim state only — no session-cumulative counters (the 2026-11-02 census ruling: a process-history term diverges under perfect determinism; record in Docs/phases/phase-4/task1-hunt-archetype-census.md §9) — and a mismatch prints ten true per-section hashes (the bisector) plus the per-sample census telemetry. Claims are scoped to **same-binary, same-machine** runs; cross-machine/compiler floating-point reordering (FMA contraction, fast-math) can diverge hashes without a real defect and is out of scope under ADR-11's hooks-only posture [R9].
 
 ### B.6 Perf gates
 
