@@ -59,6 +59,12 @@ private:
 	// bounded when a phase-2 movement flag is on).
 	float MaxDressErrorM = 0.f;
 
+	// Task 2 completion (the TW arrival-judged bound): the worst formation
+	// MaxSlotErrorM across the SETTLED end state (the Assert walk) -- the
+	// number the dress gate binds on. MaxDressErrorM above stays the
+	// during-soak telemetry + the advisory-ceiling half.
+	float SettledMaxDressErrorM = 0.f;
+
 	// Phase 2 task 9 (R-C9): the clash-mix order count (logged in the FINAL
 	// line; 0 when Battle.Combat.SoakClash is off).
 	int32 ClashOrders = 0;

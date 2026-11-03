@@ -98,6 +98,20 @@ namespace
 		0,
 		TEXT("1 = FormationSlotResolve names the over-6m worst soldier at the resolve instant (unit.roster, slot, both positions) -- the dress-gate hunt trace (Task 2)."),
 		ECVF_Default);
+	// Task 2 completion, the TW wheel: while the smoothed facing trails the
+	// path tangent beyond the tolerance, the march layout lays out in the
+	// SMOOTHED frame at the live anchor (slots sweep with the wheel) instead
+	// of snapping to the tangent frame. Off = the old tangent snap.
+	TAutoConsoleVariable<int32> GBattleMovementWheelFrame(
+		TEXT("Battle.Movement.WheelFrame"),
+		1,
+		TEXT("1 = the march layout projects on the smoothed FacingYaw while it trails the path tangent (the TW wheel); 0 = the layout snaps to the tangent frame (pre-wheel behavior)."),
+		ECVF_Default);
+	TAutoConsoleVariable<float> GBattleMovementWheelFrameTolDeg(
+		TEXT("Battle.Movement.WheelFrameTolDeg"),
+		5.f,
+		TEXT("Facing-vs-tangent divergence (deg) above which the wheel frame engages (below it the path-frame projection resumes -- the curved-rank following)."),
+		ECVF_Default);
 
 	// Phase 2 B3 (F-7): march stickiness -- on a dressed march the 0.5 s
 	// interval reflow + predictive swaps are churn, not information. While a
@@ -437,13 +451,40 @@ void UFormationSlotResolveProcessor::Execute(FMassEntityManager& EntityManager, 
 		{
 			(void)FPathFrameLayout::SampleAt(PathM, 0.f, StartPosM, StartTan);
 		}
+		// Task 2 completion, the TW wheel (owner-approved 2026-11-03): the
+		// formation's FACING already sweeps at the capped rate
+		// (Battle.Movement.FacingDeltaRate, the S6-proven re-dress speed) --
+		// but the slot layout projected on the raw path TANGENT, which snaps
+		// the instant a new path replaces the old one: rear-rank soldiers
+		// inherited targets up to the block diagonal away (the measured
+		// 26-33 m turn tears; the rank mirror catches the assignment side,
+		// this catches the layout side). While the smoothed facing trails
+		// the tangent beyond WheelFrameTolDeg, the block lays out in the
+		// SMOOTHED frame at the anchor's live position (the degenerate
+		// anchor-formula branch below) -- the slots sweep with the wheel
+		// instead of teleporting. When the facing re-syncs (|delta| <= tol)
+		// the path-frame projection resumes (the curved-rank following on
+		// arcs is preserved where it belongs). Cvar off = the old tangent
+		// snap byte-for-byte.
+		bool bWheelFrame = false;
+		if (bHasPath)
+		{
+			FVector2D CurPosM;
+			FVector2D CurTan;
+			if (FPathFrameLayout::SampleAt(PathM, Formation.PathS * 0.01f, CurPosM, CurTan))
+			{
+				const float PathYawNow = FMath::RadiansToDegrees(FMath::Atan2(CurTan.Y, CurTan.X));
+				bWheelFrame = GBattleMovementWheelFrame.GetValueOnAnyThread() != 0
+					&& FMath::Abs(FMath::UnwindDegrees(Formation.FacingYaw - PathYawNow)) > GBattleMovementWheelFrameTolDeg.GetValueOnAnyThread();
+			}
+		}
 		for (int32 Slot = 0; Slot < Formation.NumSlots; ++Slot)
 		{
 			const int32 Rank = Slot / Formation.NumFiles;
 			const int32 File = Slot % Formation.NumFiles;
 			FVector2D Pos;
 			float YawDeg;
-			if (bHasPath)
+			if (bHasPath && !bWheelFrame)
 			{
 				const float RankArcM = Formation.PathS * 0.01f - Rank * RankSpacingM;
 				if (RankArcM >= 0.f)

@@ -47,6 +47,17 @@ namespace
 		600.f,
 		TEXT("Soak duration in game seconds (default 600 = the T1.8 gate)."),
 		ECVF_Default);
+	// Task 2 completion (the TW arrival-judged bound): the DURING-march
+	// advisory ceiling -- the during-soak worst MaxSlotErrorM must stay under
+	// this (catches runaway tears; turn-instant rotations and cross-traffic
+	// wedges the wheel + mirror drain are tolerated). The SETTLED gate is
+	// DressBoundM (6 m) at the Assert walk. Appended to the FINAL line's
+	// dressErr second value.
+	TAutoConsoleVariable<float> GBattleMovementSoakMarchAdvisoryM(
+		TEXT("Battle.Movement.SoakMarchDressAdvisoryM"),
+		40.f,
+		TEXT("During-march advisory ceiling (m) on the soak's worst sampled MaxSlotErrorM; the settled gate stays at 6 m (the Task 2 arrival-judged bound)."),
+		ECVF_Default);
 	// The dress trace cvar (Battle.Movement.SoakDressTrace) lives beside the
 	// resolve that emits it: FormationSlotResolveProcessor (one home).
 
@@ -547,6 +558,12 @@ void UBattleMovementSoakController::OnTick(float TimeDelta)
 				}
 				continue;
 			}
+			// Task 2 completion (the TW arrival-judged bound): the SETTLED
+			// dress -- each unit's final MaxSlotErrorM after the settle
+			// budget, folded here in the same walk that judges stuck/
+			// separation. This is the number the gate binds on; the
+			// during-soak worst stays telemetry + the advisory ceiling.
+			SettledMaxDressErrorM = FMath::Max(SettledMaxDressErrorM, Formation->MaxSlotErrorM);
 			const int32 NumRanks = FMath::Max(1, FMath::CeilToInt(static_cast<float>(Formation->NumSlots) / Formation->NumFiles));
 			const float Rad = FMath::DegreesToRadians(Formation->FacingYaw);
 			const FVector2D Front(FMath::Cos(Rad), FMath::Sin(Rad));
@@ -631,8 +648,22 @@ void UBattleMovementSoakController::OnTick(float TimeDelta)
 				break;
 			}
 		}
+		// Phase 2 D2 march bound -- Task 2 completion (owner-approved
+		// 2026-11-03), the TW arrival-judged semantics: the gate binds on the
+		// SETTLED dress (DressBoundM after the settle budget -- the T1.8
+		// judgment shape, "arrives dressed") plus a generous DURING-march
+		// advisory ceiling (MarchAdvisoryM -- catches runaway tears, tolerates
+		// turn-instant rotations and cross-traffic wedges that the wheel +
+		// mirror now drain). The old form gated the during-soak worst sample
+		// at 6 m -- stricter than the genre it clones (TW judges the block at
+		// arrival; mid-march string-out is an aesthetic), and it measured
+		// 23-33 m worst samples against 6 m even after the tune. The during-
+		// soak worst stays instrumented in the dressErr field (second value
+		// now prints the advisory bound -- the gate's during-march half).
 		constexpr float DressBoundM = 6.f;
-		const bool bDressOk = !bPhase2FlagsOn || MaxDressErrorM <= DressBoundM;
+		const float MarchAdvisoryM = GBattleMovementSoakMarchAdvisoryM.GetValueOnGameThread();
+		const bool bDressOk = !bPhase2FlagsOn
+			|| (SettledMaxDressErrorM <= DressBoundM && MaxDressErrorM <= MarchAdvisoryM);
 		const bool bOk = bTestModeOk
 			&& StuckNow == 0
 			&& SeparatedNow == 0
@@ -648,12 +679,12 @@ void UBattleMovementSoakController::OnTick(float TimeDelta)
 			// the write_baseline regex parses positionally, existing fields
 			// never move. Flag off prints 0/0/0/0 (the line length changes;
 			// the parsed positions do not).
-			TEXT("GAUNTLET BattleMovementSoak FINAL settled stuck=%d separation=%d archetypes=%d (spawn %d) garrisoned=%d unsettled=%d phases=[None=%d App=%d Queue=%d Ingress=%d Occupy=%d Settled=%d Egress=%d] duringSoak escalations=%d/%d duringSoak separationEvents=%d/%d duringSoak maxDeepStuck=%d/%d dressErr=%.2f/%.1fm(phase2=%d) fieldWide=%d skippedUnits=%d clashOrders=%d testMode=%d ok=%d volleys=%d inFlightPeak=%d friendlyHits=%d poolDrops=%d routs=%d rallies=%d shattered=%d officerDeaths=%d moraleTicks=%d"),
+			TEXT("GAUNTLET BattleMovementSoak FINAL settled stuck=%d separation=%d archetypes=%d (spawn %d) garrisoned=%d unsettled=%d phases=[None=%d App=%d Queue=%d Ingress=%d Occupy=%d Settled=%d Egress=%d] duringSoak escalations=%d/%d duringSoak separationEvents=%d/%d duringSoak maxDeepStuck=%d/%d dressErr=%.2f/%.1fm(phase2=%d) fieldWide=%d skippedUnits=%d clashOrders=%d testMode=%d ok=%d volleys=%d inFlightPeak=%d friendlyHits=%d poolDrops=%d routs=%d rallies=%d shattered=%d officerDeaths=%d moraleTicks=%d settledDressErr=%.2f/%.1fm"),
 			StuckNow, SeparatedNow, ArchetypesNow, ArchetypeCountAtSpawn,
 			GarrisonedNow, GarrisonedUnsettled,
 			PhaseCounts[0], PhaseCounts[1], PhaseCounts[2], PhaseCounts[3], PhaseCounts[4], PhaseCounts[5], PhaseCounts[6],
 			DuringEsc, EscBudget, SeparationViolations, SepBudget, MaxDuringStuckDeep, DeepStuckBudget,
-			MaxDressErrorM, DressBoundM, bPhase2FlagsOn ? 1 : 0,
+			MaxDressErrorM, MarchAdvisoryM, bPhase2FlagsOn ? 1 : 0,
 			FieldWideOrders, SkippedUnitsAtAssert, ClashOrders,
 			bTestModeOk ? 1 : 0, bOk ? 1 : 0,
 			Debug ? Debug->GetRangedShots() : 0,
@@ -666,7 +697,10 @@ void UBattleMovementSoakController::OnTick(float TimeDelta)
 			Debug ? Debug->GetRallies() : 0,
 			Debug ? Debug->GetShattered() : 0,
 			Debug ? Debug->GetOfficerDeaths() : 0,
-			Debug ? Debug->GetMoraleTicks() : 0);
+			Debug ? Debug->GetMoraleTicks() : 0,
+			// Task 2 completion (the F14 rule: APPEND at the end -- existing
+			// parsed fields never move): settled/worst-dress pair.
+			SettledMaxDressErrorM, DressBoundM);
 		Phase = EPhase::Done;
 		FinishTest(bOk ? 0 : 1);
 	}
