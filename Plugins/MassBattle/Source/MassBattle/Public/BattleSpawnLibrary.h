@@ -43,6 +43,14 @@ struct FBattleRowStats
 	bool bMelee = false;
 	bool bBow = false;
 
+	// Task 4b.2 (B-5/B-6): the frighten tokens (the `attributes` list;
+	// the terror fold keys off these via the registry spec).
+	bool bFrightenFoot = false;
+	bool bFrightenMounted = false;
+	// Task 4b.3 (B-7): the climate token (hardy/very_hardy; empty = the
+	// default rate). stat_heat is the Phase 5 slot (the brief's B-7).
+	FString ClimateToken;
+
 	// Phase 3 ranged mapping (spec ranged-stack section 6; brief F3):
 	// stat_pri is the MISSILE weapon when its missile slot != "no" (the
 	// M2TW convention); stat_sec is then the melee backup. Kind is the

@@ -226,6 +226,10 @@ public:
 	/** Units under a living general's aura at the last morale tick. */
 	void SetAuraActiveCount(int32 Count) { AuraActive = Count; }
 	int32 GetAuraActive() const { return AuraActive; }
+	// Task 4b.2: the terror fold's active counter (the AuraActive mirror;
+	// DumpMetrics appends, the F14 rule).
+	void SetTerrorActiveCount(int32 Count) { TerrorActive = Count; }
+	int32 GetTerrorActive() const { return TerrorActive; }
 	/** The morale tick counter (the soak variant's FINAL-line field; PR-15). */
 	void RecordMoraleTick() { ++MoraleTicks; }
 	int32 GetMoraleTicks() const { return MoraleTicks; }
@@ -292,6 +296,7 @@ private:
 	int32 Shattered = 0;
 	int32 OfficerDeaths = 0;
 	int32 AuraActive = 0;
+	int32 TerrorActive = 0;
 	int32 MoraleTicks = 0;
 	int32 MoraleStalenessProbeTicks = -1;
 

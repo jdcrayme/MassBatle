@@ -172,7 +172,11 @@ void UMoraleTickProcessor::TickMorale(FMassEntityManager& EM, FMassExecutionCont
 		State->KillWindow = EvaluateDecay(State->KillWindow, TickDt, DeathWindowHalfLifeS);
 		const bool bFighting = Registry->UnitHasLiveEngagement(Body.Unit);
 		const bool bRunning = State->CurrentOrder.Type == FUnitOrder::EType::Move;
-		AccumulateExertion(State->ExertionIntegral, TickDt, bRunning, bFighting);
+		// Task 4b.3 (B-7): the climate rate scale rides the registry spec
+		// (hardy 0.85 / very_hardy 0.7 / else 1 -- the F7 slot wired).
+		const FUnitSpawnSpec* BodySpec = Registry->FindUnitSpec(Body.Unit);
+		const float RateScale = ClimateFatigueRateScale(BodySpec ? BodySpec->ClimateToken : FString());
+		AccumulateExertion(State->ExertionIntegral, TickDt, bRunning, bFighting, RateScale);
 	}
 	Registry->DecayMoraleTeamShocks(TickDt);
 
@@ -221,6 +225,7 @@ void UMoraleTickProcessor::TickMorale(FMassEntityManager& EM, FMassExecutionCont
 	const float NowSimS = World ? World->GetTimeSeconds() : 0.f;
 	float TickAgeMax = 0.f;
 	int32 AuraActiveCount = 0;
+	int32 TerrorActiveCount = 0;
 	for (const FUnitBody& Body : TickBodies)
 	{
 		FUnitRuntimeState* State = Registry->FindMutableUnitState(Body.Unit);
@@ -245,6 +250,10 @@ void UMoraleTickProcessor::TickMorale(FMassEntityManager& EM, FMassExecutionCont
 			if (Inputs->GeneralAuraBonus > 0.f)
 			{
 				++AuraActiveCount;
+			}
+			if (Inputs->TerrorAuraBonus > 0.f)
+			{
+				++TerrorActiveCount;
 			}
 			// DET trace (task 1.S3): the per-unit morale surface -- value +
 			// every weighted input, run-tagged, one line per unit per morale
@@ -427,6 +436,7 @@ void UMoraleTickProcessor::TickMorale(FMassEntityManager& EM, FMassExecutionCont
 	{
 		Debug->RecordMoraleTickAge(TickAgeMax);
 		Debug->SetAuraActiveCount(AuraActiveCount);
+		Debug->SetTerrorActiveCount(TerrorActiveCount);
 		DrawMoraleOverlay(Context, Registry, TickBodies, Debug);
 	}
 }
@@ -489,6 +499,21 @@ void UMoraleTickProcessor::DrawMoraleOverlay(FMassExecutionContext& Context, UUn
 			Ring.From = Anchor;
 			Ring.Radius = FMoraleCVars::GeneralAuraRadiusM() * 100.f;
 			Ring.Color = FColor(90, 160, 255); // blue: the aura radius
+			Debug->EnqueueOverlayLine(Ring);
+		}
+
+		// Task 4b.2: the terror ring (red) at frightener units -- the
+		// GeneralAura ring's mirror (the radius is the unit's kind's).
+		if (const FUnitSpawnSpec* SpecRow = Registry->FindUnitSpec(Body.Unit);
+			SpecRow && (SpecRow->bFrightenFoot || SpecRow->bFrightenMounted))
+		{
+			FBattleOverlayLine Ring;
+			Ring.Shape = EBattleOverlayShape::Circle;
+			Ring.From = Anchor;
+			Ring.Radius = (SpecRow->bFrightenMounted
+				? FMoraleCVars::TerrorAuraMountedRadiusM()
+				: FMoraleCVars::TerrorAuraFootRadiusM()) * 100.f;
+			Ring.Color = FColor(255, 40, 40); // red: the terror radius
 			Debug->EnqueueOverlayLine(Ring);
 		}
 	}
@@ -615,6 +640,50 @@ void UMoraleTickProcessor::FoldUnitInputs(FMassEntityManager& EM, UUnitRegistryS
 		}
 	}
 	Inputs->GeneralAuraBonus = AuraBonus;
+
+	// Task 4b.2 (B-5/B-6): the terror fold -- the GeneralAura MIRROR against
+	// enemy envelopes. The anchor is the NEAREST different-team frightener
+	// unit's envelope; the falloff shape is the aura's
+	// (Base * (1 - DistM / Radius)), with the per-token foot/mounted
+	// Base/Radius from the cvar block. Bases default 0 = the flags-off
+	// identity (the term contributes zero until enabled).
+	float TerrorBonus = 0.f;
+	float BestTerrorDistSq = BIG_NUMBER;
+	const FUnitSpawnSpec* SelfSpec = Registry->FindUnitSpec(Body.Unit);
+	for (const FUnitBody& Other : TickBodies)
+	{
+		if (Other.Unit == Body.Unit || Other.TeamId == Body.TeamId || !Other.bValid)
+		{
+			continue;
+		}
+		const FUnitSpawnSpec* OtherSpec = Registry->FindUnitSpec(Other.Unit);
+		if (!OtherSpec || (!OtherSpec->bFrightenFoot && !OtherSpec->bFrightenMounted))
+		{
+			continue;
+		}
+		const float DistSq = FVector2D::DistSquared(Body.AnchorM, Other.AnchorM);
+		if (DistSq >= BestTerrorDistSq)
+		{
+			continue;
+		}
+		// The nearest frightener's KIND decides the shaping (a mounted
+		// frightener outranges a foot one at the defaults).
+		const float Base = OtherSpec->bFrightenMounted
+			? FMoraleCVars::TerrorAuraMountedBase()
+			: FMoraleCVars::TerrorAuraFootBase();
+		const float Radius = FMath::Max(
+			OtherSpec->bFrightenMounted
+				? FMoraleCVars::TerrorAuraMountedRadiusM()
+				: FMoraleCVars::TerrorAuraFootRadiusM(),
+			KINDA_SMALL_NUMBER);
+		const float DistM = FMath::Sqrt(DistSq);
+		if (Base > 0.f && DistM < Radius)
+		{
+			BestTerrorDistSq = DistSq;
+			TerrorBonus = Base * (1.f - DistM / Radius);
+		}
+	}
+	Inputs->TerrorAuraBonus = TerrorBonus;
 
 	// Threat-anchor side channel (the flee + auto-charge geometry): nearest
 	// different-team envelope, any range (the consumers gate on radius).

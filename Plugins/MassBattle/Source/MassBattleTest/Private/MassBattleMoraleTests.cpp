@@ -15,6 +15,8 @@
 
 #include "BattleMorale.h"
 #include "BattleTypes.h"
+#include "BattleEduParser.h"
+#include "BattleSpawnLibrary.h"
 
 // ---------------------------------------------------------------------------
 // T4.1: Battle.Unit.Morale.Stack -- each contribution isolated at a known
@@ -380,3 +382,146 @@ bool FMorale_RoutRally::RunTest(const FString& Parameters)
 }
 
 #endif // WITH_DEV_AUTOMATION_TESTS
+
+
+// ---------------------------------------------------------------------------
+// Task 4b.2 (T4b.2): the terror drain -- the seam term isolated at its
+// weight (the Stack golden's pattern) + the token parse (the loud-fail
+// posture) + the per-token cvar shaping defaults.
+// ---------------------------------------------------------------------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMorale_Terror,
+	"Battle.Unit.Morale.Terror",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMorale_Terror::RunTest(const FString& Parameters)
+{
+	// -- the term isolated: the drain is the aura's MIRROR at the same
+	//    distance-scaled input (TerrorAuraBonus carries Base*(1-d/R)). --
+	{
+		FMoraleTickInputs Inputs;
+		Inputs.BaseMorale = 6.f;
+		TestEqual(TEXT("no terror = base"), EvaluateMorale(Inputs), 6.f);
+		Inputs.TerrorAuraBonus = 0.5f;
+		TestEqual(TEXT("drain at half base"), EvaluateMorale(Inputs), 5.5f);
+		Inputs.TerrorAuraBonus = 1.f;
+		TestEqual(TEXT("drain at full base"), EvaluateMorale(Inputs), 5.f);
+	}
+
+	// -- the token parse: frighten_foot / frighten_mounted land on the row
+	//    stats; unknown tokens fail LOUDLY (the discipline-branch posture).
+	//    The row text is a COMPLETE 16-key schema row (the parser is
+	//    schema-strict; the guard after each parse is the crash teacher --
+	//    a failed parse leaves the array empty and ParsedRows[0] bounds-
+	//    asserts, Array.h 1339, measured 2026-11-03). --
+	{
+		const auto MakeRow = [](const TCHAR* Attributes) -> FString
+		{
+			return FString::Printf(
+				TEXT("type Test Frighteners\n")
+				TEXT("dictionary Test_Frighteners\n")
+				TEXT("category infantry\n")
+				TEXT("class regulated\n")
+				TEXT("soldier Test_Man, 8, 0, 1\n")
+				TEXT("attributes %s\n")
+				TEXT("formation 1.2, 1.2, 2.4, 2.4, 3, square\n")
+				TEXT("stat_health 1, 1\n")
+				TEXT("stat_pri 8, 4, no, 0, 0, melee, simple, other, 10, 0.2, 0.2\n")
+				TEXT("stat_sec 8, 4, no, 0, 0, melee, simple, other, 10, 0.2, 0.2\n")
+				TEXT("stat_pri_armour 0, 1, 0, flesh\n")
+				TEXT("stat_mental 6, normal, untrained\n")
+				TEXT("stat_charge_dist 30\n")
+				TEXT("stat_cost 1, 100, 90, 40, 60, 90\n")
+				TEXT("ownership england\n"),
+				Attributes);
+		};
+		const auto ParseOne = [this](const FString& Edu, TArray<FEduUnit>& Out, FEduParseError& Err) -> bool
+		{
+			Out.Reset();
+			return FBattleEduParser::Parse(Edu, Out, Err) && Out.Num() == 1;
+		};
+		TArray<FEduUnit> ParsedRows;
+		FEduParseError Err;
+		FBattleRowStats Stats;
+		FString FromEduError;
+
+		TestTrue(TEXT("frighten_foot parses"), ParseOne(MakeRow(TEXT("frighten_foot")), ParsedRows, Err));
+		if (TestTrue(TEXT("row present"), ParsedRows.Num() == 1)
+			&& TestTrue(TEXT("FromEdu frighten_foot"), FBattleRowStats::FromEdu(ParsedRows[0], Stats, FromEduError)))
+		{
+			TestTrue(TEXT("foot flag"), Stats.bFrightenFoot);
+			TestFalse(TEXT("mounted flag"), Stats.bFrightenMounted);
+		}
+
+		TestTrue(TEXT("frighten_mounted parses"), ParseOne(MakeRow(TEXT("frighten_mounted")), ParsedRows, Err));
+		if (TestTrue(TEXT("row present 2"), ParsedRows.Num() == 1)
+			&& TestTrue(TEXT("FromEdu frighten_mounted"), FBattleRowStats::FromEdu(ParsedRows[0], Stats, FromEduError)))
+		{
+			TestTrue(TEXT("mounted flag"), Stats.bFrightenMounted);
+		}
+
+		// The fixture's other M2TW tokens parse and are inert; the climate
+		// tokens land on the row stats (B-7).
+		TestTrue(TEXT("mixed fixture tokens parse"), ParseOne(MakeRow(TEXT("sea_faring, hide_forest, very_hardy, can_withdraw")), ParsedRows, Err));
+		if (TestTrue(TEXT("row present 3"), ParsedRows.Num() == 1)
+			&& TestTrue(TEXT("FromEdu mixed"), FBattleRowStats::FromEdu(ParsedRows[0], Stats, FromEduError)))
+		{
+			TestEqual(TEXT("climate token"), Stats.ClimateToken, FString(TEXT("very_hardy")));
+			TestFalse(TEXT("no frighten"), Stats.bFrightenFoot || Stats.bFrightenMounted);
+		}
+
+		TestTrue(TEXT("unknown attribute token parses (schema-level)"), ParseOne(MakeRow(TEXT("berserker")), ParsedRows, Err));
+		if (TestTrue(TEXT("row present 4"), ParsedRows.Num() == 1))
+		{
+			TestFalse(TEXT("unknown attribute fails LOUDLY"), FBattleRowStats::FromEdu(ParsedRows[0], Stats, FromEduError));
+			TestTrue(TEXT("the error names the token"), FromEduError.Contains(TEXT("berserker")));
+		}
+	}
+
+	// -- the shaping defaults: Base 0 (the flags-off identity) and the
+	//    foot/mounted radius split (the mounted outranges the foot). --
+	{
+		TestEqual(TEXT("foot base default 0"), FMoraleCVars::TerrorAuraFootBase(), 0.f);
+		TestEqual(TEXT("mounted base default 0"), FMoraleCVars::TerrorAuraMountedBase(), 0.f);
+		TestTrue(TEXT("mounted outranges foot"),
+			FMoraleCVars::TerrorAuraMountedRadiusM() > FMoraleCVars::TerrorAuraFootRadiusM());
+	}
+	return true;
+}
+
+// ---------------------------------------------------------------------------
+// Task 4b.3 (T4b.3): the climate rate scale -- the mapping golden (B-7's
+// A16 placeholders) + the band-table-untouched assertion (R-C5).
+// ---------------------------------------------------------------------------
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMorale_RateScale,
+	"Battle.Unit.Morale.RateScale",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FMorale_RateScale::RunTest(const FString& Parameters)
+{
+	// -- the mapping (B-7): hardy 0.85, very_hardy 0.7, else 1. --
+	TestEqual(TEXT("no token = 1.0"), ClimateFatigueRateScale(FString()), 1.f);
+	TestEqual(TEXT("hardy = 0.85"), ClimateFatigueRateScale(TEXT("hardy")), 0.85f);
+	TestEqual(TEXT("very_hardy = 0.7"), ClimateFatigueRateScale(TEXT("very_hardy")), 0.7f);
+	TestEqual(TEXT("unknown token = 1.0"), ClimateFatigueRateScale(TEXT("soft")), 1.f);
+
+	// -- the exertion trajectories scale (the seam's own contract): the
+	//    same window accumulates rate-scaled exertion. --
+	{
+		float Hardy = 0.f;
+		float Plain = 0.f;
+		for (int32 i = 0; i < 100; ++i)
+		{
+			AccumulateExertion(Plain, 0.25f, true, true);
+			AccumulateExertion(Hardy, 0.25f, true, true, 0.85f);
+		}
+		TestTrue(TEXT("hardy accumulates less"), Hardy < Plain);
+		TestEqual(TEXT("the scale is exact"), Hardy, Plain * 0.85f);
+	}
+
+	// -- R-C5: the band/multiplier table is UNTOUCHED (the thresholds read
+	//    the integral, not the rate) --
+	TestEqual(TEXT("fresh band edge"), static_cast<int32>(EvaluateFatigueState(0.f)), static_cast<int32>(EBattleFatigueState::Fresh));
+	return true;
+}

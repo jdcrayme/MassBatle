@@ -141,6 +141,46 @@ bool FBattleRowStats::FromEdu(const FEduUnit& Row, FBattleRowStats& OutStats, FS
 		OutStats.OfficerCount += (Field.Key == TEXT("officer")) ? 1 : 0;
 	}
 
+	// Task 4b.2 (B-5/B-6): the frighten tokens ride the optional `attributes`
+	// list (the F6 schema: arity 0..-1, EduToken). Unknown tokens fail
+	// LOUDLY (the discipline-branch posture; B-5's drain-only surface keys
+	// off these two).
+	if (const FEduField* Attributes = Row.FindField(TEXT("attributes")))
+	{
+		for (const FString& Token : Attributes->Values)
+		{
+			if (Token == TEXT("frighten_foot"))
+			{
+				OutStats.bFrightenFoot = true;
+			}
+			else if (Token == TEXT("frighten_mounted"))
+			{
+				OutStats.bFrightenMounted = true;
+			}
+			else if (Token == TEXT("hardy") || Token == TEXT("very_hardy"))
+			{
+				// Task 4b.3 (B-7): the climate tokens (the rate scale's
+				// source; wired in task 3).
+				OutStats.ClimateToken = Token;
+			}
+			else if (Token == TEXT("sea_faring") || Token == TEXT("hide_forest")
+				|| Token == TEXT("can_withdraw") || Token == TEXT("can_skirmish")
+				|| Token == TEXT("spear_wall"))
+			{
+				// The fixture's other M2TW tokens: accepted and INERT this
+				// phase (the spec section-10 extension points own them --
+				// terrain/tactical modifiers for later phases). Unknown
+				// anything else still fails loudly.
+			}
+			else
+			{
+				OutError = FString::Printf(TEXT("EDU row '%s': unknown attribute '%s'"),
+					*OutStats.TypeName, *Token);
+				return false;
+			}
+		}
+	}
+
 	if (OutStats.bBow)
 	{
 		// Missile row: stat_pri carries the ranged weapon, stat_sec the
@@ -482,18 +522,24 @@ bool UBattleSpawnLibrary::SpawnUnitFromEduRow(UWorld* World, const FUnitSpawnSpe
 	{
 		return false;
 	}
-	if (Spec.SoldierCount <= 0)
+	// Task 4b.2/4b.3: the EDU token flags ride the spec (the terror fold
+	// and the exertion rate read the registry spec).
+	FUnitSpawnSpec WithTokens = Spec;
+	WithTokens.bFrightenFoot = Stats.bFrightenFoot;
+	WithTokens.bFrightenMounted = Stats.bFrightenMounted;
+	WithTokens.ClimateToken = Stats.ClimateToken;
+	if (WithTokens.SoldierCount <= 0)
 	{
 		// Honor the row's own soldier count when the spec leaves it at 0.
 		// Officers stay EXTRA on top (spec morale-and-gas section 3.3): the
 		// row's SoldierCount is the soldier line's count, never the total.
-		FUnitSpawnSpec Patched = Spec;
+		FUnitSpawnSpec Patched = WithTokens;
 		Patched.SoldierCount = Stats.SoldierCount;
 		OutResult = SpawnUnit(World, Patched, Stats);
 	}
 	else
 	{
-		OutResult = SpawnUnit(World, Spec, Stats);
+		OutResult = SpawnUnit(World, WithTokens, Stats);
 	}
 	if (!OutResult.Unit.IsValid())
 	{

@@ -137,6 +137,31 @@ namespace
 			 "radius)."),
 		ECVF_Default);
 
+	// Task 4b.2 (B-5/B-6): the terror per-token shaping. Base defaults 0 =
+	// the flags-off identity (the fold contributes zero until enabled; the
+	// weight row is the seam constant TerrorAura = -1, the aura's mirror).
+	TAutoConsoleVariable<float> GCMoraleTerrorAuraFootBase(
+		TEXT("Battle.Morale.TerrorAuraFootBase"),
+		0.f,
+		TEXT("Terror drain magnitude at zero distance for frighten_foot rows "
+			 "(falls linearly to 0 at the radius). 0 = off (the identity)."),
+		ECVF_Default);
+	TAutoConsoleVariable<float> GCMoraleTerrorAuraFootRadius(
+		TEXT("Battle.Morale.TerrorAuraFootRadiusM"),
+		30.f,
+		TEXT("Terror drain radius (m) for frighten_foot rows."),
+		ECVF_Default);
+	TAutoConsoleVariable<float> GCMoraleTerrorAuraMountedBase(
+		TEXT("Battle.Morale.TerrorAuraMountedBase"),
+		0.f,
+		TEXT("Terror drain magnitude at zero distance for frighten_mounted rows."),
+		ECVF_Default);
+	TAutoConsoleVariable<float> GCMoraleTerrorAuraMountedRadius(
+		TEXT("Battle.Morale.TerrorAuraMountedRadiusM"),
+		45.f,
+		TEXT("Terror drain radius (m) for frighten_mounted rows."),
+		ECVF_Default);
+
 	TAutoConsoleVariable<float> GCMoraleImpetuousChargeRadius(
 		TEXT("Battle.Morale.ImpetuousChargeRadiusM"),
 		30.f,
@@ -172,6 +197,10 @@ namespace FMoraleCVars
 	float CascadeRadiusM() { return GCMoraleCascadeRadius.GetValueOnAnyThread(); }
 	float GeneralAuraRadiusM() { return GCMoraleGeneralAuraRadius.GetValueOnAnyThread(); }
 	float GeneralAuraBase() { return GCMoraleGeneralAuraBase.GetValueOnAnyThread(); }
+	float TerrorAuraFootBase() { return GCMoraleTerrorAuraFootBase.GetValueOnAnyThread(); }
+	float TerrorAuraFootRadiusM() { return GCMoraleTerrorAuraFootRadius.GetValueOnAnyThread(); }
+	float TerrorAuraMountedBase() { return GCMoraleTerrorAuraMountedBase.GetValueOnAnyThread(); }
+	float TerrorAuraMountedRadiusM() { return GCMoraleTerrorAuraMountedRadius.GetValueOnAnyThread(); }
 	float ImpetuousChargeRadiusM() { return GCMoraleImpetuousChargeRadius.GetValueOnAnyThread(); }
 	bool SoakRout() { return GCMoraleSoakRout.GetValueOnAnyThread() != 0; }
 }
@@ -196,7 +225,24 @@ float EvaluateMorale(const FMoraleTickInputs& Inputs)
 		+ FMoraleWeights::GeneralAura * Inputs.GeneralAuraBonus
 		+ FMoraleWeights::GeneralDeathShock * Inputs.GeneralDeathShock
 		+ FMoraleWeights::HeightAdvantage * Inputs.HeightAdvantage
-		+ FMoraleWeights::WinningLocally * Inputs.WinningLocally;
+		+ FMoraleWeights::WinningLocally * Inputs.WinningLocally
+		+ FMoraleWeights::TerrorAura * Inputs.TerrorAuraBonus;
+}
+
+// -- Task 4b.3 (B-7): the climate rate scale (the FatigueRateScale slot's
+// EDU mapping; the T4b.3 golden locks the mapping). stat_heat is the
+// Phase 5 slot (the brief's B-7; the spec section 10 row records it). --
+float ClimateFatigueRateScale(const FString& ClimateToken)
+{
+	if (ClimateToken == TEXT("hardy"))
+	{
+		return 0.85f;
+	}
+	if (ClimateToken == TEXT("very_hardy"))
+	{
+		return 0.7f;
+	}
+	return 1.f;
 }
 
 float EvaluateDecay(float Value, float Dt, float HalfLifeS)

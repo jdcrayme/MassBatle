@@ -43,6 +43,13 @@ namespace FMoraleCVars
 	MASSBATTLE_API float CascadeRadiusM();          // Battle.Morale.CascadeRadiusM (routing-friends term)
 	MASSBATTLE_API float GeneralAuraRadiusM();      // Battle.Morale.GeneralAuraRadiusM
 	MASSBATTLE_API float GeneralAuraBase();         // Battle.Morale.GeneralAuraBase
+
+	// Task 4b.2 (B-6): the terror per-token shaping (the falloff shape is
+	// GeneralAura's; the foot/mounted split is per-token Base/Radius).
+	MASSBATTLE_API float TerrorAuraFootBase();       // Battle.Morale.TerrorAuraFootBase
+	MASSBATTLE_API float TerrorAuraFootRadiusM();    // Battle.Morale.TerrorAuraFootRadiusM
+	MASSBATTLE_API float TerrorAuraMountedBase();    // Battle.Morale.TerrorAuraMountedBase
+	MASSBATTLE_API float TerrorAuraMountedRadiusM(); // Battle.Morale.TerrorAuraMountedRadiusM
 	MASSBATTLE_API float ImpetuousChargeRadiusM();  // Battle.Morale.ImpetuousChargeRadiusM (MC9)
 	MASSBATTLE_API bool SoakRout();                 // Battle.Morale.SoakRout (nightly variant; 0 = baseline identity)
 }
@@ -85,6 +92,10 @@ namespace FMoraleWeights
 	constexpr float HeightAdvantage = 0.5f;
 	/** Winning-locally differential (-1..1; decaying kill window). */
 	constexpr float WinningLocally = 1.f;
+	/** Task 4b.2 (B-5): the terror aura -- the GeneralAura MIRROR against
+	 *  enemy envelopes (drain-only; already distance-scaled at the input).
+	 *  The magnitude mirrors the aura's +1 at the same falloff shape. */
+	constexpr float TerrorAura = -1.f;
 }
 
 /** Fatigue mechanism constants (ONE home; A16): exertion rates (per second)
@@ -141,6 +152,10 @@ struct FMoraleTickInputs
 	float GeneralDeathShock = 0.f;   // section 4.2 (team-wide decay term)
 	float HeightAdvantage = 0.f;     // -1..1 (envelope anchor Z differential, normalized)
 	float WinningLocally = 0.f;      // -1..1 (decaying kill differential)
+	/** Task 4b.2 (B-5): the terror drain (distance-scaled at the input,
+	 *  0..the per-token base; the fold zeroes it without enemy frighteners
+	 *  -- flags-off identity). */
+	float TerrorAuraBonus = 0.f;
 };
 
 /** The fatigue multiplier row per state (T4.2 golden): the catalog's *Mod
@@ -157,6 +172,10 @@ struct FFatigueMultipliers
 /** The stack (spec section 4.1, MC2): weighted sum of the ten terms over
  *  BaseMorale. */
 MASSBATTLE_API float EvaluateMorale(const FMoraleTickInputs& Inputs);
+
+/** Task 4b.3 (B-7): the climate token's FatigueRateScale mapping
+ *  (hardy 0.85 / very_hardy 0.7 / else 1 -- the T4b.3 golden locks it). */
+MASSBATTLE_API float ClimateFatigueRateScale(const FString& ClimateToken);
 
 /** The shared decay form (spec section 4.2): exponential half-life decay,
  *  closed-form, golden-locked (T4.1). Both the fresh-casualty spike and the

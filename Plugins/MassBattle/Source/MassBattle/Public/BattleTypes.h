@@ -409,4 +409,11 @@ struct FUnitSpawnSpec
 	 *  aura contribution (MC8). Default false. */
 	bool bIsGeneral = false;
 
+	// Task 4b.2/4b.3: the frighten + climate flags (from the EDU
+	// `attributes` tokens via FromEdu; the terror fold reads the registry
+	// spec, the exertion loop reads the rate scale). Spawn-immutable.
+	bool bFrightenFoot = false;
+	bool bFrightenMounted = false;
+	FString ClimateToken;
+
 };
