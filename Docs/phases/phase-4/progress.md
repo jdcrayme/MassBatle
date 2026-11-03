@@ -10,6 +10,37 @@
 
 ## Discrepancies (dated, newest first)
 
+- **2026-11-03 (the staged-nightly unblock -- the full nightly pipeline GREEN
+  end to end)** -- between the green editor soak and the green nightly sat
+  three gates, each fixed with its own evidence (`5bb5c13`):
+  (1) the SMOKE step crashed on the MTAccessDetector check mode -- the
+  resolve's officer-override worker-side `FindUnitState` scoped read raced
+  the game-thread morale writes (live since the T6.1 flip; the staged build
+  had never run both together). Fix: the officer window rides the FRAGMENT
+  MIRROR (`OfficerRosterBaseMirror`/`OfficerCountMirror`, stamped
+  game-thread by the locomotion, one-frame latency -- the documented
+  ReflowCooldown channel contract); the registry read left the worker path.
+  LESSON (the F-family pattern): a worker-side registry read is only safe
+  against writers that never overlap it in check mode -- cross-thread data
+  rides fragment mirrors, never live registry reads.
+  (2) the soak's intermittent `settled stuck=1` (2 of 4 staged nightly-path
+  runs): the arrival-judged semantics allow a 40 m advisory tear at soak
+  end; the walk-back at the boosted ceiling is ~16 s > the old 15 s settle
+  budget (sized for 6 m tears). Doubled to 1800; the Assert-phase
+  `Straggler` line (identity + ladder + distToSlot + slot) landed as the
+  standing tail-evidence tool. (3) the deep-stuck budget recalibration
+  (disclosed): the measured worst-sample distribution straddles the old 40%
+  line (101/104 Oct; 104/134/125 wheel-build) -- 45% now, whole-army-jam
+  separation kept. VERIFICATION: staged soak ok=1 (stuck=0, maxDeepStuck
+  82/144, settledDressErr 0.00); **the full nightly `[nightly] DONE`** --
+  build -> package -> smoke -> soak -> baseline compare -> commit. The
+  nightly's automated commit (`03f2f45`) promoted the baseline reference
+  per the audit-H2 flow: shared metrics identical (`entity_spawn_80_us`
+  47.4 vs 47.4 -- **the spawn baseline is UNMOVED by all of this session's
+  work**, answering the T4.2 spawn-baseline question by evidence), plus 4
+  new soak telemetry fields. Task 8's staged-nightly + baselines items are
+  now DONE; the 4a close remainder is Task 9 (B.7 + report) and S5_Mob.
+
 - **2026-11-03 (Task 2 COMPLETED -- the TW-faithful pair; the staged nightly
   soak gate GREEN)** -- the owner's "Proceed" landed the Total-War-mapped
   completion in two commits. **The wheel** (`4ea2021`): the formation's
